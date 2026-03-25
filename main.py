@@ -1,4 +1,4 @@
-"""CLI entry point for Milestone 1 NIfTI I/O and scaffolding."""
+"""CLI entry point for the curve-skeletonization pipeline."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import pathlib
 from typing import Optional
 
 import numpy as np
+from utils.multi_object import skeletonize_volume
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent
 
@@ -60,17 +61,27 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--label-objects",
         action="store_true",
-        help="Label object skeleton voxels by component index (reserved for later milestones).",
+        help="Label object skeleton voxels by component index.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-object progress and branch counts.",
     )
     return parser.parse_args(argv)
 
 
 def run(args: argparse.Namespace) -> str:
-    """Execute Milestone 1 behavior: load input and write output unchanged."""
+    """Execute the Milestone 6 multi-object skeleton pipeline."""
     data, affine, header = read_nifti(args.input)
-
-    # Milestone 1 writes data through unchanged after standard input normalization.
-    output_data = np.asarray(data, dtype=np.float32)
+    output_data, _metadata = skeletonize_volume(
+        np.asarray(data, dtype=np.float32),
+        root_method=args.root_method,
+        threshold_scale=args.threshold_scale,
+        min_size=args.min_object_size,
+        label_objects=args.label_objects,
+        log=print if args.verbose else None,
+    )
     return write_nifti(output_data, affine, header, args.output)
 
 

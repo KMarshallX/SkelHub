@@ -1,15 +1,6 @@
-# Curve Skeletonization (Milestone 1)
+# Curve Skeletonization
 
-This project provides Milestone 1 scaffolding for NIfTI-based curve skeletonization.
-
-## What Works in Milestone 1
-
-- NIfTI load and save utilities.
-- CLI that reads an input volume and writes an output volume.
-- Multi-object decomposition and merge utilities.
-- Synthetic fixture generation for test volumes.
-
-Skeletonization core modules are present as explicit stubs and are implemented in later milestones.
+This project implements the early milestones of a NIfTI-based curve skeletonization pipeline inspired by Jin et al. Milestone 3 adds local significance factor (LSF) computation and geometric geodesic distance support on top of the existing fuzzy distance transform and fuzzy maximal-ball detection pipeline.
 
 ## Installation
 

@@ -388,7 +388,8 @@ Tasks:
 
 **Acceptance test (real data):** Place the user-provided volume at `./test_data/smaller_patch_160/CLIP_MASKED_sub_160um_seg.nii.gz` and run:
 ```
-python main.py -i ./test_data/smaller_patch_160/CLIP_MASKED_sub_160um_seg.nii.gz -o /tmp/skel_m6.nii.gz --verbose
+mkdir -p ./test_outputs
+python main.py -i ./test_data/smaller_patch_160/CLIP_MASKED_sub_160um_seg.nii.gz -o ./test_outputs/skel_m6.nii.gz --verbose
 ```
 The program must complete without error and the `--verbose` log must report at least 1 object found and at least 1 skeletal branch detected.
 
@@ -407,7 +408,7 @@ Tasks:
 
 **Acceptance test (real data):** Place the user-provided MRI volume at `./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz` and run:
 ```
-python main.py -i ./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz -o /tmp/skel_m7.nii.gz --verbose
+python main.py -i ./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz -o ./test_outputs/skel_m7.nii.gz --verbose
 ```
 The program must complete without error. The `--verbose` output must show that the average number of iterations per object is in the range `[log2(N), sqrt(N)]` where N is the number of terminal branches detected, consistent with the computational complexity described in the paper.
 
