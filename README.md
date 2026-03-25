@@ -32,15 +32,26 @@ Optional arguments:
 - `--min-object-size INT`
 - `--label-objects`
 
-## Generate Synthetic Fixtures
+## Citation
 
-```bash
-python tests/fixtures/generate_fixtures.py
-```
 
-This creates:
+@article{jin_robust_2016,
+	title = {A robust and efficient curve skeletonization algorithm for tree-like objects using minimum cost paths},
+	volume = {76},
+	issn = {01678655},
+	url = {https://linkinghub.elsevier.com/retrieve/pii/S0167865515001063},
+	doi = {10.1016/j.patrec.2015.04.002},
+	language = {en},
+	urldate = {2025-10-13},
+	journal = {Pattern Recognition Letters},
+	author = {Jin, Dakai and Iyer, Krishna S. and Chen, Cheng and Hoffman, Eric A. and Saha, Punam K.},
+	month = jun,
+	year = {2016},
+	pages = {32--40},
+	file = {1-s2.0-S0167865515001063-main:C\:\\Users\\uqmxu4\\Zotero\\storage\\6DFKHIIP\\1-s2.0-S0167865515001063-main.pdf:application/pdf},
+}
 
-- `tests/fixtures/straight_tube.nii.gz`
-- `tests/fixtures/y_tube.nii.gz`
-- `tests/fixtures/y_tube_noisy.nii.gz`
-- `tests/fixtures/two_tubes.nii.gz`
+
+## Acknowledgement
+
+This python project is copiloted by Codex (OpenAI).
