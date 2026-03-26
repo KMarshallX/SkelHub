@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Callable, Iterable
 
 import numpy as np
@@ -205,6 +206,7 @@ def extract_skeleton(
     volume: np.ndarray,
     root_method: str = "max_fdt",
     threshold_scale: float = 1.0,
+    max_iterations: int = 200,
     log: Callable[[str], None] | None = None,
 ) -> tuple[np.ndarray, dict]:
     """Extract a curve skeleton for one object mask or sub-volume."""
@@ -213,6 +215,8 @@ def extract_skeleton(
         raise ValueError("extract_skeleton expects a 3D volume.")
     if threshold_scale <= 0.0:
         raise ValueError("threshold_scale must be positive.")
+    if max_iterations < 0:
+        raise ValueError("max_iterations must be non-negative.")
 
     object_mask = memberships > 0.0
     skeleton = np.zeros_like(object_mask, dtype=bool)
@@ -223,6 +227,14 @@ def extract_skeleton(
         "branch_count": 0,
         "endpoints": [],
         "iterations": 0,
+        "branches_added_per_iteration": [],
+        "max_iterations": int(max_iterations),
+        "max_iterations_reached": False,
+        "geodesic_calls": 0,
+        "minimum_cost_path_calls": 0,
+        "dilation_calls": 0,
+        "iteration_limit_reason": None,
+        "complexity_reference": {"log2_n": 0.0, "sqrt_n": 0.0},
     }
     if not np.any(object_mask):
         return skeleton, metadata
@@ -234,14 +246,29 @@ def extract_skeleton(
 
     skeleton[root] = True
     marked_mask = local_scale_adaptive_dilation(object_mask, [root], fdt)
+    metadata["dilation_calls"] += 1
     if log is not None:
         log(f"root={root}, initial marked voxels={int(np.count_nonzero(marked_mask))}")
 
     while True:
-        metadata["iterations"] += 1
         subtrees = label_subtrees(object_mask, marked_mask)
         if not subtrees:
             break
+        if metadata["iterations"] >= max_iterations:
+            metadata["max_iterations_reached"] = True
+            metadata["iteration_limit_reason"] = "maximum iteration cap reached"
+            if log is not None:
+                log(
+                    "maximum iteration cap reached "
+                    f"({max_iterations}); stopping object safely"
+                )
+            break
+
+        metadata["iterations"] += 1
+        branches_added_this_iteration = 0
+        source_coords = [tuple(int(value) for value in coord) for coord in np.argwhere(skeleton)]
+        geodesic = compute_geodesic_distance(object_mask, marked_mask)
+        metadata["geodesic_calls"] += 1
 
         found_any = False
         for subtree_label, subtree_mask in subtrees:
@@ -250,7 +277,6 @@ def extract_skeleton(
             if strong_count == 0:
                 continue
 
-            geodesic = compute_geodesic_distance(object_mask, marked_mask)
             candidate_distance = np.where(strong_quench, geodesic, -np.inf)
             if not np.isfinite(candidate_distance).any():
                 continue
@@ -259,9 +285,10 @@ def extract_skeleton(
             path = minimum_cost_path(
                 object_mask,
                 lsf,
-                [tuple(int(value) for value in coord) for coord in np.argwhere(skeleton)],
+                source_coords,
                 tuple(int(value) for value in farthest_index),
             )
+            metadata["minimum_cost_path_calls"] += 1
             if not path:
                 continue
 
@@ -280,10 +307,12 @@ def extract_skeleton(
             for coord in path:
                 skeleton[tuple(int(value) for value in coord)] = True
             dilated = local_scale_adaptive_dilation(object_mask, path, fdt)
+            metadata["dilation_calls"] += 1
             marked_mask |= dilated
             metadata["accepted_paths"].append(path)
             metadata["accepted_branch_paths"] = len(metadata["accepted_paths"])
             found_any = True
+            branches_added_this_iteration += 1
             if log is not None:
                 log(
                     "subtree "
@@ -291,6 +320,7 @@ def extract_skeleton(
                     f"strong_quench={strong_count} sig={branch_significance:.3f}"
                 )
 
+        metadata["branches_added_per_iteration"].append(branches_added_this_iteration)
         if not found_any:
             break
 
@@ -300,6 +330,11 @@ def extract_skeleton(
         fdt,
         root=root,
     )
+    terminal_branches = max(int(metadata["branch_count"]), 1)
+    metadata["complexity_reference"] = {
+        "log2_n": float(math.log2(terminal_branches)),
+        "sqrt_n": float(math.sqrt(terminal_branches)),
+    }
     if log is not None:
         log(f"final branch_count={metadata['branch_count']}")
     return skeleton, metadata

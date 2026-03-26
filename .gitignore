@@ -1,6 +1,7 @@
 /test_data/*
 /tests/
 /outputs/
+/test_outputs/
 __pycache__/
 
 LOG.md

@@ -66,18 +66,25 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print per-object progress and branch counts.",
+        help="Print per-object iteration, branch, and runtime reporting.",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=200,
+        help="Maximum skeleton-growth iterations per object before stopping safely.",
     )
     return parser.parse_args(argv)
 
 
 def run(args: argparse.Namespace) -> str:
-    """Execute the Milestone 6 multi-object skeleton pipeline."""
+    """Execute the multi-object skeleton pipeline."""
     data, affine, header = read_nifti(args.input)
     output_data, _metadata = skeletonize_volume(
         np.asarray(data, dtype=np.float32),
         root_method=args.root_method,
         threshold_scale=args.threshold_scale,
+        max_iterations=args.max_iterations,
         min_size=args.min_object_size,
         label_objects=args.label_objects,
         log=print if args.verbose else None,

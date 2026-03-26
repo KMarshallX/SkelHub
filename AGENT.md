@@ -406,6 +406,15 @@ Tasks:
 2. Add a `--verbose` flag to `main.py` that logs, per object: iteration count, branches added per iteration, and wall-clock time.
 3. Add a `--max-iterations` safety cap (default 100) to prevent infinite loops on pathological inputs.
 
+**Acceptance test (synthetic data):** Place the user-provided MRI volume at `./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_11.nii`, `./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_12.nii`, `./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_13.nii` and run respectively:
+```
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_11.nii -o ./test_outputs/skel_m7_synthetic_11.nii.gz --verbose
+
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_12.nii -o ./test_outputs/skel_m7_synthetic_12.nii.gz --verbose
+
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_13.nii -o ./test_outputs/skel_m7_synthetic_13.nii.gz --verbose
+```
+
 **Acceptance test (real data):** Place the user-provided MRI volume at `./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz` and run:
 ```
 python main.py -i ./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz -o ./test_outputs/skel_m7.nii.gz --verbose

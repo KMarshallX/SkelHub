@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import time
 from typing import Callable, List, Sequence, Tuple, cast
 
 import numpy as np
@@ -57,14 +59,17 @@ def skeletonize_volume(
     volume: np.ndarray,
     root_method: str = "max_fdt",
     threshold_scale: float = 1.0,
+    max_iterations: int = 200,
     min_size: int = 50,
     label_objects: bool = False,
     log: Callable[[str], None] | None = None,
 ) -> tuple[np.ndarray, dict]:
-    """Run the full Milestone 6 skeleton pipeline over all disconnected objects."""
+    """Run the full skeleton pipeline over all disconnected objects."""
     memberships = np.clip(np.asarray(volume, dtype=np.float32), 0.0, 1.0)
     if memberships.ndim != 3:
         raise ValueError("skeletonize_volume expects a 3D volume.")
+    if max_iterations < 0:
+        raise ValueError("max_iterations must be non-negative.")
 
     components = decompose(memberships, min_size=min_size)
     if log is not None:
@@ -82,12 +87,18 @@ def skeletonize_volume(
             if log is not None:
                 log(f"object {object_index}/{len(components)} (label={component_label}): {message}")
 
+        object_start = time.perf_counter()
         skeleton_crop, metadata = extract_skeleton(
             cropped_volume,
             root_method=root_method,
             threshold_scale=threshold_scale,
+            max_iterations=max_iterations,
             log=_object_log if log is not None else None,
         )
+        object_elapsed = time.perf_counter() - object_start
+        metadata["object_index"] = object_index
+        metadata["component_label"] = component_label
+        metadata["wall_clock_seconds"] = float(object_elapsed)
 
         skeleton_full = np.zeros_like(component_mask, dtype=bool)
         skeleton_full[bbox] = skeleton_crop
@@ -97,17 +108,45 @@ def skeletonize_volume(
         if log is not None:
             log(
                 f"object {object_index}/{len(components)} complete: "
-                f"{metadata['branch_count']} skeletal branch(es)"
+                f"iterations={metadata['iterations']}, "
+                f"branches_added_per_iteration={metadata['branches_added_per_iteration']}, "
+                f"total_branches={metadata['branch_count']}, "
+                f"time={object_elapsed:.3f}s"
             )
 
     merged = merge_skeletons(memberships.shape, results, label_objects=label_objects)
+    total_terminal_branches = int(sum(item["branch_count"] for item in object_metadata))
+    avg_iterations = (
+        float(np.mean([item["iterations"] for item in object_metadata]))
+        if object_metadata
+        else 0.0
+    )
+    max_iterations_hits = int(sum(bool(item["max_iterations_reached"]) for item in object_metadata))
+    complexity_n = max(total_terminal_branches, 1)
     metadata = {
         "num_objects": len(components),
         "objects": object_metadata,
-        "final_branch_count": int(sum(item["branch_count"] for item in object_metadata)),
+        "final_branch_count": total_terminal_branches,
+        "average_iterations_per_object": avg_iterations,
+        "max_iterations": int(max_iterations),
+        "max_iterations_hits": max_iterations_hits,
+        "complexity_reference": {
+            "n_terminal_branches": total_terminal_branches,
+            "log2_n": float(math.log2(complexity_n)),
+            "sqrt_n": float(math.sqrt(complexity_n)),
+        },
     }
     if log is not None:
-        log(f"final number of skeletal branches detected: {metadata['final_branch_count']}")
+        log(
+            "final summary: "
+            f"objects={metadata['num_objects']}, "
+            f"total_branches={metadata['final_branch_count']}, "
+            f"average_iterations_per_object={metadata['average_iterations_per_object']:.3f}, "
+            f"max_iteration_hits={metadata['max_iterations_hits']}, "
+            f"complexity_band=[log2(N)={metadata['complexity_reference']['log2_n']:.3f}, "
+            f"sqrt(N)={metadata['complexity_reference']['sqrt_n']:.3f}] "
+            f"for N={metadata['complexity_reference']['n_terminal_branches']}"
+        )
     return merged, metadata
 
 

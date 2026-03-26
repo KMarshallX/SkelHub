@@ -1,6 +1,6 @@
 # Curve Skeletonization
 
-This project implements the early milestones of a NIfTI-based curve skeletonization pipeline inspired by Jin et al. Milestone 3 adds local significance factor (LSF) computation and geometric geodesic distance support on top of the existing fuzzy distance transform and fuzzy maximal-ball detection pipeline.
+This project implements a NIfTI-based curve skeletonization pipeline inspired by Jin et al. for tree-like 3D objects. The current milestone includes end-to-end multi-object skeleton extraction plus Milestone 7 runtime reporting, iteration safety caps, and validation-ready CLI behavior.
 
 ## Installation
 
@@ -20,8 +20,38 @@ Optional arguments:
 
 - `--root-method {max_fdt,topmost}`
 - `--threshold-scale FLOAT`
+- `--max-iterations INT` maximum outer-loop iterations per object, default `200`
 - `--min-object-size INT`
 - `--label-objects`
+- `--verbose`
+
+Verbose mode reports, for each object:
+
+- object index and component label
+- iteration count
+- branches added per iteration
+- total significant branches detected
+- wall-clock time per object
+
+It also prints a final summary across all objects including average iterations per object and a complexity reference band `[log2(N), sqrt(N)]` for `N =` total terminal branches detected.
+
+Output parent directories are created automatically, so validation commands can write directly to paths such as `./test_outputs/...` without manual setup.
+
+## Validation Commands
+
+Synthetic Milestone 7 acceptance runs:
+
+```bash
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_11.nii -o ./test_outputs/skel_m7_synthetic_11.nii.gz --verbose
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_12.nii -o ./test_outputs/skel_m7_synthetic_12.nii.gz --verbose
+python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_13.nii -o ./test_outputs/skel_m7_synthetic_13.nii.gz --verbose
+```
+
+Real-data Milestone 7 acceptance run:
+
+```bash
+python main.py -i ./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz -o ./test_outputs/skel_m7.nii.gz --verbose
+```
 
 ## Citation
 
