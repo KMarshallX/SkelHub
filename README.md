@@ -37,22 +37,6 @@ It also prints a final summary across all objects including average iterations p
 
 Output parent directories are created automatically, so validation commands can write directly to paths such as `./test_outputs/...` without manual setup.
 
-## Validation Commands
-
-Synthetic Milestone 7 acceptance runs:
-
-```bash
-python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_11.nii -o ./test_outputs/skel_m7_synthetic_11.nii.gz --verbose
-python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_12.nii -o ./test_outputs/skel_m7_synthetic_12.nii.gz --verbose
-python main.py -i ./test_data/synthetic_lsys_data/seg_sub015_i10_con_order1_test_13.nii -o ./test_outputs/skel_m7_synthetic_13.nii.gz --verbose
-```
-
-Real-data Milestone 7 acceptance run:
-
-```bash
-python main.py -i ./test_data/bigger_patch/bigCLIP_MASKED_sub_160um_seg.nii.gz -o ./test_outputs/skel_m7.nii.gz --verbose
-```
-
 ## Citation
 Original paper: _A robust and efficient curve skeletonization algorithm for tree-like objects using minimum cost paths_ (Jin et al., 2016)
 
