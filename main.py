@@ -52,7 +52,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "-t",
         type=float,
         default=1.0,
-        help="Significance threshold multiplier.",
+        help="Significance threshold multiplier. Suggested value: 0.5 to include more branches but may introduce noise.",
     )
     parser.add_argument(
         "--min-object-size",
