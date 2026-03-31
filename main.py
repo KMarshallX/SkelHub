@@ -42,34 +42,40 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("-o", "--output", required=True, help="Path to output NIfTI file")
     parser.add_argument(
         "--root-method",
+        "-r",
         choices=("max_fdt", "topmost"),
         default="max_fdt",
-        help="Root selection method (reserved for later milestones).",
+        help="Root selection method.",
     )
     parser.add_argument(
         "--threshold-scale",
+        "-t",
         type=float,
         default=1.0,
-        help="Significance threshold multiplier (reserved for later milestones).",
+        help="Significance threshold multiplier.",
     )
     parser.add_argument(
         "--min-object-size",
+        "-s",
         type=int,
         default=50,
-        help="Minimum component size in voxels (reserved for later milestones).",
+        help="Minimum component size in voxels.",
     )
     parser.add_argument(
         "--label-objects",
+        "-l",
         action="store_true",
         help="Label object skeleton voxels by component index.",
     )
     parser.add_argument(
         "--verbose",
+        "-v",
         action="store_true",
         help="Print per-object iteration, branch, and runtime reporting.",
     )
     parser.add_argument(
         "--max-iterations",
+        "-it",
         type=int,
         default=200,
         help="Maximum skeleton-growth iterations per object before stopping safely.",

@@ -18,12 +18,31 @@ python main.py -i /path/to/input.nii.gz -o /path/to/out.nii.gz
 
 Optional arguments:
 
-- `--root-method {max_fdt,topmost}`
-- `--threshold-scale FLOAT`
-- `--max-iterations INT` maximum outer-loop iterations per object, default `200`
-- `--min-object-size INT`
-- `--label-objects`
-- `--verbose`
+- `--root-method {max_fdt,topmost}` controls how the root voxel is chosen for each disconnected object.
+  Use `max_fdt` (default) to start from the deepest interior voxel. Use `topmost` to prefer a root near the top of the object, which can be useful for airway-like data with a known superior-to-inferior orientation.
+- `--threshold-scale FLOAT` multiplies the branch-significance acceptance threshold. The default is `1.0`.
+  Increase it to make branch acceptance more conservative and reduce weak side branches. Decrease it slightly to keep more marginal branches. The value must be positive.
+- `--max-iterations INT` sets the maximum number of outer skeleton-growth iterations per object. Default: `200`.
+  This is a safety cap for complex or pathological inputs. If the cap is reached, the program stops growing that object safely and reports it in verbose mode.
+- `--min-object-size INT` ignores connected components smaller than the given voxel count. Default: `50`.
+  This is useful for filtering out isolated specks or segmentation noise before skeletonization begins.
+- `--label-objects` writes each object's skeleton voxels using its connected-component label instead of writing all skeleton voxels as `1`.
+  This is useful when the input volume contains multiple disconnected trees and you want to keep them distinguishable in the output.
+- `--verbose` prints progress and runtime reporting during processing.
+
+Example with optional arguments:
+
+```bash
+python main.py \
+  -i /path/to/input.nii.gz \
+  -o /path/to/out.nii.gz \
+  --root-method topmost \
+  --threshold-scale 1.1 \
+  --min-object-size 100 \
+  --max-iterations 300 \
+  --label-objects \
+  --verbose
+```
 
 Verbose mode reports, for each object:
 
