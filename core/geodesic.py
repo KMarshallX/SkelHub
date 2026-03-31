@@ -28,7 +28,6 @@ def compute_geodesic_distance(object_mask: np.ndarray, source_mask: np.ndarray) 
     for z, y, x in active_sources:
         distances[z, y, x] = 0.0
         heapq.heappush(heap, (0.0, int(z), int(y), int(x)))
-
     shape = object_support.shape
     while heap:
         current_distance, z, y, x = heapq.heappop(heap)
@@ -45,9 +44,8 @@ def compute_geodesic_distance(object_mask: np.ndarray, source_mask: np.ndarray) 
             if not object_support[nz, ny, nx]:
                 continue
 
-            candidate = current_distance + float(step_distance)
-            if candidate + 1e-12 < float(distances[nz, ny, nx]):
+            candidate = np.float32(current_distance + float(step_distance))
+            if candidate < distances[nz, ny, nx]:
                 distances[nz, ny, nx] = candidate
-                heapq.heappush(heap, (candidate, nz, ny, nx))
-
+                heapq.heappush(heap, (float(candidate), nz, ny, nx))
     return distances
