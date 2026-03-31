@@ -22,6 +22,8 @@ Optional arguments:
   Use `max_fdt` (default) to start from the deepest interior voxel. Use `topmost` to prefer a root near the top of the object, which can be useful for airway-like data with a known superior-to-inferior orientation.
 - `--threshold-scale FLOAT` multiplies the branch-significance acceptance threshold. The default is `1.0`.
   Increase it to make branch acceptance more conservative and reduce weak side branches. Decrease it slightly to keep more marginal branches. The value must be positive.
+- `--dilation-factor FLOAT` scales the FDT value used when generating the marked-mask dilation around the root and accepted branches. The default is `2.0`.
+  Leaving it unset preserves the current behavior, where the dilation radius is `2 * FDT(p)` at each branch voxel. The value must be positive.
 - `--max-iterations INT` sets the maximum number of outer skeleton-growth iterations per object. Default: `200`.
   This is a safety cap for complex or pathological inputs. If the cap is reached, the program stops growing that object safely and reports it in verbose mode.
 - `--min-object-size INT` ignores connected components smaller than the given voxel count. Default: `50`.
@@ -38,6 +40,7 @@ python main.py \
   -o /path/to/out.nii.gz \
   --root-method topmost \
   --threshold-scale 1.1 \
+  --dilation-factor 2.0 \
   --min-object-size 100 \
   --max-iterations 300 \
   --label-objects \

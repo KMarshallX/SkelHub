@@ -59,6 +59,7 @@ def skeletonize_volume(
     volume: np.ndarray,
     root_method: str = "max_fdt",
     threshold_scale: float = 1.0,
+    dilation_factor: float = 2.0,
     max_iterations: int = 200,
     min_size: int = 50,
     label_objects: bool = False,
@@ -68,6 +69,8 @@ def skeletonize_volume(
     memberships = np.clip(np.asarray(volume, dtype=np.float32), 0.0, 1.0)
     if memberships.ndim != 3:
         raise ValueError("skeletonize_volume expects a 3D volume.")
+    if dilation_factor <= 0.0:
+        raise ValueError("dilation_factor must be positive.")
     if max_iterations < 0:
         raise ValueError("max_iterations must be non-negative.")
 
@@ -92,6 +95,7 @@ def skeletonize_volume(
             cropped_volume,
             root_method=root_method,
             threshold_scale=threshold_scale,
+            dilation_factor=dilation_factor,
             max_iterations=max_iterations,
             log=_object_log if log is not None else None,
         )

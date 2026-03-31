@@ -55,6 +55,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Significance threshold multiplier. Suggested value: 0.5 to include more branches but may introduce noise.",
     )
     parser.add_argument(
+        "--dilation-factor",
+        "-d",
+        type=float,
+        default=1.5,
+        help="Scale factor applied to FDT when generating marked-mask dilation. Default: 2.0.",
+    )
+    parser.add_argument(
         "--min-object-size",
         "-s",
         type=int,
@@ -90,6 +97,7 @@ def run(args: argparse.Namespace) -> str:
         np.asarray(data, dtype=np.float32),
         root_method=args.root_method,
         threshold_scale=args.threshold_scale,
+        dilation_factor=args.dilation_factor,
         max_iterations=args.max_iterations,
         min_size=args.min_object_size,
         label_objects=args.label_objects,

@@ -216,6 +216,7 @@ def extract_skeleton(
     volume: np.ndarray,
     root_method: str = "max_fdt",
     threshold_scale: float = 1.0,
+    dilation_factor: float = 2.0,
     max_iterations: int = 200,
     log: Callable[[str], None] | None = None,
 ) -> tuple[np.ndarray, dict]:
@@ -225,6 +226,8 @@ def extract_skeleton(
         raise ValueError("extract_skeleton expects a 3D volume.")
     if threshold_scale <= 0.0:
         raise ValueError("threshold_scale must be positive.")
+    if dilation_factor <= 0.0:
+        raise ValueError("dilation_factor must be positive.")
     if max_iterations < 0:
         raise ValueError("max_iterations must be non-negative.")
 
@@ -257,7 +260,12 @@ def extract_skeleton(
     metadata["root"] = root
 
     skeleton[root] = True
-    marked_mask = local_scale_adaptive_dilation(object_mask, [root], fdt)
+    marked_mask = local_scale_adaptive_dilation(
+        object_mask,
+        [root],
+        fdt,
+        dilation_factor=dilation_factor,
+    )
     metadata["dilation_calls"] += 1
     fuse_supported = hasattr(signal, "SIGALRM") and hasattr(signal, "setitimer")
     fuse_stage = "idle"
@@ -362,7 +370,12 @@ def extract_skeleton(
 
                 for coord in path:
                     skeleton[tuple(int(value) for value in coord)] = True
-                dilated = local_scale_adaptive_dilation(object_mask, path, fdt)
+                dilated = local_scale_adaptive_dilation(
+                    object_mask,
+                    path,
+                    fdt,
+                    dilation_factor=dilation_factor,
+                )
                 metadata["dilation_calls"] += 1
                 marked_mask |= dilated
                 metadata["accepted_paths"].append(path)

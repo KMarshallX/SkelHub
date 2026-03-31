@@ -13,6 +13,7 @@ def local_scale_adaptive_dilation(
     object_mask: np.ndarray,
     branch_coords: list[tuple],
     fdt: np.ndarray,
+    dilation_factor: float = 2.0,
 ) -> np.ndarray:
     """Return the branch dilated support within the object volume.
 
@@ -27,6 +28,8 @@ def local_scale_adaptive_dilation(
         raise ValueError("local_scale_adaptive_dilation expects 3D inputs.")
     if object_support.shape != fdt_values.shape:
         raise ValueError("object_mask and fdt must have the same shape.")
+    if dilation_factor <= 0.0:
+        raise ValueError("dilation_factor must be positive.")
     if not branch_coords:
         return np.zeros_like(object_support, dtype=bool)
 
@@ -43,7 +46,7 @@ def local_scale_adaptive_dilation(
         if not object_support[voxel]:
             continue
 
-        initial_scale = 2.0 * float(fdt_values[voxel])
+        initial_scale = float(dilation_factor) * float(fdt_values[voxel])
         if initial_scale > ds[voxel]:
             ds[voxel] = initial_scale
             heapq.heappush(heap, (-initial_scale, voxel[0], voxel[1], voxel[2]))
