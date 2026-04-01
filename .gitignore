@@ -1,5 +1,6 @@
 /test_data/*
 /tests/
+/tmp/
 /outputs/
 /test_outputs/
 __pycache__/
