@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skelhub"
+version = "0.1.0"
+description = "Unified skeletonization framework with MCP as the first backend."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "nibabel>=5.0",
+  "numpy>=1.24",
+  "scipy>=1.10",
+]
+
+[project.scripts]
+skelhub = "skelhub.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["skelhub*"]

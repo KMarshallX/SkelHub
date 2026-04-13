@@ -4,6 +4,9 @@
 /outputs/
 /test_outputs/
 __pycache__/
+.venv/
+skelhub.egg-info/
 
 LOG.md
-ALGORITHM.md
+MCP_ALGORITHM.md
+MCP_AGENT.md

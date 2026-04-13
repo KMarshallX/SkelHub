@@ -1,83 +1,129 @@
-# Curve Skeletonization
+# SkelHub
 
-This project implements a NIfTI-based curve skeletonization pipeline inspired by Jin et al. for tree-like 3D objects. The current milestone includes end-to-end multi-object skeleton extraction plus Milestone 7 runtime reporting, iteration safety caps, and validation-ready CLI behavior.
+SkelHub is a Python framework for 3D skeletonization. It provides a shared package structure, a unified CLI, common result objects, and an algorithm-agnostic evaluation path so multiple skeletonization backends can live under one repo without turning the framework core into backend-specific glue.
+
+Current status:
+
+- Supported algorithm backends: `mcp`
+- Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`
+- Evaluation: placeholder path that validates and loads skeleton NIfTI predictions
 
 ## Installation
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
-## Usage
+You can also install dependencies with `pip install -r requirements.txt`, but the console command `skelhub` is exposed through the package install.
 
-```bash
-python main.py -i /path/to/input.nii.gz -o /path/to/out.nii.gz
+## Repository Structure
+
+```text
+SkelHub/
+├── docs/
+├── skelhub/
+│   ├── cli/
+│   ├── core/
+│   ├── io/
+│   ├── algorithms/
+│   │   └── mcp/
+│   ├── evaluation/
+│   ├── preprocessing/
+│   ├── postprocessing/
+│   ├── visualization/
+│   └── datasets/
+├── tests/
+└── test_data/
 ```
 
-Optional arguments:
+Framework notes:
 
-- `--root-method {max_fdt,topmost}` controls how the root voxel is chosen for each disconnected object.
-  Use `max_fdt` (default) to start from the deepest interior voxel. Use `topmost` to prefer a root near the top of the object, which can be useful for airway-like data with a known superior-to-inferior orientation.
-- `--threshold-scale FLOAT` multiplies the branch-significance acceptance threshold. The default is `1.0`.
-  Increase it to make branch acceptance more conservative and reduce weak side branches. Decrease it slightly to keep more marginal branches. The value must be positive.
-- `--dilation-factor FLOAT` scales the FDT value used when generating the marked-mask dilation around the root and accepted branches. The default is `2.0`.
-  Leaving it unset preserves the current behavior, where the dilation radius is `2 * FDT(p)` at each branch voxel. The value must be positive.
-- `--max-iterations INT` sets the maximum number of outer skeleton-growth iterations per object. Default: `200`.
-  This is a safety cap for complex or pathological inputs. If the cap is reached, the program stops growing that object safely and reports it in verbose mode.
-- `--min-object-size INT` ignores connected components smaller than the given voxel count. Default: `50`.
-  This is useful for filtering out isolated specks or segmentation noise before skeletonization begins.
-- `--label-objects` writes each object's skeleton voxels using its connected-component label instead of writing all skeleton voxels as `1`.
-  This is useful when the input volume contains multiple disconnected trees and you want to keep them distinguishable in the output.
-- `--verbose` prints progress and runtime reporting during processing.
+- `skelhub.core` contains shared result objects, framework interfaces, and the backend registry.
+- `skelhub.algorithms.mcp` contains the current MCP implementation and its thin framework adapter.
+- `skelhub.evaluation` currently contains a placeholder evaluator that validates and loads a skeleton NIfTI through the framework path.
 
-Example with optional arguments:
+## CLI Usage
+
+Run MCP through the framework:
 
 ```bash
-python main.py \
-  -i /path/to/input.nii.gz \
-  -o /path/to/out.nii.gz \
-  --root-method topmost \
-  --threshold-scale 1.1 \
-  --dilation-factor 2.0 \
-  --min-object-size 100 \
-  --max-iterations 300 \
-  --label-objects \
+skelhub run \
+  --algorithm mcp \
+  --input ./test_data/small_test_data/CLIP_MASKED_sub_160um_seg.nii.gz \
+  --output ./test_outputs/skelhub_mcp_small.nii.gz \
   --verbose
 ```
 
-Verbose mode reports, for each object:
+Equivalent local module execution without installation:
 
-- object index and component label
-- iteration count
-- branches added per iteration
-- total significant branches detected
-- wall-clock time per object
+```bash
+python -m skelhub run --algorithm mcp --input INPUT.nii.gz --output OUTPUT.nii.gz
+```
 
-It also prints a final summary across all objects including average iterations per object and a complexity reference band `[log2(N), sqrt(N)]` for `N =` total terminal branches detected.
+MCP parameters exposed at the framework level:
 
-Output parent directories are created automatically, so validation commands can write directly to paths such as `./test_outputs/...` without manual setup.
+- `--root-method {max_fdt,topmost}`
+- `--threshold-scale FLOAT`
+- `--dilation-factor FLOAT`
+- `--max-iterations INT`
+- `--min-object-size INT`
+- `--label-objects`
+- `--verbose`
 
-## Citation
-Original paper: _A robust and efficient curve skeletonization algorithm for tree-like objects using minimum cost paths_ (Jin et al., 2016)
+Run the evaluation placeholder:
 
-@article{jin_robust_2016,
-	title = {A robust and efficient curve skeletonization algorithm for tree-like objects using minimum cost paths},
-	volume = {76},
-	issn = {01678655},
-	url = {https://linkinghub.elsevier.com/retrieve/pii/S0167865515001063},
-	doi = {10.1016/j.patrec.2015.04.002},
-	language = {en},
-	urldate = {2025-10-13},
-	journal = {Pattern Recognition Letters},
-	author = {Jin, Dakai and Iyer, Krishna S. and Chen, Cheng and Hoffman, Eric A. and Saha, Punam K.},
-	month = jun,
-	year = {2016},
-	pages = {32--40},
-}
+```bash
+skelhub evaluate --pred ./test_outputs/skelhub_mcp_small.nii.gz
+```
 
+## Python API
 
-## Acknowledgement
+```python
+from skelhub.api import evaluate_prediction_path, run_algorithm_from_path
+from skelhub.algorithms.mcp import MCPConfig
 
-This python project is copiloted by Codex (OpenAI).
+result = run_algorithm_from_path(
+    algorithm="mcp",
+    input_path="input.nii.gz",
+    output_path="out.nii.gz",
+    config=MCPConfig(min_object_size=50),
+)
+
+evaluation = evaluate_prediction_path("out.nii.gz")
+print(result.backend_metadata["config"])
+print(evaluation.message)
+```
+
+## Outputs
+
+`SkeletonResult` is the framework-level output container for all backends. It stores:
+
+- `algorithm_name`
+- `skeleton` voxel array
+- `input_metadata`
+- `runtime_stats`
+- `warnings`
+- `backend_metadata`
+- optional `graph`
+
+The MCP backend keeps its current per-object runtime metadata under `result.backend_metadata["mcp"]`.
+
+## Evaluation Overview
+
+The current evaluation subsystem is intentionally minimal. It:
+
+- accepts a skeleton prediction path in `.nii` or `.nii.gz`
+- validates the path and loads the NIfTI correctly
+- runs through a framework-level evaluation function
+- emits a clear placeholder success message
+
+Metric computation is intentionally deferred until the common framework interfaces settle.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Algorithms](docs/algorithms.md)
+- [Evaluation](docs/evaluation.md)
+- [Development Log](LOG.md)
