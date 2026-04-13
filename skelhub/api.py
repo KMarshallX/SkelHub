@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from skelhub.algorithms import MCPBackend  # noqa: F401 ensures backend registration
+import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.core import EvaluationResult, SkeletonResult, VolumeData, get_backend
 from skelhub.evaluation import evaluate_skeleton_file
 from skelhub.io import read_nifti, write_nifti

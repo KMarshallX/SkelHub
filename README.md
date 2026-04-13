@@ -4,7 +4,7 @@ SkelHub is a Python framework for 3D skeletonization. It provides a shared packa
 
 Current status:
 
-- Supported algorithm backends: `mcp`
+- Supported algorithm backends: `mcp`, `lee94`
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`
 - Evaluation: placeholder path that validates and loads skeleton NIfTI predictions
 
@@ -28,6 +28,7 @@ SkelHub/
 │   ├── core/
 │   ├── io/
 │   ├── algorithms/
+│   │   ├── lee94/
 │   │   └── mcp/
 │   ├── evaluation/
 │   ├── preprocessing/
@@ -42,6 +43,7 @@ Framework notes:
 
 - `skelhub.core` contains shared result objects, framework interfaces, and the backend registry.
 - `skelhub.algorithms.mcp` contains the current MCP implementation and its thin framework adapter.
+- `skelhub.algorithms.lee94` contains the Lee et al. 1994 thinning backend adapter around `scikit-image`.
 - `skelhub.evaluation` currently contains a placeholder evaluator that validates and loads a skeleton NIfTI through the framework path.
 
 ## CLI Usage
@@ -62,6 +64,16 @@ Equivalent local module execution without installation:
 python -m skelhub run --algorithm mcp --input INPUT.nii.gz --output OUTPUT.nii.gz
 ```
 
+Run Lee94 through the same framework path:
+
+```bash
+skelhub run \
+  --algorithm lee94 \
+  --input ./test_data/small_test_data/CLIP_MASKED_sub_160um_seg.nii.gz \
+  --output ./test_outputs/skelhub_lee94_small.nii.gz \
+  --verbose
+```
+
 MCP parameters exposed at the framework level:
 
 - `--root-method {max_fdt,topmost}`
@@ -71,6 +83,10 @@ MCP parameters exposed at the framework level:
 - `--min-object-size INT`
 - `--label-objects`
 - `--verbose`
+
+Lee94 parameters exposed at the framework level:
+
+- `--binarize-threshold FLOAT`
 
 Run the evaluation placeholder:
 
@@ -82,13 +98,13 @@ skelhub evaluate --pred ./test_outputs/skelhub_mcp_small.nii.gz
 
 ```python
 from skelhub.api import evaluate_prediction_path, run_algorithm_from_path
-from skelhub.algorithms.mcp import MCPConfig
+from skelhub.algorithms import Lee94Config, MCPConfig
 
 result = run_algorithm_from_path(
-    algorithm="mcp",
+    algorithm="lee94",
     input_path="input.nii.gz",
     output_path="out.nii.gz",
-    config=MCPConfig(min_object_size=50),
+    config=Lee94Config(binarize_threshold=0.5),
 )
 
 evaluation = evaluate_prediction_path("out.nii.gz")
@@ -109,6 +125,7 @@ print(evaluation.message)
 - optional `graph`
 
 The MCP backend keeps its current per-object runtime metadata under `result.backend_metadata["mcp"]`.
+The Lee94 backend records its wrapper metadata under `result.backend_metadata["lee94"]` and uses `scikit-image`'s Lee-method implementation rather than a custom in-repo thinning implementation.
 
 ## Evaluation Overview
 

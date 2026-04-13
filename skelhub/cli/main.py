@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from typing import Optional
 
-from skelhub.algorithms import MCPBackend  # noqa: F401 ensures backend registration
+import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.api import evaluate_prediction_path, run_algorithm_from_path
 from skelhub.core import list_backends
 
@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--algorithm", required=True, choices=list_backends(), help="Backend to execute.")
     run_parser.add_argument("-i", "--input", required=True, help="Path to the input NIfTI volume.")
     run_parser.add_argument("-o", "--output", required=True, help="Path to the output skeleton NIfTI.")
+    run_parser.add_argument(
+        "--binarize-threshold",
+        type=float,
+        default=0.5,
+        help="Threshold used by backends that require binary foreground conversion, such as lee94.",
+    )
     run_parser.add_argument(
         "--root-method",
         choices=("max_fdt", "topmost"),

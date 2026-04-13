@@ -1,5 +1,29 @@
 # Algorithms
 
+## Lee94 Backend
+
+The Lee94 backend is integrated under `skelhub.algorithms.lee94`.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz \
+    --binarize-threshold 0.5 \
+    --verbose
+```
+
+Backend-specific parameter:
+
+- `--binarize-threshold FLOAT` controls the threshold used to convert normalized input intensities into a binary foreground mask before skeletonization. The default is `0.5`.
+
+Implementation notes:
+
+- This backend does not reimplement Lee et al. 1994 thinning manually.
+- It wraps `skimage.morphology.skeletonize(..., method="lee")` inside a SkelHub backend adapter.
+- The adapter validates that the loaded input is 3D, thresholds it to a binary mask, runs the wrapped scikit-image implementation, and returns the framework-standard `SkeletonResult`.
+- Lee94-specific behavior is isolated under `skelhub/algorithms/lee94/` and does not alter the MCP backend mathematics.
+
 ## MCP Backend
 
 The original repository content is now integrated as the first SkelHub backend under `skelhub.algorithms.mcp`.

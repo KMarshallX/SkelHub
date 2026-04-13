@@ -13,8 +13,9 @@ Current implementation details:
 - `skelhub.core.registry` registers backends by algorithm name.
 - `skelhub.api` is the framework orchestration layer that loads inputs, dispatches to a backend, writes outputs, and routes evaluation requests.
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
+- `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
 
 Compatibility notes:
 
-- The legacy top-level `main.py` is retained as a non-destructive wrapper, but it now forwards execution into the framework CLI as `skelhub run --algorithm mcp`.
+- The unified run path now supports multiple algorithms, including `mcp` and `lee94`, through the same registry-driven CLI and API route.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.
