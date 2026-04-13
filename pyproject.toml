@@ -9,8 +9,12 @@ description = "Unified skeletonization framework with MCP as the first backend."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "geomdl>=5.3",
+  "igraph>=0.11",
   "nibabel>=5.0",
+  "numba>=0.58",
   "numpy>=1.24",
+  "scikit-image>=0.21",
   "scipy>=1.10",
 ]
 
