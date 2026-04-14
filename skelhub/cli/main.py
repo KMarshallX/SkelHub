@@ -6,7 +6,8 @@ import argparse
 from typing import Optional
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
-from skelhub.api import evaluate_prediction_path, run_algorithm_from_path
+from skelhub.api import evaluate_prediction_path, launch_graph_viewer_from_path, run_algorithm_from_path
+from skelhub.visualization import GraphVisualizationError
 from skelhub.core import list_backends
 
 
@@ -55,6 +56,24 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = subparsers.add_parser("evaluate", help="Run the framework evaluation path.")
     eval_parser.add_argument("--pred", required=True, help="Skeleton NIfTI path to evaluate.")
 
+    graphviz_parser = subparsers.add_parser(
+        "graphviz",
+        help="Open a 3D PySide6 viewer for a GraphML vessel graph.",
+    )
+    graphviz_parser.add_argument("-i", "--input", required=True, help="Path to the input GraphML file.")
+    graphviz_parser.add_argument(
+        "--edge_thickness",
+        type=float,
+        default=2.0,
+        help="Rendered edge thickness in the 3D viewer.",
+    )
+    graphviz_parser.add_argument(
+        "--node_size",
+        type=float,
+        default=6.0,
+        help="Rendered node size in the 3D viewer.",
+    )
+
     return parser
 
 
@@ -82,6 +101,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         result = evaluate_prediction_path(args.pred)
         print(result.message)
         return 0
+
+    if args.command == "graphviz":
+        try:
+            return launch_graph_viewer_from_path(
+                args.input,
+                edge_thickness=args.edge_thickness,
+                node_size=args.node_size,
+            )
+        except GraphVisualizationError as exc:
+            parser.exit(status=2, message=f"skelhub graphviz: error: {exc}\n")
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

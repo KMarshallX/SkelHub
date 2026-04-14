@@ -12,6 +12,7 @@ Current implementation details:
 - `skelhub.core.models` defines `VolumeData`, `SkeletonResult`, `GraphResult`, and `EvaluationResult`.
 - `skelhub.core.registry` registers backends by algorithm name.
 - `skelhub.api` is the framework orchestration layer that loads inputs, dispatches to a backend, writes outputs, and routes evaluation requests.
+- `skelhub.visualization` contains the optional PySide6-based GraphML viewer used by `skelhub graphviz`.
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
 - `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
 

@@ -204,12 +204,14 @@ Target commands should conceptually include:
 * `skelhub run` - run specific algorithm
 * `skelhub evaluate` - evaluate the output with ground truth
 * `skelhub benchmark` - run selected algorithms against a dataset, then generate a benchmark reports
+* `skelhub graphviz` - take the .graphml file then visualize the vessel graph
 
 Examples of intended usage:
 
     skelhub run --algorithm mcp --input input.nii.gz --output out_dir/
     skelhub evaluate --pred pred_skel.nii.gz --ref ref_skel.nii.gz
     skelhub benchmark --algorithms mcp thinning teasar --dataset synthetic_set/
+    skelhub graphviz --input input.graphml --output graph.png
 
 Do not expose algorithm-specific top-level scripts as the primary user workflow if they can be folded into the main CLI cleanly.
 

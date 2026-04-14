@@ -16,6 +16,12 @@ dependencies = [
   "numpy>=1.24",
   "scikit-image>=0.21",
   "scipy>=1.10",
+  "PySide6>=6.6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
 ]
 
 [project.scripts]
