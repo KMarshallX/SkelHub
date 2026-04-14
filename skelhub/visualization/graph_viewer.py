@@ -40,13 +40,30 @@ class GraphVisualizationOptions:
 
 
 @dataclass(slots=True)
+class _SceneMetrics:
+    center: np.ndarray
+    span: float
+    bounding_radius: float
+    camera_distance: float
+    near_plane: float
+    far_plane: float
+    node_radius: float
+    edge_radius: float
+
+
+@dataclass(slots=True)
 class _QtModules:
     QtCore: Any
     QtGui: Any
     QtWidgets: Any
-    Qt3DCore: Any
-    Qt3DExtras: Any
-    Qt3DRender: Any
+    QEntity: Any
+    QTransform: Any
+    QPointLight: Any
+    QOrbitCameraController: Any
+    QPhongMaterial: Any
+    QSphereMesh: Any
+    QCylinderMesh: Any
+    Qt3DWindow: Any
 
 
 def _is_module_available(module_name: str) -> bool:
@@ -131,6 +148,22 @@ def _build_optional_dependency_error(exc: ImportError | OSError) -> GraphVisuali
     return GraphVisualizationError(" ".join(message_parts))
 
 
+def _resolve_qt_symbol(module: Any, namespace_name: str, symbol_name: str) -> Any:
+    symbol = getattr(module, symbol_name, None)
+    if symbol is not None:
+        return symbol
+
+    namespace = getattr(module, namespace_name, None)
+    if namespace is not None:
+        symbol = getattr(namespace, symbol_name, None)
+        if symbol is not None:
+            return symbol
+
+    raise AttributeError(
+        f"module '{module.__name__}' has no attribute '{symbol_name}'"
+    )
+
+
 def _import_qt_modules() -> _QtModules:
     try:
         QtCore = importlib.import_module("PySide6.QtCore")
@@ -141,14 +174,30 @@ def _import_qt_modules() -> _QtModules:
         Qt3DRender = importlib.import_module("PySide6.Qt3DRender")
     except (ImportError, OSError) as exc:
         raise _build_optional_dependency_error(exc) from exc
+    try:
+        QEntity = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QEntity")
+        QTransform = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QTransform")
+        QPointLight = _resolve_qt_symbol(Qt3DRender, "Qt3DRender", "QPointLight")
+        QOrbitCameraController = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QOrbitCameraController")
+        QPhongMaterial = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QPhongMaterial")
+        QSphereMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QSphereMesh")
+        QCylinderMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QCylinderMesh")
+        Qt3DWindow = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "Qt3DWindow")
+    except AttributeError as exc:
+        raise _build_optional_dependency_error(ImportError(str(exc))) from exc
 
     return _QtModules(
         QtCore=QtCore,
         QtGui=QtGui,
         QtWidgets=QtWidgets,
-        Qt3DCore=Qt3DCore,
-        Qt3DExtras=Qt3DExtras,
-        Qt3DRender=Qt3DRender,
+        QEntity=QEntity,
+        QTransform=QTransform,
+        QPointLight=QPointLight,
+        QOrbitCameraController=QOrbitCameraController,
+        QPhongMaterial=QPhongMaterial,
+        QSphereMesh=QSphereMesh,
+        QCylinderMesh=QCylinderMesh,
+        Qt3DWindow=Qt3DWindow,
     )
 
 
@@ -260,12 +309,56 @@ def _graph_span(node_positions: np.ndarray) -> float:
     return span if span > 0 else 1.0
 
 
+def _graph_center(node_positions: np.ndarray) -> np.ndarray:
+    if node_positions.size == 0:
+        return np.zeros(3, dtype=float)
+    return np.asarray(node_positions.mean(axis=0), dtype=float)
+
+
+def _graph_bounding_radius(node_positions: np.ndarray, center: np.ndarray) -> float:
+    if node_positions.size == 0:
+        return 1.0
+    offsets = np.asarray(node_positions, dtype=float) - center
+    radius = float(np.linalg.norm(offsets, axis=1).max())
+    return radius if radius > 0 else 1.0
+
+
 def _size_to_world_radius(span: float, size: float) -> float:
-    return max(span * (size / 250.0), span * 0.003)
+    return max(size * 0.12, span * 0.025, 0.35)
 
 
 def _edge_radius(span: float, thickness: float) -> float:
-    return max(span * (thickness / 600.0), span * 0.0015)
+    return max(thickness * 0.08, span * 0.0125, 0.14)
+
+
+def _compute_scene_metrics(
+    node_positions: np.ndarray,
+    *,
+    node_size: float,
+    edge_thickness: float,
+) -> _SceneMetrics:
+    center = _graph_center(node_positions)
+    span = _graph_span(node_positions)
+    bounding_radius = _graph_bounding_radius(node_positions, center)
+    scene_radius = max(bounding_radius, span * 0.5, 1.0)
+    camera_distance = scene_radius * 3.2
+    near_plane = max(scene_radius * 0.05, 0.1)
+    far_plane = max(scene_radius * 12.0, near_plane + 100.0)
+
+    return _SceneMetrics(
+        center=center,
+        span=span,
+        bounding_radius=bounding_radius,
+        camera_distance=camera_distance,
+        near_plane=near_plane,
+        far_plane=far_plane,
+        node_radius=_size_to_world_radius(span, node_size),
+        edge_radius=_edge_radius(span, edge_thickness),
+    )
+
+
+def _scene_entity_counts(graph_data: GraphVisualizationData) -> tuple[int, int]:
+    return graph_data.node_count, graph_data.edge_count
 
 
 def _qvector3d_from_array(QtGui: Any, values: Sequence[float]) -> Any:
@@ -273,12 +366,12 @@ def _qvector3d_from_array(QtGui: Any, values: Sequence[float]) -> Any:
 
 
 def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: float) -> None:
-    light_entity = qt.Qt3DCore.Qt3DCore.QEntity(root_entity)
-    point_light = qt.Qt3DRender.Qt3DRender.QPointLight(light_entity)
+    light_entity = qt.QEntity(root_entity)
+    point_light = qt.QPointLight(light_entity)
     point_light.setColor(qt.QtGui.QColor(255, 255, 255))
-    point_light.setIntensity(1.2)
+    point_light.setIntensity(1.6)
 
-    light_transform = qt.Qt3DCore.Qt3DCore.QTransform()
+    light_transform = qt.QTransform()
     light_transform.setTranslation(
         qt.QtGui.QVector3D(
             float(center[0] + distance),
@@ -292,61 +385,64 @@ def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: f
 
 
 def _build_scene(window: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> Any:
-    root_entity = qt.Qt3DCore.Qt3DCore.QEntity()
+    root_entity = qt.QEntity()
     frame_graph = window.defaultFrameGraph()
     frame_graph.setClearColor(qt.QtGui.QColor(255, 255, 255))
 
+    metrics = _compute_scene_metrics(
+        graph_data.node_positions,
+        node_size=options.node_size,
+        edge_thickness=options.edge_thickness,
+    )
+
     camera = window.camera()
     lens = camera.lens()
-    lens.setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 10000.0)
-
-    center = graph_data.node_positions.mean(axis=0)
-    span = _graph_span(graph_data.node_positions)
-    distance = max(span * 2.4, 25.0)
+    lens.setPerspectiveProjection(45.0, 16.0 / 9.0, metrics.near_plane, metrics.far_plane)
 
     camera.setPosition(
         qt.QtGui.QVector3D(
-            float(center[0] + distance),
-            float(center[1] + distance * 0.45),
-            float(center[2] + distance),
+            float(metrics.center[0] + metrics.camera_distance),
+            float(metrics.center[1] + metrics.camera_distance * 0.6),
+            float(metrics.center[2] + metrics.camera_distance),
         )
     )
-    camera.setViewCenter(_qvector3d_from_array(qt.QtGui, center))
+    camera.setViewCenter(_qvector3d_from_array(qt.QtGui, metrics.center))
 
-    controller = qt.Qt3DExtras.Qt3DExtras.QOrbitCameraController(root_entity)
+    controller = qt.QOrbitCameraController(root_entity)
     controller.setCamera(camera)
-    controller.setLinearSpeed(max(span * 2.0, 10.0))
+    controller.setLinearSpeed(max(metrics.bounding_radius * 2.5, 12.0))
     controller.setLookSpeed(180.0)
 
-    _add_light(root_entity, qt, center, distance)
+    _add_light(root_entity, qt, metrics.center, metrics.camera_distance)
 
-    node_radius = _size_to_world_radius(span, options.node_size)
-    edge_radius = _edge_radius(span, options.edge_thickness)
-
-    node_material = qt.Qt3DExtras.Qt3DExtras.QPhongMaterial(root_entity)
+    node_material = qt.QPhongMaterial(root_entity)
     node_material.setDiffuse(qt.QtGui.QColor(220, 20, 60))
-    node_material.setAmbient(qt.QtGui.QColor(139, 0, 0))
+    node_material.setAmbient(qt.QtGui.QColor(180, 35, 70))
+    node_material.setSpecular(qt.QtGui.QColor(255, 220, 220))
+    node_material.setShininess(32.0)
 
-    node_mesh = qt.Qt3DExtras.Qt3DExtras.QSphereMesh()
+    node_mesh = qt.QSphereMesh()
     node_mesh.setRadius(1.0)
     node_mesh.setRings(12)
     node_mesh.setSlices(16)
 
     for position in graph_data.node_positions:
-        node_entity = qt.Qt3DCore.Qt3DCore.QEntity(root_entity)
-        node_transform = qt.Qt3DCore.Qt3DCore.QTransform()
+        node_entity = qt.QEntity(root_entity)
+        node_transform = qt.QTransform()
         node_transform.setTranslation(_qvector3d_from_array(qt.QtGui, position))
-        node_transform.setScale(node_radius)
+        node_transform.setScale(metrics.node_radius)
         node_entity.addComponent(node_mesh)
         node_entity.addComponent(node_material)
         node_entity.addComponent(node_transform)
 
     if graph_data.edge_count > 0:
-        edge_material = qt.Qt3DExtras.Qt3DExtras.QPhongMaterial(root_entity)
+        edge_material = qt.QPhongMaterial(root_entity)
         edge_material.setDiffuse(qt.QtGui.QColor(34, 139, 34))
-        edge_material.setAmbient(qt.QtGui.QColor(0, 100, 0))
+        edge_material.setAmbient(qt.QtGui.QColor(40, 160, 70))
+        edge_material.setSpecular(qt.QtGui.QColor(220, 255, 220))
+        edge_material.setShininess(24.0)
 
-        edge_mesh = qt.Qt3DExtras.Qt3DExtras.QCylinderMesh()
+        edge_mesh = qt.QCylinderMesh()
         edge_mesh.setRadius(1.0)
         edge_mesh.setLength(1.0)
         edge_mesh.setRings(8)
@@ -361,14 +457,14 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
             if length <= 0:
                 continue
 
-            edge_entity = qt.Qt3DCore.Qt3DCore.QEntity(root_entity)
-            edge_transform = qt.Qt3DCore.Qt3DCore.QTransform()
+            edge_entity = qt.QEntity(root_entity)
+            edge_transform = qt.QTransform()
             edge_transform.setTranslation(_qvector3d_from_array(qt.QtGui, (start + end) * 0.5))
 
             direction = qt.QtGui.QVector3D(float(delta[0]), float(delta[1]), float(delta[2]))
             direction.normalize()
             edge_transform.setRotation(qt.QtGui.QQuaternion.rotationTo(y_axis, direction))
-            edge_transform.setScale3D(qt.QtGui.QVector3D(edge_radius, length, edge_radius))
+            edge_transform.setScale3D(qt.QtGui.QVector3D(metrics.edge_radius, length, metrics.edge_radius))
 
             edge_entity.addComponent(edge_mesh)
             edge_entity.addComponent(edge_material)
@@ -404,7 +500,7 @@ def launch_graph_viewer(
         qt.QtCore.QCoreApplication.setAttribute(share_contexts)
         app = qt.QtWidgets.QApplication([])
 
-    window = qt.Qt3DExtras.Qt3DExtras.Qt3DWindow()
+    window = qt.Qt3DWindow()
     window.setTitle(options.window_title)
     window.resize(1200, 800)
     root_entity = _build_scene(window, graph_data, options, qt)
