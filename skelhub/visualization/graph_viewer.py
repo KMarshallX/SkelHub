@@ -28,6 +28,7 @@ class GraphVisualizationData:
     node_count: int
     edge_count: int
     source_path: str
+    render_warnings: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -58,6 +59,36 @@ class _SceneMetrics:
     far_plane: float
     node_radius: float
     edge_radius: float
+
+
+@dataclass(slots=True)
+class GraphSceneDiagnostics:
+    """Diagnostics describing how a graph was fit into the viewer scene."""
+
+    source_path: str
+    node_count: int
+    edge_count: int
+    coordinate_min: np.ndarray
+    coordinate_max: np.ndarray
+    centroid: np.ndarray
+    fit_center: np.ndarray
+    bounding_radius: float
+    camera_position: np.ndarray
+    near_plane: float
+    far_plane: float
+    aspect_ratio: float
+    warnings: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class GraphSceneBuildStats:
+    """Stats describing the actual renderable entities created for the active scene."""
+
+    source_path: str
+    node_count: int
+    edge_count: int
+    node_entities_built: int
+    edge_entities_built: int
 
 
 @dataclass(slots=True)
@@ -156,11 +187,18 @@ class _GraphSceneController:
         self._options = options
         self._root_entity: Any | None = None
 
-    def show_graph(self, graph_data: GraphVisualizationData | None) -> None:
+    def show_graph(
+        self,
+        graph_data: GraphVisualizationData | None,
+    ) -> tuple[GraphSceneDiagnostics | None, GraphSceneBuildStats | None]:
         if graph_data is None:
             root_entity = _build_empty_scene(self._window, self._qt)
+            diagnostics = None
+            build_stats = None
         else:
             root_entity = _build_scene(self._window, graph_data, self._options, self._qt)
+            diagnostics = _build_scene_diagnostics(self._window, graph_data, self._options)
+            build_stats = _build_scene_build_stats(graph_data)
 
         previous_root = self._root_entity
         self._window.setRootEntity(root_entity)
@@ -170,6 +208,8 @@ class _GraphSceneController:
             previous_root.setParent(None)
             if hasattr(previous_root, "deleteLater"):
                 previous_root.deleteLater()
+
+        return diagnostics, build_stats
 
 
 class _GraphViewerWindow:
@@ -185,7 +225,6 @@ class _GraphViewerWindow:
         self._qt = qt
         self._session = session
         self._options = options
-
         self._main_window = qt.QtWidgets.QMainWindow()
         self._main_window.resize(1200, 800)
 
@@ -193,10 +232,10 @@ class _GraphViewerWindow:
         self._scene_container = qt.QtWidgets.QWidget.createWindowContainer(self._scene_window)
         self._main_window.setCentralWidget(self._scene_container)
         self._status_bar = self._main_window.statusBar()
-        self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
-
         self._file_menu = qt.QtWidgets.QMenu("File", self._main_window)
         self._install_toolbar()
+
+        self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
         self._sync_view_from_session(status_message=None)
 
     def _install_toolbar(self) -> None:
@@ -213,6 +252,9 @@ class _GraphViewerWindow:
         file_button.setMenu(self._file_menu)
         toolbar.addWidget(file_button)
 
+        fit_action = toolbar.addAction("Fit Graph")
+        fit_action.triggered.connect(self._fit_active_graph)
+
     def _loaded_file_action_label(self, entry: GraphViewerSessionEntry) -> str:
         path = Path(entry.source_path)
         return f"{path.name} - {path.parent}"
@@ -220,11 +262,13 @@ class _GraphViewerWindow:
     def _set_window_title(self) -> None:
         active_entry = self._session.active_entry
         if active_entry is None:
-            self._main_window.setWindowTitle(f"{self._options.window_title} - No file loaded")
+            title = f"{self._options.window_title} - No file loaded"
+            self._main_window.setWindowTitle(title)
             return
 
         active_name = Path(active_entry.source_path).name
-        self._main_window.setWindowTitle(f"{self._options.window_title} - {active_name}")
+        title = f"{self._options.window_title} - {active_name}"
+        self._main_window.setWindowTitle(title)
 
     def _show_status(self, message: str | None) -> None:
         if message:
@@ -241,6 +285,10 @@ class _GraphViewerWindow:
         unload_action = self._file_menu.addAction("Unload Current")
         unload_action.setEnabled(self._session.active_entry is not None)
         unload_action.triggered.connect(self._unload_active_graph)
+
+        fit_action = self._file_menu.addAction("Fit Graph")
+        fit_action.setEnabled(self._session.active_entry is not None)
+        fit_action.triggered.connect(self._fit_active_graph)
 
         self._file_menu.addSeparator()
         entries = self._session.entries
@@ -261,10 +309,17 @@ class _GraphViewerWindow:
     def _sync_view_from_session(self, *, status_message: str | None) -> None:
         active_entry = self._session.active_entry
         active_graph = None if active_entry is None else active_entry.graph_data
-        self._scene_controller.show_graph(active_graph)
+        diagnostics, build_stats = self._scene_controller.show_graph(active_graph)
         self._set_window_title()
         self._refresh_file_menu()
-        self._show_status(status_message)
+        if diagnostics is None:
+            self._show_status(status_message)
+            return
+
+        print(_format_scene_diagnostics(diagnostics))
+        if build_stats is not None:
+            print(_format_scene_build_stats(build_stats))
+        self._show_status(_format_scene_status(diagnostics, build_stats=build_stats, prefix=status_message))
 
     def _choose_graph_file(self) -> None:
         selected_path, _ = self._qt.QtWidgets.QFileDialog.getOpenFileName(
@@ -280,6 +335,17 @@ class _GraphViewerWindow:
     def _show_error(self, error: GraphVisualizationError) -> None:
         self._qt.QtWidgets.QMessageBox.critical(self._main_window, "SkelHub Graph Viewer", str(error))
 
+    def _show_renderability_warning(self, graph_data: GraphVisualizationData) -> None:
+        if not graph_data.render_warnings:
+            return
+
+        warning_text = "\n".join(f"- {warning}" for warning in graph_data.render_warnings)
+        self._qt.QtWidgets.QMessageBox.warning(
+            self._main_window,
+            "SkelHub Graph Viewer Warning",
+            f"GraphML file loaded with renderability warnings:\n{warning_text}",
+        )
+
     def _load_graph_file(self, path: str | Path) -> None:
         try:
             entry, is_new_file = self._session.load_file(path)
@@ -293,6 +359,7 @@ class _GraphViewerWindow:
         else:
             status_message = f"GraphML file already loaded; switched to: {file_name}"
         self._sync_view_from_session(status_message=status_message)
+        self._show_renderability_warning(entry.graph_data)
 
     def _unload_active_graph(self) -> None:
         removed = self._session.unload_active_file()
@@ -319,9 +386,23 @@ class _GraphViewerWindow:
         self._sync_view_from_session(
             status_message=f"Now showing GraphML file: {Path(entry.source_path).name}"
         )
+        self._show_renderability_warning(entry.graph_data)
+
+    def _fit_active_graph(self) -> None:
+        active_entry = self._session.active_entry
+        if active_entry is None:
+            self._show_status("No GraphML file is currently loaded.")
+            return
+
+        self._sync_view_from_session(
+            status_message=f"Re-fit graph view: {Path(active_entry.source_path).name}"
+        )
 
     def show(self) -> None:
         self._main_window.show()
+        active_entry = self._session.active_entry
+        if active_entry is not None:
+            self._show_renderability_warning(active_entry.graph_data)
 
 
 def _is_module_available(module_name: str) -> bool:
@@ -404,6 +485,87 @@ def _build_optional_dependency_error(exc: ImportError | OSError) -> GraphVisuali
 
     message_parts.append(f"Original import error: {exc}")
     return GraphVisualizationError(" ".join(message_parts))
+
+
+def _viewer_troubleshooting_enabled() -> bool:
+    return os.environ.get("SKELHUB_GRAPH_VIEWER_TROUBLESHOOT", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _safe_gl_string(gl_get_string: Callable[[int], Any] | None, enum_value: int) -> str | None:
+    if gl_get_string is None:
+        return None
+    try:
+        raw_value = gl_get_string(enum_value)
+    except Exception:  # pragma: no cover - backend-specific runtime failure
+        return None
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bytes):
+        return raw_value.decode("utf-8", errors="replace")
+    return str(raw_value)
+
+
+def _collect_runtime_diagnostics(qt: _QtModules, window: Any | None = None) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "python_executable": sys.executable,
+        "qt_version": qt.QtCore.qVersion() if hasattr(qt.QtCore, "qVersion") else "unknown",
+        "pyside_version": getattr(qt.QtCore, "__version__", "unknown"),
+        "qt_opengl_env": os.environ.get("QT_OPENGL", ""),
+        "qsg_rhi_backend_env": os.environ.get("QSG_RHI_BACKEND", ""),
+        "qt_quick_backend_env": os.environ.get("QT_QUICK_BACKEND", ""),
+        "qt_xcb_gl_integration_env": os.environ.get("QT_XCB_GL_INTEGRATION", ""),
+        "ld_library_path": os.environ.get("LD_LIBRARY_PATH", ""),
+        "rhi_opengl_fallback_hint": bool(
+            os.environ.get("QT_OPENGL", "").strip()
+            or os.environ.get("QSG_RHI_BACKEND", "").strip()
+        ),
+    }
+
+    current_context = None
+    qopengl_context = getattr(qt.QtGui, "QOpenGLContext", None)
+    if qopengl_context is not None and hasattr(qopengl_context, "currentContext"):
+        try:
+            current_context = qopengl_context.currentContext()
+        except Exception:  # pragma: no cover - backend-specific runtime failure
+            current_context = None
+
+    diagnostics["current_context_available"] = current_context is not None
+
+    if current_context is not None:
+        functions = getattr(current_context, "functions", lambda: None)()
+        gl_get_string = getattr(functions, "glGetString", None) if functions is not None else None
+        diagnostics["opengl_vendor"] = _safe_gl_string(gl_get_string, 0x1F00)
+        diagnostics["opengl_renderer"] = _safe_gl_string(gl_get_string, 0x1F01)
+        diagnostics["opengl_version"] = _safe_gl_string(gl_get_string, 0x1F02)
+    else:
+        diagnostics["opengl_vendor"] = None
+        diagnostics["opengl_renderer"] = None
+        diagnostics["opengl_version"] = None
+
+    if window is not None:
+        diagnostics["window_aspect_ratio"] = _camera_aspect_ratio(window)
+
+    return diagnostics
+
+
+def _format_runtime_diagnostics(diagnostics: dict[str, Any], *, phase: str) -> str:
+    return (
+        f"graph viewer runtime diagnostics ({phase}): "
+        f"python={diagnostics.get('python_executable')}, "
+        f"qt_version={diagnostics.get('qt_version')}, "
+        f"pyside_version={diagnostics.get('pyside_version')}, "
+        f"current_context_available={diagnostics.get('current_context_available')}, "
+        f"opengl_vendor={diagnostics.get('opengl_vendor')}, "
+        f"opengl_renderer={diagnostics.get('opengl_renderer')}, "
+        f"opengl_version={diagnostics.get('opengl_version')}, "
+        f"rhi_opengl_fallback_hint={diagnostics.get('rhi_opengl_fallback_hint')}, "
+        f"qt_opengl_env={diagnostics.get('qt_opengl_env')}, "
+        f"qsg_rhi_backend_env={diagnostics.get('qsg_rhi_backend_env')}, "
+        f"qt_quick_backend_env={diagnostics.get('qt_quick_backend_env')}, "
+        f"qt_xcb_gl_integration_env={diagnostics.get('qt_xcb_gl_integration_env')}, "
+        f"window_aspect_ratio={diagnostics.get('window_aspect_ratio')}, "
+        f"ld_library_path={diagnostics.get('ld_library_path')}"
+    )
 
 
 def _resolve_qt_symbol(module: Any, namespace_name: str, symbol_name: str) -> Any:
@@ -541,6 +703,28 @@ def _build_edge_positions(graph: ig.Graph, node_positions: np.ndarray) -> np.nda
     return edge_positions
 
 
+def _renderability_warnings(node_positions: np.ndarray, edge_count: int) -> tuple[str, ...]:
+    if node_positions.shape[0] == 0:
+        raise GraphVisualizationError("GraphML file does not contain any nodes to render.")
+
+    positions = np.asarray(node_positions, dtype=float)
+    if not np.isfinite(positions).all():
+        raise GraphVisualizationError("GraphML file contains non-finite node coordinates and cannot be rendered.")
+
+    warnings: list[str] = []
+    raw_span = float(np.ptp(positions, axis=0).max()) if positions.size else 0.0
+    max_abs_coordinate = float(np.abs(positions).max()) if positions.size else 0.0
+
+    if edge_count == 0:
+        warnings.append("Graph contains zero edges; only isolated nodes will be renderable.")
+    if raw_span <= 1e-6:
+        warnings.append("Graph spatial extent is near zero; geometry may collapse into an indistinguishable point.")
+    if max_abs_coordinate >= 1e6:
+        warnings.append("Graph coordinates are very large in magnitude; camera fitting may be difficult.")
+
+    return tuple(warnings)
+
+
 def load_graph_visualization_data(input_path: str | Path) -> GraphVisualizationData:
     """Load GraphML and prepare positions for rendering."""
     graph_path = Path(input_path)
@@ -554,12 +738,14 @@ def load_graph_visualization_data(input_path: str | Path) -> GraphVisualizationD
 
     node_positions = _extract_node_positions(graph)
     edge_positions = _build_edge_positions(graph, node_positions)
+    render_warnings = _renderability_warnings(node_positions, graph.ecount())
     return GraphVisualizationData(
         node_positions=node_positions,
         edge_positions=edge_positions,
         node_count=graph.vcount(),
         edge_count=graph.ecount(),
         source_path=str(graph_path),
+        render_warnings=render_warnings,
     )
 
 
@@ -570,10 +756,25 @@ def _graph_span(node_positions: np.ndarray) -> float:
     return span if span > 0 else 1.0
 
 
-def _graph_center(node_positions: np.ndarray) -> np.ndarray:
+def _graph_bounds(node_positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if node_positions.size == 0:
+        zero = np.zeros(3, dtype=float)
+        return zero, zero
+
+    positions = np.asarray(node_positions, dtype=float)
+    return positions.min(axis=0), positions.max(axis=0)
+
+
+def _graph_centroid(node_positions: np.ndarray) -> np.ndarray:
     if node_positions.size == 0:
         return np.zeros(3, dtype=float)
     return np.asarray(node_positions.mean(axis=0), dtype=float)
+
+
+def _graph_center(node_positions: np.ndarray) -> np.ndarray:
+    if node_positions.size == 0:
+        return np.zeros(3, dtype=float)
+    return np.asarray(np.median(np.asarray(node_positions, dtype=float), axis=0), dtype=float)
 
 
 def _graph_bounding_radius(node_positions: np.ndarray, center: np.ndarray) -> float:
@@ -622,21 +823,174 @@ def _scene_entity_counts(graph_data: GraphVisualizationData) -> tuple[int, int]:
     return graph_data.node_count, graph_data.edge_count
 
 
+def _built_scene_entity_counts(graph_data: GraphVisualizationData) -> tuple[int, int]:
+    node_entities_built = int(graph_data.node_positions.shape[0])
+    edge_entities_built = 0
+    for edge_index in range(0, graph_data.edge_positions.shape[0], 2):
+        start = graph_data.edge_positions[edge_index]
+        end = graph_data.edge_positions[edge_index + 1]
+        if float(np.linalg.norm(end - start)) > 0.0:
+            edge_entities_built += 1
+    return node_entities_built, edge_entities_built
+
+
+def _center_graph_positions(
+    graph_data: GraphVisualizationData,
+    center: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    if graph_data.node_positions.size == 0:
+        centered_nodes = np.empty((0, 3), dtype=float)
+    else:
+        centered_nodes = np.asarray(graph_data.node_positions, dtype=float) - center
+
+    if graph_data.edge_positions.size == 0:
+        centered_edges = np.empty((0, 3), dtype=float)
+    else:
+        centered_edges = np.asarray(graph_data.edge_positions, dtype=float) - center
+
+    return centered_nodes, centered_edges
+
+
 def _qvector3d_from_array(QtGui: Any, values: Sequence[float]) -> Any:
     return QtGui.QVector3D(float(values[0]), float(values[1]), float(values[2]))
+
+
+def _camera_aspect_ratio(window: Any) -> float:
+    width = 0
+    height = 0
+
+    for getter_name in ("width",):
+        getter = getattr(window, getter_name, None)
+        if callable(getter):
+            width = int(getter())
+            break
+
+    for getter_name in ("height",):
+        getter = getattr(window, getter_name, None)
+        if callable(getter):
+            height = int(getter())
+            break
+
+    if width <= 0 or height <= 0:
+        size_getter = getattr(window, "size", None)
+        if callable(size_getter):
+            size = size_getter()
+            width_method = getattr(size, "width", None)
+            height_method = getattr(size, "height", None)
+            if callable(width_method):
+                width = int(width_method())
+            if callable(height_method):
+                height = int(height_method())
+
+    if width <= 0 or height <= 0:
+        return 16.0 / 9.0
+
+    return max(float(width) / float(height), 0.1)
+
+
+def _camera_position(center: np.ndarray, metrics: _SceneMetrics) -> np.ndarray:
+    return np.asarray(
+        [
+            float(center[0] + metrics.camera_distance),
+            float(center[1] + metrics.camera_distance * 0.6),
+            float(center[2] + metrics.camera_distance),
+        ],
+        dtype=float,
+    )
+
+
+def _build_scene_diagnostics(
+    window: Any,
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+) -> GraphSceneDiagnostics:
+    coordinate_min, coordinate_max = _graph_bounds(graph_data.node_positions)
+    centroid = _graph_centroid(graph_data.node_positions)
+    metrics = _compute_scene_metrics(
+        graph_data.node_positions,
+        node_size=options.node_size,
+        edge_thickness=options.edge_thickness,
+    )
+    origin = np.zeros(3, dtype=float)
+    return GraphSceneDiagnostics(
+        source_path=graph_data.source_path,
+        node_count=graph_data.node_count,
+        edge_count=graph_data.edge_count,
+        coordinate_min=coordinate_min,
+        coordinate_max=coordinate_max,
+        centroid=centroid,
+        fit_center=np.asarray(metrics.center, dtype=float),
+        bounding_radius=metrics.bounding_radius,
+        camera_position=_camera_position(origin, metrics),
+        near_plane=metrics.near_plane,
+        far_plane=metrics.far_plane,
+        aspect_ratio=_camera_aspect_ratio(window),
+        warnings=graph_data.render_warnings,
+    )
+
+
+def _build_scene_build_stats(graph_data: GraphVisualizationData) -> GraphSceneBuildStats:
+    node_entities_built, edge_entities_built = _built_scene_entity_counts(graph_data)
+    return GraphSceneBuildStats(
+        source_path=graph_data.source_path,
+        node_count=graph_data.node_count,
+        edge_count=graph_data.edge_count,
+        node_entities_built=node_entities_built,
+        edge_entities_built=edge_entities_built,
+    )
+
+
+def _format_scene_status(
+    diagnostics: GraphSceneDiagnostics,
+    *,
+    build_stats: GraphSceneBuildStats | None = None,
+    prefix: str | None = None,
+) -> str:
+    message = (
+        f"nodes={diagnostics.node_count}, edges={diagnostics.edge_count}, "
+        f"radius={diagnostics.bounding_radius:.3f}, "
+        f"clip=({diagnostics.near_plane:.3f}, {diagnostics.far_plane:.3f})"
+    )
+    if build_stats is not None:
+        message = (
+            f"{message}, node_entities={build_stats.node_entities_built}, "
+            f"edge_entities={build_stats.edge_entities_built}"
+        )
+    if diagnostics.warnings:
+        message = f"{message}, warnings={len(diagnostics.warnings)}"
+    if prefix:
+        return f"{prefix} | {message}"
+    return message
+
+
+def _format_scene_diagnostics(diagnostics: GraphSceneDiagnostics) -> str:
+    return (
+        f"graph scene diagnostics: file={diagnostics.source_path}, "
+        f"nodes={diagnostics.node_count}, edges={diagnostics.edge_count}, "
+        f"min={diagnostics.coordinate_min.tolist()}, max={diagnostics.coordinate_max.tolist()}, "
+        f"centroid={diagnostics.centroid.tolist()}, fit_center={diagnostics.fit_center.tolist()}, "
+        f"bounding_radius={diagnostics.bounding_radius:.6f}, "
+        f"camera_position={diagnostics.camera_position.tolist()}, "
+        f"near_plane={diagnostics.near_plane:.6f}, far_plane={diagnostics.far_plane:.6f}, "
+        f"aspect_ratio={diagnostics.aspect_ratio:.6f}, "
+        f"warnings={list(diagnostics.warnings)}"
+    )
+
+
+def _format_scene_build_stats(build_stats: GraphSceneBuildStats) -> str:
+    return (
+        f"graph scene build stats: file={build_stats.source_path}, "
+        f"nodes={build_stats.node_count}, edges={build_stats.edge_count}, "
+        f"node_entities_built={build_stats.node_entities_built}, "
+        f"edge_entities_built={build_stats.edge_entities_built}"
+    )
 
 
 def _configure_camera(window: Any, qt: _QtModules, center: np.ndarray, metrics: _SceneMetrics) -> None:
     camera = window.camera()
     lens = camera.lens()
-    lens.setPerspectiveProjection(45.0, 16.0 / 9.0, metrics.near_plane, metrics.far_plane)
-    camera.setPosition(
-        qt.QtGui.QVector3D(
-            float(center[0] + metrics.camera_distance),
-            float(center[1] + metrics.camera_distance * 0.6),
-            float(center[2] + metrics.camera_distance),
-        )
-    )
+    lens.setPerspectiveProjection(45.0, _camera_aspect_ratio(window), metrics.near_plane, metrics.far_plane)
+    camera.setPosition(_qvector3d_from_array(qt.QtGui, _camera_position(center, metrics)))
     camera.setViewCenter(_qvector3d_from_array(qt.QtGui, center))
 
 
@@ -691,14 +1045,16 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
         edge_thickness=options.edge_thickness,
     )
 
-    _configure_camera(window, qt, metrics.center, metrics)
+    centered_node_positions, centered_edge_positions = _center_graph_positions(graph_data, metrics.center)
+    origin = np.zeros(3, dtype=float)
+    _configure_camera(window, qt, origin, metrics)
 
     controller = qt.QOrbitCameraController(root_entity)
     controller.setCamera(window.camera())
     controller.setLinearSpeed(max(metrics.bounding_radius * 2.5, 12.0))
     controller.setLookSpeed(180.0)
 
-    _add_light(root_entity, qt, metrics.center, metrics.camera_distance)
+    _add_light(root_entity, qt, origin, metrics.camera_distance)
 
     node_material = qt.QPhongMaterial(root_entity)
     node_material.setDiffuse(qt.QtGui.QColor(220, 20, 60))
@@ -711,7 +1067,7 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
     node_mesh.setRings(12)
     node_mesh.setSlices(16)
 
-    for position in graph_data.node_positions:
+    for position in centered_node_positions:
         node_entity = qt.QEntity(root_entity)
         node_transform = qt.QTransform()
         node_transform.setTranslation(_qvector3d_from_array(qt.QtGui, position))
@@ -734,9 +1090,9 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
         edge_mesh.setSlices(12)
 
         y_axis = qt.QtGui.QVector3D(0.0, 1.0, 0.0)
-        for edge_index in range(0, graph_data.edge_positions.shape[0], 2):
-            start = graph_data.edge_positions[edge_index]
-            end = graph_data.edge_positions[edge_index + 1]
+        for edge_index in range(0, centered_edge_positions.shape[0], 2):
+            start = centered_edge_positions[edge_index]
+            end = centered_edge_positions[edge_index + 1]
             delta = end - start
             length = float(np.linalg.norm(delta))
             if length <= 0:
@@ -790,6 +1146,14 @@ def launch_graph_viewer(
 
     viewer = _GraphViewerWindow(qt=qt, session=session, options=options)
     viewer.show()
+
+    if _viewer_troubleshooting_enabled():
+        print(_format_runtime_diagnostics(_collect_runtime_diagnostics(qt, viewer._scene_window), phase="startup"))
+
+        def _print_post_show_diagnostics() -> None:
+            print(_format_runtime_diagnostics(_collect_runtime_diagnostics(qt, viewer._scene_window), phase="post-show"))
+
+        qt.QtCore.QTimer.singleShot(0, _print_post_show_diagnostics)
 
     if owns_app:
         return int(app.exec())
