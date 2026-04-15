@@ -27,6 +27,7 @@ Use the same interpreter for installation and execution. In practice that means 
 
 ```bash
 python -m pip install -e .[graphviz]
+python -m skelhub graphviz
 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
 ```
 
@@ -124,6 +125,8 @@ skelhub evaluate --pred ./test_outputs/skelhub_mcp_small.nii.gz
 Open a GraphML vessel graph in the interactive PySide6 viewer:
 
 ```bash
+skelhub graphviz
+
 skelhub graphviz \
   --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml \
   --edge_thickness 2.5 \
@@ -173,7 +176,10 @@ The Lee94 backend records its wrapper metadata under `result.backend_metadata["l
 - renders nodes and edges in 3D
 - supports mouse dragging for camera rotation
 - supports the mouse wheel for zooming
+- opens with a toolbar-based `File` menu for loading, unloading, and switching between GraphML files in the current session
 - accepts appearance controls through `--edge_thickness` and `--node_size`
+
+When the viewer is launched from the CLI with `--input`, that GraphML file is loaded as the initial active file in the `File` menu. If `--input` is omitted, the viewer opens in a clean empty state and files can be loaded from the toolbar. Additional GraphML files can then be loaded from the toolbar, and unloading the last remaining file returns the window to a clean empty state instead of closing or crashing.
 
 Compared with the previous `pyqtgraph` implementation, node and edge sizing is now applied in scene units inside Qt3D rather than pixel-space OpenGL primitives. The CLI flags and their overall purpose stay the same, but exact apparent thickness can vary a little with camera distance and graph scale.
 

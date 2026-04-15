@@ -49,12 +49,12 @@ def evaluate_prediction_path(
 
 
 def launch_graph_viewer_from_path(
-    graph_path: str | Path,
+    graph_path: str | Path | None = None,
     *,
     edge_thickness: float = 2.0,
     node_size: float = 6.0,
 ) -> int:
-    """Launch the framework graph visualization flow on a GraphML path."""
+    """Launch the framework graph visualization flow on an optional GraphML path."""
     return launch_graph_viewer(
         graph_path,
         edge_thickness=edge_thickness,

@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import igraph as ig
 import numpy as np
@@ -40,6 +40,15 @@ class GraphVisualizationOptions:
 
 
 @dataclass(slots=True)
+class GraphViewerSessionEntry:
+    """One loaded GraphML file tracked in the current viewer session."""
+
+    file_key: str
+    source_path: str
+    graph_data: GraphVisualizationData
+
+
+@dataclass(slots=True)
 class _SceneMetrics:
     center: np.ndarray
     span: float
@@ -56,6 +65,9 @@ class _QtModules:
     QtCore: Any
     QtGui: Any
     QtWidgets: Any
+    Qt3DCore: Any
+    Qt3DExtras: Any
+    Qt3DRender: Any
     QEntity: Any
     QTransform: Any
     QPointLight: Any
@@ -64,6 +76,252 @@ class _QtModules:
     QSphereMesh: Any
     QCylinderMesh: Any
     Qt3DWindow: Any
+
+
+class GraphViewerSession:
+    """Session state for loaded GraphML files and the active display."""
+
+    def __init__(
+        self,
+        loader: Callable[[str | Path], GraphVisualizationData] | None = None,
+    ) -> None:
+        self._loader = load_graph_visualization_data if loader is None else loader
+        self._entries: dict[str, GraphViewerSessionEntry] = {}
+        self._active_file_key: str | None = None
+
+    @staticmethod
+    def _normalize_path(path: str | Path) -> str:
+        return str(Path(path).expanduser().resolve())
+
+    @property
+    def entries(self) -> list[GraphViewerSessionEntry]:
+        return list(self._entries.values())
+
+    @property
+    def active_entry(self) -> GraphViewerSessionEntry | None:
+        if self._active_file_key is None:
+            return None
+        return self._entries.get(self._active_file_key)
+
+    def contains_path(self, path: str | Path) -> bool:
+        return self._normalize_path(path) in self._entries
+
+    def load_file(self, path: str | Path) -> tuple[GraphViewerSessionEntry, bool]:
+        file_key = self._normalize_path(path)
+        existing = self._entries.get(file_key)
+        if existing is not None:
+            self._active_file_key = file_key
+            return existing, False
+
+        graph_data = self._loader(file_key)
+        entry = GraphViewerSessionEntry(
+            file_key=file_key,
+            source_path=file_key,
+            graph_data=graph_data,
+        )
+        self._entries[file_key] = entry
+        self._active_file_key = file_key
+        return entry, True
+
+    def set_active_file(self, file_key: str) -> GraphViewerSessionEntry:
+        if file_key not in self._entries:
+            raise GraphVisualizationError(f"GraphML file is not loaded in this session: {file_key}")
+        self._active_file_key = file_key
+        return self._entries[file_key]
+
+    def unload_active_file(self) -> GraphViewerSessionEntry | None:
+        if self._active_file_key is None:
+            return None
+
+        active_keys = list(self._entries)
+        active_index = active_keys.index(self._active_file_key)
+        removed = self._entries.pop(self._active_file_key)
+
+        if self._entries:
+            remaining_keys = list(self._entries)
+            next_index = min(active_index, len(remaining_keys) - 1)
+            self._active_file_key = remaining_keys[next_index]
+        else:
+            self._active_file_key = None
+
+        return removed
+
+
+class _GraphSceneController:
+    """Handle scene creation and active graph display switching."""
+
+    def __init__(self, window: Any, qt: _QtModules, options: GraphVisualizationOptions) -> None:
+        self._window = window
+        self._qt = qt
+        self._options = options
+        self._root_entity: Any | None = None
+
+    def show_graph(self, graph_data: GraphVisualizationData | None) -> None:
+        if graph_data is None:
+            root_entity = _build_empty_scene(self._window, self._qt)
+        else:
+            root_entity = _build_scene(self._window, graph_data, self._options, self._qt)
+
+        previous_root = self._root_entity
+        self._window.setRootEntity(root_entity)
+        self._root_entity = root_entity
+
+        if previous_root is not None and previous_root is not root_entity:
+            previous_root.setParent(None)
+            if hasattr(previous_root, "deleteLater"):
+                previous_root.deleteLater()
+
+
+class _GraphViewerWindow:
+    """Qt main window for the interactive graph viewer."""
+
+    def __init__(
+        self,
+        *,
+        qt: _QtModules,
+        session: GraphViewerSession,
+        options: GraphVisualizationOptions,
+    ) -> None:
+        self._qt = qt
+        self._session = session
+        self._options = options
+
+        self._main_window = qt.QtWidgets.QMainWindow()
+        self._main_window.resize(1200, 800)
+
+        self._scene_window = qt.Qt3DWindow()
+        self._scene_container = qt.QtWidgets.QWidget.createWindowContainer(self._scene_window)
+        self._main_window.setCentralWidget(self._scene_container)
+        self._status_bar = self._main_window.statusBar()
+        self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
+
+        self._file_menu = qt.QtWidgets.QMenu("File", self._main_window)
+        self._install_toolbar()
+        self._sync_view_from_session(status_message=None)
+
+    def _install_toolbar(self) -> None:
+        toolbar = self._main_window.addToolBar("File")
+        toolbar.setMovable(False)
+
+        file_button = self._qt.QtWidgets.QToolButton(self._main_window)
+        file_button.setText("File")
+        if hasattr(self._qt.QtWidgets.QToolButton, "ToolButtonPopupMode"):
+            popup_mode = self._qt.QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        else:  # pragma: no cover - compatibility fallback
+            popup_mode = self._qt.QtWidgets.QToolButton.InstantPopup
+        file_button.setPopupMode(popup_mode)
+        file_button.setMenu(self._file_menu)
+        toolbar.addWidget(file_button)
+
+    def _loaded_file_action_label(self, entry: GraphViewerSessionEntry) -> str:
+        path = Path(entry.source_path)
+        return f"{path.name} - {path.parent}"
+
+    def _set_window_title(self) -> None:
+        active_entry = self._session.active_entry
+        if active_entry is None:
+            self._main_window.setWindowTitle(f"{self._options.window_title} - No file loaded")
+            return
+
+        active_name = Path(active_entry.source_path).name
+        self._main_window.setWindowTitle(f"{self._options.window_title} - {active_name}")
+
+    def _show_status(self, message: str | None) -> None:
+        if message:
+            self._status_bar.showMessage(message, 5000)
+        else:
+            self._status_bar.clearMessage()
+
+    def _refresh_file_menu(self) -> None:
+        self._file_menu.clear()
+
+        load_action = self._file_menu.addAction("Load GraphML...")
+        load_action.triggered.connect(self._choose_graph_file)
+
+        unload_action = self._file_menu.addAction("Unload Current")
+        unload_action.setEnabled(self._session.active_entry is not None)
+        unload_action.triggered.connect(self._unload_active_graph)
+
+        self._file_menu.addSeparator()
+        entries = self._session.entries
+        if not entries:
+            empty_action = self._file_menu.addAction("No loaded files")
+            empty_action.setEnabled(False)
+            return
+
+        for entry in entries:
+            action = self._file_menu.addAction(self._loaded_file_action_label(entry))
+            action.setCheckable(True)
+            action.setChecked(self._session.active_entry is not None and entry.file_key == self._session.active_entry.file_key)
+            action.setToolTip(entry.source_path)
+            action.triggered.connect(
+                lambda checked=False, file_key=entry.file_key: self._activate_loaded_graph(file_key)
+            )
+
+    def _sync_view_from_session(self, *, status_message: str | None) -> None:
+        active_entry = self._session.active_entry
+        active_graph = None if active_entry is None else active_entry.graph_data
+        self._scene_controller.show_graph(active_graph)
+        self._set_window_title()
+        self._refresh_file_menu()
+        self._show_status(status_message)
+
+    def _choose_graph_file(self) -> None:
+        selected_path, _ = self._qt.QtWidgets.QFileDialog.getOpenFileName(
+            self._main_window,
+            "Load GraphML File",
+            "",
+            "GraphML Files (*.graphml);;All Files (*)",
+        )
+        if not selected_path:
+            return
+        self._load_graph_file(selected_path)
+
+    def _show_error(self, error: GraphVisualizationError) -> None:
+        self._qt.QtWidgets.QMessageBox.critical(self._main_window, "SkelHub Graph Viewer", str(error))
+
+    def _load_graph_file(self, path: str | Path) -> None:
+        try:
+            entry, is_new_file = self._session.load_file(path)
+        except GraphVisualizationError as exc:
+            self._show_error(exc)
+            return
+
+        file_name = Path(entry.source_path).name
+        if is_new_file:
+            status_message = f"Loaded GraphML file: {file_name}"
+        else:
+            status_message = f"GraphML file already loaded; switched to: {file_name}"
+        self._sync_view_from_session(status_message=status_message)
+
+    def _unload_active_graph(self) -> None:
+        removed = self._session.unload_active_file()
+        if removed is None:
+            self._sync_view_from_session(status_message="No GraphML file is currently loaded.")
+            return
+
+        next_active = self._session.active_entry
+        if next_active is None:
+            status_message = f"Unloaded {Path(removed.source_path).name}; no GraphML files remain loaded."
+        else:
+            status_message = (
+                f"Unloaded {Path(removed.source_path).name}; now showing {Path(next_active.source_path).name}."
+            )
+        self._sync_view_from_session(status_message=status_message)
+
+    def _activate_loaded_graph(self, file_key: str) -> None:
+        try:
+            entry = self._session.set_active_file(file_key)
+        except GraphVisualizationError as exc:
+            self._show_error(exc)
+            return
+
+        self._sync_view_from_session(
+            status_message=f"Now showing GraphML file: {Path(entry.source_path).name}"
+        )
+
+    def show(self) -> None:
+        self._main_window.show()
 
 
 def _is_module_available(module_name: str) -> bool:
@@ -190,6 +448,9 @@ def _import_qt_modules() -> _QtModules:
         QtCore=QtCore,
         QtGui=QtGui,
         QtWidgets=QtWidgets,
+        Qt3DCore=Qt3DCore,
+        Qt3DExtras=Qt3DExtras,
+        Qt3DRender=Qt3DRender,
         QEntity=QEntity,
         QTransform=QTransform,
         QPointLight=QPointLight,
@@ -365,6 +626,20 @@ def _qvector3d_from_array(QtGui: Any, values: Sequence[float]) -> Any:
     return QtGui.QVector3D(float(values[0]), float(values[1]), float(values[2]))
 
 
+def _configure_camera(window: Any, qt: _QtModules, center: np.ndarray, metrics: _SceneMetrics) -> None:
+    camera = window.camera()
+    lens = camera.lens()
+    lens.setPerspectiveProjection(45.0, 16.0 / 9.0, metrics.near_plane, metrics.far_plane)
+    camera.setPosition(
+        qt.QtGui.QVector3D(
+            float(center[0] + metrics.camera_distance),
+            float(center[1] + metrics.camera_distance * 0.6),
+            float(center[2] + metrics.camera_distance),
+        )
+    )
+    camera.setViewCenter(_qvector3d_from_array(qt.QtGui, center))
+
+
 def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: float) -> None:
     light_entity = qt.QEntity(root_entity)
     point_light = qt.QPointLight(light_entity)
@@ -384,6 +659,27 @@ def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: f
     light_entity.addComponent(light_transform)
 
 
+def _build_empty_scene(window: Any, qt: _QtModules) -> Any:
+    root_entity = qt.QEntity()
+    frame_graph = window.defaultFrameGraph()
+    frame_graph.setClearColor(qt.QtGui.QColor(255, 255, 255))
+
+    metrics = _compute_scene_metrics(
+        np.empty((0, 3), dtype=float),
+        node_size=6.0,
+        edge_thickness=2.0,
+    )
+    _configure_camera(window, qt, np.zeros(3, dtype=float), metrics)
+
+    controller = qt.QOrbitCameraController(root_entity)
+    controller.setCamera(window.camera())
+    controller.setLinearSpeed(12.0)
+    controller.setLookSpeed(180.0)
+
+    _add_light(root_entity, qt, np.zeros(3, dtype=float), metrics.camera_distance)
+    return root_entity
+
+
 def _build_scene(window: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> Any:
     root_entity = qt.QEntity()
     frame_graph = window.defaultFrameGraph()
@@ -395,21 +691,10 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
         edge_thickness=options.edge_thickness,
     )
 
-    camera = window.camera()
-    lens = camera.lens()
-    lens.setPerspectiveProjection(45.0, 16.0 / 9.0, metrics.near_plane, metrics.far_plane)
-
-    camera.setPosition(
-        qt.QtGui.QVector3D(
-            float(metrics.center[0] + metrics.camera_distance),
-            float(metrics.center[1] + metrics.camera_distance * 0.6),
-            float(metrics.center[2] + metrics.camera_distance),
-        )
-    )
-    camera.setViewCenter(_qvector3d_from_array(qt.QtGui, metrics.center))
+    _configure_camera(window, qt, metrics.center, metrics)
 
     controller = qt.QOrbitCameraController(root_entity)
-    controller.setCamera(camera)
+    controller.setCamera(window.camera())
     controller.setLinearSpeed(max(metrics.bounding_radius * 2.5, 12.0))
     controller.setLookSpeed(180.0)
 
@@ -474,18 +759,21 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
 
 
 def launch_graph_viewer(
-    input_path: str | Path,
+    input_path: str | Path | None = None,
     *,
     edge_thickness: float = 2.0,
     node_size: float = 6.0,
 ) -> int:
-    """Launch an interactive Qt window that renders a GraphML file in 3D."""
+    """Launch an interactive Qt window that renders zero or more GraphML files in 3D."""
     if edge_thickness <= 0:
         raise GraphVisualizationError("--edge_thickness must be greater than zero.")
     if node_size <= 0:
         raise GraphVisualizationError("--node_size must be greater than zero.")
 
-    graph_data = load_graph_visualization_data(input_path)
+    session = GraphViewerSession()
+    if input_path is not None:
+        session.load_file(input_path)
+
     options = GraphVisualizationOptions(edge_thickness=edge_thickness, node_size=node_size)
     qt = _import_qt_modules()
 
@@ -500,12 +788,8 @@ def launch_graph_viewer(
         qt.QtCore.QCoreApplication.setAttribute(share_contexts)
         app = qt.QtWidgets.QApplication([])
 
-    window = qt.Qt3DWindow()
-    window.setTitle(options.window_title)
-    window.resize(1200, 800)
-    root_entity = _build_scene(window, graph_data, options, qt)
-    window.setRootEntity(root_entity)
-    window.show()
+    viewer = _GraphViewerWindow(qt=qt, session=session, options=options)
+    viewer.show()
 
     if owns_app:
         return int(app.exec())

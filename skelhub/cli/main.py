@@ -60,7 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
         "graphviz",
         help="Open a 3D PySide6 viewer for a GraphML vessel graph.",
     )
-    graphviz_parser.add_argument("-i", "--input", required=True, help="Path to the input GraphML file.")
+    graphviz_parser.add_argument(
+        "-i",
+        "--input",
+        help="Optional path to an input GraphML file. If omitted, the viewer opens in an empty state.",
+    )
     graphviz_parser.add_argument(
         "--edge_thickness",
         type=float,
