@@ -17,32 +17,18 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-To use the GraphML viewer, install the optional Qt extras:
+To use the built-in GraphML viewer:
 
 ```bash
-python -m pip install -e .[graphviz]
-```
-
-Use the same interpreter for installation and execution. In practice that means preferring:
-
-```bash
-python -m pip install -e .[graphviz]
+# Initialze the viewer
 python -m skelhub graphviz
+# Initialize the viewer with a GraphML file
 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
+# Troubleshooting mode
+SKELHUB_GRAPH_VIEWER_TROUBLESHOOT=1 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
 ```
 
 If `skelhub` on your `PATH` comes from a different environment than the `python`/`pip` you used for installation, the graph viewer extras may still appear missing.
-
-Graph viewer troubleshooting:
-
-```bash
-python -c "import sys; print(sys.executable)"
-which skelhub
-python -m pip install -e .[graphviz]
-python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
-```
-
-If the error mentions `Qt_6_PRIVATE_API`, `undefined symbol`, or `libQt6*.so`, the issue is usually not the GraphML file or the extra name. It usually means conflicting Qt shared libraries are being injected through `LD_LIBRARY_PATH` or environment modules, so the PySide6 runtime and the loaded Qt libraries do not match.
 
 You can also install dependencies with `pip install -r requirements.txt`, but the console command `skelhub` is exposed through the package install.
 
