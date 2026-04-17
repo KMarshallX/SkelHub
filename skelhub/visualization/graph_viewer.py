@@ -1000,7 +1000,7 @@ def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: f
     point_light.setColor(qt.QtGui.QColor(255, 255, 255))
     point_light.setIntensity(1.6)
 
-    light_transform = qt.QTransform()
+    light_transform = qt.QTransform(light_entity)
     light_transform.setTranslation(
         qt.QtGui.QVector3D(
             float(center[0] + distance),
@@ -1062,14 +1062,14 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
     node_material.setSpecular(qt.QtGui.QColor(255, 220, 220))
     node_material.setShininess(32.0)
 
-    node_mesh = qt.QSphereMesh()
+    node_mesh = qt.QSphereMesh(root_entity)
     node_mesh.setRadius(1.0)
     node_mesh.setRings(12)
     node_mesh.setSlices(16)
 
     for position in centered_node_positions:
         node_entity = qt.QEntity(root_entity)
-        node_transform = qt.QTransform()
+        node_transform = qt.QTransform(node_entity)
         node_transform.setTranslation(_qvector3d_from_array(qt.QtGui, position))
         node_transform.setScale(metrics.node_radius)
         node_entity.addComponent(node_mesh)
@@ -1083,7 +1083,7 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
         edge_material.setSpecular(qt.QtGui.QColor(220, 255, 220))
         edge_material.setShininess(24.0)
 
-        edge_mesh = qt.QCylinderMesh()
+        edge_mesh = qt.QCylinderMesh(root_entity)
         edge_mesh.setRadius(1.0)
         edge_mesh.setLength(1.0)
         edge_mesh.setRings(8)
@@ -1099,7 +1099,7 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
                 continue
 
             edge_entity = qt.QEntity(root_entity)
-            edge_transform = qt.QTransform()
+            edge_transform = qt.QTransform(edge_entity)
             edge_transform.setTranslation(_qvector3d_from_array(qt.QtGui, (start + end) * 0.5))
 
             direction = qt.QtGui.QVector3D(float(delta[0]), float(delta[1]), float(delta[2]))
