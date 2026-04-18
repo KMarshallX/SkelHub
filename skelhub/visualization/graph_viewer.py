@@ -117,6 +117,7 @@ class _QtModules:
     QGeometry: Any
     QBuffer: Any
     QAttribute: Any
+    QLineWidth: Any
     Qt3DWindow: Any
 
 
@@ -706,6 +707,7 @@ def _import_qt_modules() -> _QtModules:
         QGeometry = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QGeometry")
         QBuffer = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QBuffer")
         QAttribute = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QAttribute")
+        QLineWidth = _resolve_qt_symbol(Qt3DRender, "Qt3DRender", "QLineWidth")
         Qt3DWindow = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "Qt3DWindow")
     except AttributeError as exc:
         raise _build_optional_dependency_error(ImportError(str(exc))) from exc
@@ -728,6 +730,7 @@ def _import_qt_modules() -> _QtModules:
         QGeometry=QGeometry,
         QBuffer=QBuffer,
         QAttribute=QAttribute,
+        QLineWidth=QLineWidth,
         Qt3DWindow=Qt3DWindow,
     )
 
@@ -989,6 +992,43 @@ def _qt3d_enum_value(enum_owner: Any, *names: str) -> Any:
                 return value
 
     raise AttributeError(f"{enum_owner!r} does not define any of {names!r}")
+
+
+def _apply_render_state_factories(material: Any, state_factories: Sequence[Callable[[Any], Any]]) -> None:
+    effect = material.effect()
+    for technique in effect.techniques():
+        for render_pass in technique.renderPasses():
+            for state_factory in state_factories:
+                render_pass.addRenderState(state_factory(render_pass))
+
+
+def _batched_edge_line_width(options: GraphVisualizationOptions) -> float:
+    return float(np.clip(options.edge_thickness * 1.6, 2.0, 6.0))
+
+
+def _configure_line_width_state(qt: _QtModules, parent: Any, line_width: float) -> Any:
+    line_state = qt.QLineWidth(parent)
+    line_state.setValue(float(line_width))
+    return line_state
+
+
+def _build_batched_node_marker_positions(node_positions: np.ndarray, marker_radius: float) -> np.ndarray:
+    if node_positions.size == 0:
+        return np.empty((0, 3), dtype=float)
+
+    marker_extent = float(max(marker_radius * 0.85, 0.1))
+    axis_offsets = np.asarray(
+        [
+            [-marker_extent, 0.0, 0.0],
+            [marker_extent, 0.0, 0.0],
+            [0.0, -marker_extent, 0.0],
+            [0.0, marker_extent, 0.0],
+            [0.0, 0.0, -marker_extent],
+            [0.0, 0.0, marker_extent],
+        ],
+        dtype=float,
+    )
+    return (node_positions[:, None, :] + axis_offsets[None, :, :]).reshape(-1, 3)
 
 
 def _camera_aspect_ratio(window: Any) -> float:
@@ -1348,25 +1388,36 @@ def _build_batched_geometry_renderer(
     return renderer
 
 
-def _add_batched_points(root_entity: Any, qt: _QtModules, positions: np.ndarray) -> None:
+def _add_batched_points(
+    root_entity: Any,
+    qt: _QtModules,
+    positions: np.ndarray,
+    marker_radius: float,
+) -> None:
     if positions.size == 0:
         return
 
+    marker_positions = _build_batched_node_marker_positions(positions, marker_radius)
     point_entity = qt.QEntity(root_entity)
-    colors = np.tile(np.asarray([[0.8627, 0.0784, 0.2353]], dtype=np.float32), (positions.shape[0], 1))
+    colors = np.tile(np.asarray([[0.8627, 0.0784, 0.2353]], dtype=np.float32), (marker_positions.shape[0], 1))
     point_renderer = _build_batched_geometry_renderer(
         point_entity,
         qt,
-        positions,
+        marker_positions,
         colors,
-        primitive_type_name="Points",
+        primitive_type_name="Lines",
     )
     point_material = qt.QPerVertexColorMaterial(point_entity)
     point_entity.addComponent(point_renderer)
     point_entity.addComponent(point_material)
 
 
-def _add_batched_lines(root_entity: Any, qt: _QtModules, positions: np.ndarray) -> None:
+def _add_batched_lines(
+    root_entity: Any,
+    qt: _QtModules,
+    positions: np.ndarray,
+    options: GraphVisualizationOptions,
+) -> None:
     if positions.size == 0:
         return
 
@@ -1380,6 +1431,16 @@ def _add_batched_lines(root_entity: Any, qt: _QtModules, positions: np.ndarray) 
         primitive_type_name="Lines",
     )
     line_material = qt.QPerVertexColorMaterial(line_entity)
+    _apply_render_state_factories(
+        line_material,
+        [
+            lambda parent: _configure_line_width_state(
+                qt,
+                parent,
+                _batched_edge_line_width(options),
+            )
+        ],
+    )
     line_entity.addComponent(line_renderer)
     line_entity.addComponent(line_material)
 
@@ -1397,8 +1458,8 @@ def _populate_scene(window: Any, root_entity: Any, graph_data: GraphVisualizatio
     _configure_camera(window, qt, origin, metrics)
 
     _add_light(root_entity, qt, origin, metrics.camera_distance)
-    _add_batched_points(root_entity, qt, centered_node_positions)
-    _add_batched_lines(root_entity, qt, centered_edge_positions)
+    _add_batched_points(root_entity, qt, centered_node_positions, metrics.node_radius)
+    _add_batched_lines(root_entity, qt, centered_edge_positions, options)
 
 
 def launch_graph_viewer(
