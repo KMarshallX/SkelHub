@@ -61,6 +61,13 @@ class _SceneMetrics:
     edge_radius: float
 
 
+class _MouseCameraControllerProtocol:
+    """Minimal protocol for scene-specific camera interaction."""
+
+    def set_scene_metrics(self, metrics: _SceneMetrics) -> None:
+        raise NotImplementedError
+
+
 @dataclass(slots=True)
 class GraphSceneDiagnostics:
     """Diagnostics describing how a graph was fit into the viewer scene."""
@@ -102,7 +109,6 @@ class _QtModules:
     QEntity: Any
     QTransform: Any
     QPointLight: Any
-    QOrbitCameraController: Any
     QPhongMaterial: Any
     QSphereMesh: Any
     QCylinderMesh: Any
@@ -192,7 +198,7 @@ class _GraphSceneController:
         graph_data: GraphVisualizationData | None,
     ) -> tuple[GraphSceneDiagnostics | None, GraphSceneBuildStats | None]:
         if graph_data is None:
-            root_entity = _build_empty_scene(self._window, self._qt)
+            root_entity = _build_empty_scene(self._window, self._qt, self._options)
             diagnostics = None
             build_stats = None
         else:
@@ -211,6 +217,30 @@ class _GraphSceneController:
 
         return diagnostics, build_stats
 
+    def refit_graph(
+        self,
+        graph_data: GraphVisualizationData | None,
+    ) -> tuple[GraphSceneDiagnostics | None, GraphSceneBuildStats | None]:
+        if graph_data is None:
+            metrics = _compute_scene_metrics(
+                np.empty((0, 3), dtype=float),
+                node_size=self._options.node_size,
+                edge_thickness=self._options.edge_thickness,
+                aspect_ratio=_camera_aspect_ratio(self._window),
+            )
+            _configure_camera(self._window, self._qt, np.zeros(3, dtype=float), metrics)
+            return None, None
+
+        metrics = _compute_scene_metrics(
+            graph_data.node_positions,
+            node_size=self._options.node_size,
+            edge_thickness=self._options.edge_thickness,
+            aspect_ratio=_camera_aspect_ratio(self._window),
+        )
+        _configure_camera(self._window, self._qt, np.zeros(3, dtype=float), metrics)
+        diagnostics = _build_scene_diagnostics(self._window, graph_data, self._options)
+        build_stats = _build_scene_build_stats(graph_data)
+        return diagnostics, build_stats
 
 class _GraphViewerWindow:
     """Qt main window for the interactive graph viewer."""
@@ -229,11 +259,21 @@ class _GraphViewerWindow:
         self._main_window.resize(1200, 800)
 
         self._scene_window = qt.Qt3DWindow()
+        _configure_frame_graph(self._scene_window, qt)
         self._scene_container = qt.QtWidgets.QWidget.createWindowContainer(self._scene_window)
+        self._scene_container.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
         self._main_window.setCentralWidget(self._scene_container)
         self._status_bar = self._main_window.statusBar()
         self._file_menu = qt.QtWidgets.QMenu("File", self._main_window)
         self._install_toolbar()
+        self._stabilization_timer = qt.QtCore.QTimer(self._main_window)
+        self._stabilization_timer.setSingleShot(True)
+        self._stabilization_timer.timeout.connect(self._stabilize_scene_after_load)
+        self._mouse_camera_controller = _create_mouse_camera_controller(
+            container=self._scene_container,
+            window=self._scene_window,
+            qt=qt,
+        )
 
         self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
         self._sync_view_from_session(status_message=None)
@@ -306,10 +346,20 @@ class _GraphViewerWindow:
                 lambda checked=False, file_key=entry.file_key: self._activate_loaded_graph(file_key)
             )
 
-    def _sync_view_from_session(self, *, status_message: str | None) -> None:
+    def _sync_view_from_session(self, *, status_message: str | None, rebuild_scene: bool = True) -> None:
         active_entry = self._session.active_entry
         active_graph = None if active_entry is None else active_entry.graph_data
-        diagnostics, build_stats = self._scene_controller.show_graph(active_graph)
+        if rebuild_scene:
+            diagnostics, build_stats = self._scene_controller.show_graph(active_graph)
+        else:
+            diagnostics, build_stats = self._scene_controller.refit_graph(active_graph)
+        metrics = _compute_scene_metrics(
+            np.empty((0, 3), dtype=float) if active_graph is None else active_graph.node_positions,
+            node_size=self._options.node_size,
+            edge_thickness=self._options.edge_thickness,
+            aspect_ratio=_camera_aspect_ratio(self._scene_window),
+        )
+        self._mouse_camera_controller.set_scene_metrics(metrics)
         self._set_window_title()
         self._refresh_file_menu()
         if diagnostics is None:
@@ -320,6 +370,24 @@ class _GraphViewerWindow:
         if build_stats is not None:
             print(_format_scene_build_stats(build_stats))
         self._show_status(_format_scene_status(diagnostics, build_stats=build_stats, prefix=status_message))
+
+    def _schedule_scene_stabilization(self) -> None:
+        if self._session.active_entry is None:
+            self._stabilization_timer.stop()
+            return
+        self._stabilization_timer.start(0)
+
+    def _stabilize_scene_after_load(self) -> None:
+        active_entry = self._session.active_entry
+        if active_entry is None:
+            return
+
+        # Rebuild once after the event loop starts so Qt3D can realize the complete scene
+        # with the final window size and renderer state.
+        self._sync_view_from_session(
+            status_message=f"Graph view stabilized: {Path(active_entry.source_path).name}",
+            rebuild_scene=True,
+        )
 
     def _choose_graph_file(self) -> None:
         selected_path, _ = self._qt.QtWidgets.QFileDialog.getOpenFileName(
@@ -359,6 +427,7 @@ class _GraphViewerWindow:
         else:
             status_message = f"GraphML file already loaded; switched to: {file_name}"
         self._sync_view_from_session(status_message=status_message)
+        self._schedule_scene_stabilization()
         self._show_renderability_warning(entry.graph_data)
 
     def _unload_active_graph(self) -> None:
@@ -375,6 +444,8 @@ class _GraphViewerWindow:
                 f"Unloaded {Path(removed.source_path).name}; now showing {Path(next_active.source_path).name}."
             )
         self._sync_view_from_session(status_message=status_message)
+        if next_active is not None:
+            self._schedule_scene_stabilization()
 
     def _activate_loaded_graph(self, file_key: str) -> None:
         try:
@@ -386,6 +457,7 @@ class _GraphViewerWindow:
         self._sync_view_from_session(
             status_message=f"Now showing GraphML file: {Path(entry.source_path).name}"
         )
+        self._schedule_scene_stabilization()
         self._show_renderability_warning(entry.graph_data)
 
     def _fit_active_graph(self) -> None:
@@ -395,11 +467,13 @@ class _GraphViewerWindow:
             return
 
         self._sync_view_from_session(
-            status_message=f"Re-fit graph view: {Path(active_entry.source_path).name}"
+            status_message=f"Re-fit graph view: {Path(active_entry.source_path).name}",
+            rebuild_scene=False,
         )
 
     def show(self) -> None:
         self._main_window.show()
+        self._schedule_scene_stabilization()
         active_entry = self._session.active_entry
         if active_entry is not None:
             self._show_renderability_warning(active_entry.graph_data)
@@ -598,7 +672,6 @@ def _import_qt_modules() -> _QtModules:
         QEntity = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QEntity")
         QTransform = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QTransform")
         QPointLight = _resolve_qt_symbol(Qt3DRender, "Qt3DRender", "QPointLight")
-        QOrbitCameraController = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QOrbitCameraController")
         QPhongMaterial = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QPhongMaterial")
         QSphereMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QSphereMesh")
         QCylinderMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QCylinderMesh")
@@ -616,7 +689,6 @@ def _import_qt_modules() -> _QtModules:
         QEntity=QEntity,
         QTransform=QTransform,
         QPointLight=QPointLight,
-        QOrbitCameraController=QOrbitCameraController,
         QPhongMaterial=QPhongMaterial,
         QSphereMesh=QSphereMesh,
         QCylinderMesh=QCylinderMesh,
@@ -774,7 +846,8 @@ def _graph_centroid(node_positions: np.ndarray) -> np.ndarray:
 def _graph_center(node_positions: np.ndarray) -> np.ndarray:
     if node_positions.size == 0:
         return np.zeros(3, dtype=float)
-    return np.asarray(np.median(np.asarray(node_positions, dtype=float), axis=0), dtype=float)
+    coordinate_min, coordinate_max = _graph_bounds(node_positions)
+    return np.asarray((coordinate_min + coordinate_max) * 0.5, dtype=float)
 
 
 def _graph_bounding_radius(node_positions: np.ndarray, center: np.ndarray) -> float:
@@ -798,14 +871,18 @@ def _compute_scene_metrics(
     *,
     node_size: float,
     edge_thickness: float,
+    aspect_ratio: float,
 ) -> _SceneMetrics:
     center = _graph_center(node_positions)
     span = _graph_span(node_positions)
     bounding_radius = _graph_bounding_radius(node_positions, center)
     scene_radius = max(bounding_radius, span * 0.5, 1.0)
-    camera_distance = scene_radius * 3.2
+    half_vertical_fov = np.deg2rad(45.0 * 0.5)
+    half_horizontal_fov = np.arctan(np.tan(half_vertical_fov) * max(aspect_ratio, 0.1))
+    limiting_half_fov = min(half_vertical_fov, half_horizontal_fov)
+    camera_distance = max(scene_radius / np.sin(limiting_half_fov) * 1.15, scene_radius * 2.6)
     near_plane = max(scene_radius * 0.05, 0.1)
-    far_plane = max(scene_radius * 12.0, near_plane + 100.0)
+    far_plane = max(camera_distance + scene_radius * 6.0, near_plane + 100.0)
 
     return _SceneMetrics(
         center=center,
@@ -889,12 +966,10 @@ def _camera_aspect_ratio(window: Any) -> float:
 
 
 def _camera_position(center: np.ndarray, metrics: _SceneMetrics) -> np.ndarray:
+    view_direction = np.asarray([1.0, 0.6, 1.0], dtype=float)
+    view_direction /= np.linalg.norm(view_direction)
     return np.asarray(
-        [
-            float(center[0] + metrics.camera_distance),
-            float(center[1] + metrics.camera_distance * 0.6),
-            float(center[2] + metrics.camera_distance),
-        ],
+        center + (view_direction * metrics.camera_distance),
         dtype=float,
     )
 
@@ -910,6 +985,7 @@ def _build_scene_diagnostics(
         graph_data.node_positions,
         node_size=options.node_size,
         edge_thickness=options.edge_thickness,
+        aspect_ratio=_camera_aspect_ratio(window),
     )
     origin = np.zeros(3, dtype=float)
     return GraphSceneDiagnostics(
@@ -994,6 +1070,147 @@ def _configure_camera(window: Any, qt: _QtModules, center: np.ndarray, metrics: 
     camera.setViewCenter(_qvector3d_from_array(qt.QtGui, center))
 
 
+def _configure_frame_graph(window: Any, qt: _QtModules) -> None:
+    frame_graph = window.defaultFrameGraph()
+    if hasattr(frame_graph, "setClearColor"):
+        frame_graph.setClearColor(qt.QtGui.QColor(255, 255, 255))
+    if hasattr(frame_graph, "setFrustumCullingEnabled"):
+        frame_graph.setFrustumCullingEnabled(False)
+
+
+def _configure_default_surface_format(qt: _QtModules) -> None:
+    surface_format = qt.QtGui.QSurfaceFormat()
+    if hasattr(qt.QtGui.QSurfaceFormat, "OpenGLContextProfile"):
+        surface_format.setProfile(qt.QtGui.QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+    elif hasattr(qt.QtGui.QSurfaceFormat, "CoreProfile"):  # pragma: no cover - compatibility fallback
+        surface_format.setProfile(qt.QtGui.QSurfaceFormat.CoreProfile)
+    surface_format.setVersion(3, 3)
+    surface_format.setDepthBufferSize(24)
+    surface_format.setStencilBufferSize(8)
+    surface_format.setSamples(4)
+    qt.QtGui.QSurfaceFormat.setDefaultFormat(surface_format)
+
+
+def _create_mouse_camera_controller(container: Any, window: Any, qt: _QtModules) -> _MouseCameraControllerProtocol:
+    class _MouseCameraController(qt.QtCore.QObject):
+        """Single-source mouse interaction controller for the 3D camera."""
+
+        _ROTATE_DEGREES_PER_PIXEL = 0.45
+        _ZOOM_STEP_SCALE = 0.88
+
+        def __init__(self) -> None:
+            super().__init__(container)
+            self._container = container
+            self._window = window
+            self._qt = qt
+            self._active_button: Any | None = None
+            self._last_pointer_pos: Any | None = None
+            self._metrics = _compute_scene_metrics(
+                np.empty((0, 3), dtype=float),
+                node_size=6.0,
+                edge_thickness=2.0,
+                aspect_ratio=_camera_aspect_ratio(self._window),
+            )
+
+            self._container.installEventFilter(self)
+            self._window.installEventFilter(self)
+
+        def set_scene_metrics(self, metrics: _SceneMetrics) -> None:
+            self._metrics = metrics
+
+        def eventFilter(self, watched: Any, event: Any) -> bool:  # noqa: N802 - Qt API name
+            event_type = event.type()
+            mouse_button = self._qt.QtCore.Qt.MouseButton
+            event_enum = self._qt.QtCore.QEvent.Type
+
+            if event_type == event_enum.MouseButtonPress:
+                if event.button() in (mouse_button.LeftButton, mouse_button.MiddleButton):
+                    self._active_button = event.button()
+                    self._last_pointer_pos = event.position()
+                    event.accept()
+                    return True
+
+            if event_type == event_enum.MouseMove and self._active_button is not None and self._last_pointer_pos is not None:
+                position = event.position()
+                delta = position - self._last_pointer_pos
+                self._last_pointer_pos = position
+
+                if self._active_button == mouse_button.LeftButton:
+                    self._rotate_camera(delta)
+                    event.accept()
+                    return True
+                if self._active_button == mouse_button.MiddleButton:
+                    self._pan_camera(delta)
+                    event.accept()
+                    return True
+
+            if event_type == event_enum.MouseButtonRelease:
+                if event.button() == self._active_button:
+                    self._active_button = None
+                    self._last_pointer_pos = None
+                    event.accept()
+                    return True
+
+            if event_type == event_enum.Wheel:
+                self._zoom_camera(event.angleDelta().y())
+                event.accept()
+                return True
+
+            return super().eventFilter(watched, event)
+
+        def _camera_basis(self) -> tuple[Any, Any, Any, float]:
+            camera = self._window.camera()
+            position = camera.position()
+            view_center = camera.viewCenter()
+            up_vector = camera.upVector().normalized()
+            camera_offset = position - view_center
+            distance = max(camera_offset.length(), self._minimum_camera_distance())
+            forward = (view_center - position).normalized()
+            right = self._qt.QtGui.QVector3D.crossProduct(forward, up_vector).normalized()
+            return forward, right, up_vector, distance
+
+        def _minimum_camera_distance(self) -> float:
+            return max(self._metrics.bounding_radius * 0.15, self._metrics.span * 0.08, 0.25)
+
+        def _rotate_camera(self, delta: Any) -> None:
+            camera = self._window.camera()
+            camera.panAboutViewCenter(-float(delta.x()) * self._ROTATE_DEGREES_PER_PIXEL)
+            camera.tiltAboutViewCenter(-float(delta.y()) * self._ROTATE_DEGREES_PER_PIXEL)
+
+        def _pan_camera(self, delta: Any) -> None:
+            _, right, up_vector, distance = self._camera_basis()
+            height = max(float(self._container.height()), 1.0)
+            width = max(float(self._container.width()), 1.0)
+            half_fov_radians = np.deg2rad(45.0 * 0.5)
+            vertical_span = 2.0 * distance * float(np.tan(half_fov_radians))
+            horizontal_span = vertical_span * (width / height)
+
+            horizontal_shift = right * float(delta.x() * (horizontal_span / width))
+            vertical_shift = up_vector * float(delta.y() * (vertical_span / height))
+            translation = horizontal_shift + vertical_shift
+
+            camera = self._window.camera()
+            camera.setPosition(camera.position() + translation)
+            camera.setViewCenter(camera.viewCenter() + translation)
+
+        def _zoom_camera(self, wheel_delta_y: int) -> None:
+            if wheel_delta_y == 0:
+                return
+
+            steps = float(wheel_delta_y) / 120.0
+            scale = self._ZOOM_STEP_SCALE ** (-steps)
+
+            camera = self._window.camera()
+            view_center = camera.viewCenter()
+            offset = camera.position() - view_center
+            distance = max(offset.length(), self._minimum_camera_distance())
+            direction = offset.normalized() if offset.lengthSquared() > 0 else self._qt.QtGui.QVector3D(1.0, 0.0, 0.0)
+            new_distance = max(distance * scale, self._minimum_camera_distance())
+            camera.setPosition(view_center + (direction * new_distance))
+
+    return _MouseCameraController()
+
+
 def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: float) -> None:
     light_entity = qt.QEntity(root_entity)
     point_light = qt.QPointLight(light_entity)
@@ -1013,46 +1230,33 @@ def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: f
     light_entity.addComponent(light_transform)
 
 
-def _build_empty_scene(window: Any, qt: _QtModules) -> Any:
+def _build_empty_scene(window: Any, qt: _QtModules, options: GraphVisualizationOptions) -> Any:
     root_entity = qt.QEntity()
-    frame_graph = window.defaultFrameGraph()
-    frame_graph.setClearColor(qt.QtGui.QColor(255, 255, 255))
 
     metrics = _compute_scene_metrics(
         np.empty((0, 3), dtype=float),
-        node_size=6.0,
-        edge_thickness=2.0,
+        node_size=options.node_size,
+        edge_thickness=options.edge_thickness,
+        aspect_ratio=_camera_aspect_ratio(window),
     )
     _configure_camera(window, qt, np.zeros(3, dtype=float), metrics)
-
-    controller = qt.QOrbitCameraController(root_entity)
-    controller.setCamera(window.camera())
-    controller.setLinearSpeed(12.0)
-    controller.setLookSpeed(180.0)
-
     _add_light(root_entity, qt, np.zeros(3, dtype=float), metrics.camera_distance)
     return root_entity
 
 
 def _build_scene(window: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> Any:
     root_entity = qt.QEntity()
-    frame_graph = window.defaultFrameGraph()
-    frame_graph.setClearColor(qt.QtGui.QColor(255, 255, 255))
 
     metrics = _compute_scene_metrics(
         graph_data.node_positions,
         node_size=options.node_size,
         edge_thickness=options.edge_thickness,
+        aspect_ratio=_camera_aspect_ratio(window),
     )
 
     centered_node_positions, centered_edge_positions = _center_graph_positions(graph_data, metrics.center)
     origin = np.zeros(3, dtype=float)
     _configure_camera(window, qt, origin, metrics)
-
-    controller = qt.QOrbitCameraController(root_entity)
-    controller.setCamera(window.camera())
-    controller.setLinearSpeed(max(metrics.bounding_radius * 2.5, 12.0))
-    controller.setLookSpeed(180.0)
 
     _add_light(root_entity, qt, origin, metrics.camera_distance)
 
@@ -1062,13 +1266,12 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
     node_material.setSpecular(qt.QtGui.QColor(255, 220, 220))
     node_material.setShininess(32.0)
 
-    node_mesh = qt.QSphereMesh(root_entity)
-    node_mesh.setRadius(1.0)
-    node_mesh.setRings(12)
-    node_mesh.setSlices(16)
-
     for position in centered_node_positions:
         node_entity = qt.QEntity(root_entity)
+        node_mesh = qt.QSphereMesh(node_entity)
+        node_mesh.setRadius(1.0)
+        node_mesh.setRings(12)
+        node_mesh.setSlices(16)
         node_transform = qt.QTransform(node_entity)
         node_transform.setTranslation(_qvector3d_from_array(qt.QtGui, position))
         node_transform.setScale(metrics.node_radius)
@@ -1083,12 +1286,6 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
         edge_material.setSpecular(qt.QtGui.QColor(220, 255, 220))
         edge_material.setShininess(24.0)
 
-        edge_mesh = qt.QCylinderMesh(root_entity)
-        edge_mesh.setRadius(1.0)
-        edge_mesh.setLength(1.0)
-        edge_mesh.setRings(8)
-        edge_mesh.setSlices(12)
-
         y_axis = qt.QtGui.QVector3D(0.0, 1.0, 0.0)
         for edge_index in range(0, centered_edge_positions.shape[0], 2):
             start = centered_edge_positions[edge_index]
@@ -1099,6 +1296,11 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
                 continue
 
             edge_entity = qt.QEntity(root_entity)
+            edge_mesh = qt.QCylinderMesh(edge_entity)
+            edge_mesh.setRadius(1.0)
+            edge_mesh.setLength(1.0)
+            edge_mesh.setRings(8)
+            edge_mesh.setSlices(12)
             edge_transform = qt.QTransform(edge_entity)
             edge_transform.setTranslation(_qvector3d_from_array(qt.QtGui, (start + end) * 0.5))
 
@@ -1132,6 +1334,7 @@ def launch_graph_viewer(
 
     options = GraphVisualizationOptions(edge_thickness=edge_thickness, node_size=node_size)
     qt = _import_qt_modules()
+    _configure_default_surface_format(qt)
 
     if hasattr(qt.QtCore.Qt, "ApplicationAttribute"):
         share_contexts = qt.QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts
