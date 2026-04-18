@@ -191,29 +191,29 @@ class _GraphSceneController:
         self._window = window
         self._qt = qt
         self._options = options
-        self._root_entity: Any | None = None
+        self._root_entity = qt.QEntity()
+        self._window.setRootEntity(self._root_entity)
+
+    def _clear_scene_children(self) -> None:
+        for child in list(self._root_entity.children()):
+            child.setParent(None)
+            if hasattr(child, "deleteLater"):
+                child.deleteLater()
 
     def show_graph(
         self,
         graph_data: GraphVisualizationData | None,
     ) -> tuple[GraphSceneDiagnostics | None, GraphSceneBuildStats | None]:
+        self._clear_scene_children()
+
         if graph_data is None:
-            root_entity = _build_empty_scene(self._window, self._qt, self._options)
+            _populate_empty_scene(self._window, self._root_entity, self._qt, self._options)
             diagnostics = None
             build_stats = None
         else:
-            root_entity = _build_scene(self._window, graph_data, self._options, self._qt)
+            _populate_scene(self._window, self._root_entity, graph_data, self._options, self._qt)
             diagnostics = _build_scene_diagnostics(self._window, graph_data, self._options)
             build_stats = _build_scene_build_stats(graph_data)
-
-        previous_root = self._root_entity
-        self._window.setRootEntity(root_entity)
-        self._root_entity = root_entity
-
-        if previous_root is not None and previous_root is not root_entity:
-            previous_root.setParent(None)
-            if hasattr(previous_root, "deleteLater"):
-                previous_root.deleteLater()
 
         return diagnostics, build_stats
 
@@ -276,7 +276,7 @@ class _GraphViewerWindow:
         )
 
         self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
-        self._sync_view_from_session(status_message=None)
+        self._sync_view_from_session(status_message=None, rebuild_scene=True)
 
     def _install_toolbar(self) -> None:
         toolbar = self._main_window.addToolBar("File")
@@ -382,11 +382,11 @@ class _GraphViewerWindow:
         if active_entry is None:
             return
 
-        # Rebuild once after the event loop starts so Qt3D can realize the complete scene
-        # with the final window size and renderer state.
+        # Refit camera after the window is shown so the aspect ratio is correct.
+        # The entity tree was already populated pre-show; do not rebuild it.
         self._sync_view_from_session(
             status_message=f"Graph view stabilized: {Path(active_entry.source_path).name}",
-            rebuild_scene=True,
+            rebuild_scene=False,
         )
 
     def _choose_graph_file(self) -> None:
@@ -427,7 +427,6 @@ class _GraphViewerWindow:
         else:
             status_message = f"GraphML file already loaded; switched to: {file_name}"
         self._sync_view_from_session(status_message=status_message)
-        self._schedule_scene_stabilization()
         self._show_renderability_warning(entry.graph_data)
 
     def _unload_active_graph(self) -> None:
@@ -444,8 +443,6 @@ class _GraphViewerWindow:
                 f"Unloaded {Path(removed.source_path).name}; now showing {Path(next_active.source_path).name}."
             )
         self._sync_view_from_session(status_message=status_message)
-        if next_active is not None:
-            self._schedule_scene_stabilization()
 
     def _activate_loaded_graph(self, file_key: str) -> None:
         try:
@@ -457,7 +454,6 @@ class _GraphViewerWindow:
         self._sync_view_from_session(
             status_message=f"Now showing GraphML file: {Path(entry.source_path).name}"
         )
-        self._schedule_scene_stabilization()
         self._show_renderability_warning(entry.graph_data)
 
     def _fit_active_graph(self) -> None:
@@ -1230,9 +1226,7 @@ def _add_light(root_entity: Any, qt: _QtModules, center: np.ndarray, distance: f
     light_entity.addComponent(light_transform)
 
 
-def _build_empty_scene(window: Any, qt: _QtModules, options: GraphVisualizationOptions) -> Any:
-    root_entity = qt.QEntity()
-
+def _populate_empty_scene(window: Any, root_entity: Any, qt: _QtModules, options: GraphVisualizationOptions) -> None:
     metrics = _compute_scene_metrics(
         np.empty((0, 3), dtype=float),
         node_size=options.node_size,
@@ -1241,12 +1235,9 @@ def _build_empty_scene(window: Any, qt: _QtModules, options: GraphVisualizationO
     )
     _configure_camera(window, qt, np.zeros(3, dtype=float), metrics)
     _add_light(root_entity, qt, np.zeros(3, dtype=float), metrics.camera_distance)
-    return root_entity
 
 
-def _build_scene(window: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> Any:
-    root_entity = qt.QEntity()
-
+def _populate_scene(window: Any, root_entity: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> None:
     metrics = _compute_scene_metrics(
         graph_data.node_positions,
         node_size=options.node_size,
@@ -1312,8 +1303,6 @@ def _build_scene(window: Any, graph_data: GraphVisualizationData, options: Graph
             edge_entity.addComponent(edge_mesh)
             edge_entity.addComponent(edge_material)
             edge_entity.addComponent(edge_transform)
-
-    return root_entity
 
 
 def launch_graph_viewer(
