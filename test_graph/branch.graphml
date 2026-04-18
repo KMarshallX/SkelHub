@@ -1,0 +1,538 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://graphml.graphdrawing.org/xmlns
+         http://graphml.graphdrawing.org/xmlns/1.0/graphml.xsd">
+<!-- Created by igraph -->
+  <key id="v_X" for="node" attr.name="X" attr.type="double"/>
+  <key id="v_Y" for="node" attr.name="Y" attr.type="double"/>
+  <key id="v_Z" for="node" attr.name="Z" attr.type="double"/>
+  <key id="v_id" for="node" attr.name="id" attr.type="string"/>
+  <key id="e_volume" for="edge" attr.name="volume" attr.type="double"/>
+  <key id="e_surface_area" for="edge" attr.name="surface_area" attr.type="double"/>
+  <key id="e_length" for="edge" attr.name="length" attr.type="double"/>
+  <key id="e_tortuosity" for="edge" attr.name="tortuosity" attr.type="double"/>
+  <key id="e_radius_avg" for="edge" attr.name="radius_avg" attr.type="double"/>
+  <key id="e_radius_max" for="edge" attr.name="radius_max" attr.type="double"/>
+  <key id="e_radius_min" for="edge" attr.name="radius_min" attr.type="double"/>
+  <key id="e_radius_SD" for="edge" attr.name="radius_SD" attr.type="double"/>
+  <key id="e_vis_radius" for="edge" attr.name="vis_radius" attr.type="double"/>
+  <graph id="G" edgedefault="undirected">
+    <node id="n0">
+      <data key="v_X">124</data>
+      <data key="v_Y">142</data>
+      <data key="v_Z">9</data>
+      <data key="v_id">n0</data>
+    </node>
+    <node id="n1">
+      <data key="v_X">131</data>
+      <data key="v_Y">145</data>
+      <data key="v_Z">18</data>
+      <data key="v_id">n1</data>
+    </node>
+    <node id="n2">
+      <data key="v_X">130</data>
+      <data key="v_Y">147</data>
+      <data key="v_Z">19</data>
+      <data key="v_id">n2</data>
+    </node>
+    <node id="n3">
+      <data key="v_X">132</data>
+      <data key="v_Y">146</data>
+      <data key="v_Z">20</data>
+      <data key="v_id">n3</data>
+    </node>
+    <node id="n4">
+      <data key="v_X">131</data>
+      <data key="v_Y">147</data>
+      <data key="v_Z">20</data>
+      <data key="v_id">n4</data>
+    </node>
+    <node id="n5">
+      <data key="v_X">138</data>
+      <data key="v_Y">157</data>
+      <data key="v_Z">38</data>
+      <data key="v_id">n5</data>
+    </node>
+    <node id="n6">
+      <data key="v_X">139</data>
+      <data key="v_Y">156</data>
+      <data key="v_Z">39</data>
+      <data key="v_id">n6</data>
+    </node>
+    <node id="n7">
+      <data key="v_X">149</data>
+      <data key="v_Y">159</data>
+      <data key="v_Z">53</data>
+      <data key="v_id">n7</data>
+    </node>
+    <node id="n8">
+      <data key="v_X">147</data>
+      <data key="v_Y">162</data>
+      <data key="v_Z">53</data>
+      <data key="v_id">n8</data>
+    </node>
+    <node id="n9">
+      <data key="v_X">150</data>
+      <data key="v_Y">162</data>
+      <data key="v_Z">56</data>
+      <data key="v_id">n9</data>
+    </node>
+    <node id="n10">
+      <data key="v_X">149</data>
+      <data key="v_Y">163</data>
+      <data key="v_Z">56</data>
+      <data key="v_id">n10</data>
+    </node>
+    <node id="n11">
+      <data key="v_X">152</data>
+      <data key="v_Y">161</data>
+      <data key="v_Z">58</data>
+      <data key="v_id">n11</data>
+    </node>
+    <node id="n12">
+      <data key="v_X">151</data>
+      <data key="v_Y">163</data>
+      <data key="v_Z">58</data>
+      <data key="v_id">n12</data>
+    </node>
+    <node id="n13">
+      <data key="v_X">156</data>
+      <data key="v_Y">169</data>
+      <data key="v_Z">69</data>
+      <data key="v_id">n13</data>
+    </node>
+    <node id="n14">
+      <data key="v_X">156</data>
+      <data key="v_Y">173</data>
+      <data key="v_Z">72</data>
+      <data key="v_id">n14</data>
+    </node>
+    <node id="n15">
+      <data key="v_X">162</data>
+      <data key="v_Y">172</data>
+      <data key="v_Z">75</data>
+      <data key="v_id">n15</data>
+    </node>
+    <node id="n16">
+      <data key="v_X">174</data>
+      <data key="v_Y">159</data>
+      <data key="v_Z">82</data>
+      <data key="v_id">n16</data>
+    </node>
+    <node id="n17">
+      <data key="v_X">173</data>
+      <data key="v_Y">160</data>
+      <data key="v_Z">83</data>
+      <data key="v_id">n17</data>
+    </node>
+    <node id="n18">
+      <data key="v_X">136</data>
+      <data key="v_Y">219</data>
+      <data key="v_Z">91</data>
+      <data key="v_id">n18</data>
+    </node>
+    <node id="n19">
+      <data key="v_X">136</data>
+      <data key="v_Y">218</data>
+      <data key="v_Z">92</data>
+      <data key="v_id">n19</data>
+    </node>
+    <node id="n20">
+      <data key="v_X">132</data>
+      <data key="v_Y">220</data>
+      <data key="v_Z">93</data>
+      <data key="v_id">n20</data>
+    </node>
+    <node id="n21">
+      <data key="v_X">226</data>
+      <data key="v_Y">94</data>
+      <data key="v_Z">94</data>
+      <data key="v_id">n21</data>
+    </node>
+    <node id="n22">
+      <data key="v_X">132</data>
+      <data key="v_Y">219</data>
+      <data key="v_Z">94</data>
+      <data key="v_id">n22</data>
+    </node>
+    <node id="n23">
+      <data key="v_X">225</data>
+      <data key="v_Y">94</data>
+      <data key="v_Z">95</data>
+      <data key="v_id">n23</data>
+    </node>
+    <node id="n24">
+      <data key="v_X">132</data>
+      <data key="v_Y">217</data>
+      <data key="v_Z">96</data>
+      <data key="v_id">n24</data>
+    </node>
+    <node id="n25">
+      <data key="v_X">123</data>
+      <data key="v_Y">223</data>
+      <data key="v_Z">97</data>
+      <data key="v_id">n25</data>
+    </node>
+    <node id="n26">
+      <data key="v_X">123</data>
+      <data key="v_Y">222</data>
+      <data key="v_Z">98</data>
+      <data key="v_id">n26</data>
+    </node>
+    <node id="n27">
+      <data key="v_X">279</data>
+      <data key="v_Y">17</data>
+      <data key="v_Z">105</data>
+      <data key="v_id">n27</data>
+    </node>
+    <node id="n28">
+      <data key="v_X">79</data>
+      <data key="v_Y">202</data>
+      <data key="v_Z">115</data>
+      <data key="v_id">n28</data>
+    </node>
+    <node id="n29">
+      <data key="v_X">79</data>
+      <data key="v_Y">203</data>
+      <data key="v_Z">116</data>
+      <data key="v_id">n29</data>
+    </node>
+    <node id="n30">
+      <data key="v_X">12</data>
+      <data key="v_Y">284</data>
+      <data key="v_Z">137</data>
+      <data key="v_id">n30</data>
+    </node>
+    <edge source="n0" target="n2">
+      <data key="e_volume">2968.00978718494</data>
+      <data key="e_surface_area">690.957557829149</data>
+      <data key="e_length">12.8005181706768</data>
+      <data key="e_tortuosity">1.00882215755631</data>
+      <data key="e_radius_avg">8.59100462410409</data>
+      <data key="e_radius_max">8.76067276231443</data>
+      <data key="e_radius_min">8.10667764575332</data>
+      <data key="e_radius_SD">0.212021246355137</data>
+      <data key="e_vis_radius">8.59100462410409</data>
+    </edge>  
+    <edge source="n1" target="n2">
+      <data key="e_volume">574.909725092385</data>
+      <data key="e_surface_area">135.716639900783</data>
+      <data key="e_length">2.54950975679639</data>
+      <data key="e_tortuosity">1.04083299973307</data>
+      <data key="e_radius_avg">8.47220687916645</data>
+      <data key="e_radius_max">8.74628680000519</data>
+      <data key="e_radius_min">8.26041738255385</data>
+      <data key="e_radius_SD">0.203186852291729</data>
+      <data key="e_vis_radius">8.47220687916645</data>
+    </edge>
+    <edge source="n3" target="n4">
+      <data key="e_volume">342.101986238194</data>
+      <data key="e_surface_area">77.9722791193835</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">8.77496438739212</data>
+      <data key="e_radius_max">8.77496438739212</data>
+      <data key="e_radius_min">8.77496438739212</data>
+      <data key="e_radius_SD">0</data>
+      <data key="e_vis_radius">8.77496438739212</data>
+    </edge>
+    <edge source="n4" target="n6">
+      <data key="e_volume">6390.75270250275</data>
+      <data key="e_surface_area">1344.05972445348</data>
+      <data key="e_length">22.494443758404</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.50962607722114</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">8.77496438739212</data>
+      <data key="e_radius_SD">0.438559447011624</data>
+      <data key="e_vis_radius">9.50962607722114</data>
+    </edge>
+    <edge source="n5" target="n6">
+      <data key="e_volume">557.341546098369</data>
+      <data key="e_surface_area">110.140223822609</data>
+      <data key="e_length">1.73205080756888</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">10.1205813236047</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">10.1205813236047</data>
+      <data key="e_radius_SD">0</data>
+      <data key="e_vis_radius">10.1205813236047</data>
+    </edge>
+    <edge source="n6" target="n8">
+      <data key="e_volume">5763.86852185845</data>
+      <data key="e_surface_area">1121.14418635933</data>
+      <data key="e_length">17.3539766516941</data>
+      <data key="e_tortuosity">1.0086794042874</data>
+      <data key="e_radius_avg">10.2821182002921</data>
+      <data key="e_radius_max">11.0679023798071</data>
+      <data key="e_radius_min">9.32676279467474</data>
+      <data key="e_radius_SD">0.406551575232156</data>
+      <data key="e_vis_radius">10.2821182002921</data>
+    </edge>
+    <edge source="n7" target="n8">
+      <data key="e_volume">1387.56133253644</data>
+      <data key="e_surface_area">250.736098841635</data>
+      <data key="e_length">3.60555127546399</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">11.0679023798071</data>
+      <data key="e_radius_max">11.0679023798071</data>
+      <data key="e_radius_min">11.0679023798071</data>
+      <data key="e_radius_SD">0</data>
+      <data key="e_vis_radius">11.0679023798071</data>
+    </edge>
+    <edge source="n8" target="n10">
+      <data key="e_volume">1516.43144195914</data>
+      <data key="e_surface_area">272.064709799693</data>
+      <data key="e_length">3.88429118631669</data>
+      <data key="e_tortuosity">1.03812048640448</data>
+      <data key="e_radius_avg">11.1475791408273</data>
+      <data key="e_radius_max">11.2879184513951</data>
+      <data key="e_radius_min">11.0679023798071</data>
+      <data key="e_radius_SD">0.0904895502557158</data>
+      <data key="e_vis_radius">11.1475791408273</data>
+    </edge>
+    <edge source="n9" target="n10">
+      <data key="e_volume">553.995545156241</data>
+      <data key="e_surface_area">99.2237341645718</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">11.1665933522999</data>
+      <data key="e_radius_max">11.1665933522999</data>
+      <data key="e_radius_min">11.1665933522999</data>
+      <data key="e_radius_SD">0</data>
+      <data key="e_vis_radius">11.1665933522999</data>
+    </edge>
+    <edge source="n10" target="n12">
+      <data key="e_volume">1301.07913713455</data>
+      <data key="e_surface_area">234.825166986156</data>
+      <data key="e_length">3.37268439080801</data>
+      <data key="e_tortuosity">1.19242400177118</data>
+      <data key="e_radius_avg">11.0812580596291</data>
+      <data key="e_radius_max">11.1665933522999</data>
+      <data key="e_radius_min">11.0226341266024</data>
+      <data key="e_radius_SD">0.0526204001926892</data>
+      <data key="e_vis_radius">11.0812580596291</data>
+    </edge>
+    <edge source="n11" target="n12">
+      <data key="e_volume">872.278267180416</data>
+      <data key="e_surface_area">158.115269988313</data>
+      <data key="e_length">2.28077640640442</data>
+      <data key="e_tortuosity">1.01999421723959</data>
+      <data key="e_radius_avg">11.0334475252756</data>
+      <data key="e_radius_max">11.0679023798071</data>
+      <data key="e_radius_min">10.9645378162125</data>
+      <data key="e_radius_SD">0.0487265225680511</data>
+      <data key="e_vis_radius">11.0334475252756</data>
+    </edge>
+    <edge source="n12" target="n13">
+      <data key="e_volume">5089.56777245541</data>
+      <data key="e_surface_area">928.899514951557</data>
+      <data key="e_length">13.4910796521039</data>
+      <data key="e_tortuosity">1.00002535731425</data>
+      <data key="e_radius_avg">10.9582741524434</data>
+      <data key="e_radius_max">11.2879184513951</data>
+      <data key="e_radius_min">10.7440442408508</data>
+      <data key="e_radius_SD">0.121786474868431</data>
+      <data key="e_vis_radius">10.9582741524434</data>
+    </edge>
+    <edge source="n13" target="n15">
+      <data key="e_volume">2707.58810409489</data>
+      <data key="e_surface_area">565.023928709257</data>
+      <data key="e_length">9.38298927070219</data>
+      <data key="e_tortuosity">1.04255436341135</data>
+      <data key="e_radius_avg">9.5839767716745</data>
+      <data key="e_radius_max">10.9192695630078</data>
+      <data key="e_radius_min">8.54068507284008</data>
+      <data key="e_radius_SD">0.902552737384821</data>
+      <data key="e_vis_radius">9.5839767716745</data>
+    </edge>
+    <edge source="n13" target="n14">
+      <data key="e_volume">1682.55709173017</data>
+      <data key="e_surface_area">325.664166231142</data>
+      <data key="e_length">5.01603173619781</data>
+      <data key="e_tortuosity">1.00320634723956</data>
+      <data key="e_radius_avg">10.333080923223</data>
+      <data key="e_radius_max">10.9192695630078</data>
+      <data key="e_radius_min">9.76967785115546</data>
+      <data key="e_radius_SD">0.364826627712315</data>
+      <data key="e_vis_radius">10.333080923223</data>
+    </edge>
+    <edge source="n15" target="n17">
+      <data key="e_volume">3503.31217489665</data>
+      <data key="e_surface_area">905.900360757091</data>
+      <data key="e_length">18.6411268950532</data>
+      <data key="e_tortuosity">1.02771859346221</data>
+      <data key="e_radius_avg">7.73443157030827</data>
+      <data key="e_radius_max">9.20521387162178</data>
+      <data key="e_radius_min">6.55678096340427</data>
+      <data key="e_radius_SD">0.866183700614113</data>
+      <data key="e_vis_radius">7.73443157030827</data>
+    </edge>
+    <edge source="n15" target="n19">
+      <data key="e_volume">14701.8048014894</data>
+      <data key="e_surface_area">3271.12778949283</data>
+      <data key="e_length">57.9181264618583</data>
+      <data key="e_tortuosity">1.04344282165106</data>
+      <data key="e_radius_avg">8.98882938704686</data>
+      <data key="e_radius_max">10.0035747530674</data>
+      <data key="e_radius_min">7.79391324342343</data>
+      <data key="e_radius_SD">0.521329084297539</data>
+      <data key="e_vis_radius">8.98882938704686</data>
+    </edge>
+    <edge source="n16" target="n17">
+      <data key="e_volume">272.049287893855</data>
+      <data key="e_surface_area">76.9500741069621</data>
+      <data key="e_length">1.73205080756888</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">7.07079989333607</data>
+      <data key="e_radius_max">7.10624812020416</data>
+      <data key="e_radius_min">7.03535166646798</data>
+      <data key="e_radius_SD">0.0354482268680902</data>
+      <data key="e_vis_radius">7.07079989333607</data>
+    </edge>
+    <edge source="n17" target="n23">
+      <data key="e_volume">8882.2410418305</data>
+      <data key="e_surface_area">3079.10641993905</data>
+      <data key="e_length">84.9409237596522</data>
+      <data key="e_tortuosity">1.0007604361005</data>
+      <data key="e_radius_avg">5.76936281533674</data>
+      <data key="e_radius_max">7.22735867427685</data>
+      <data key="e_radius_min">5.24209216036364</data>
+      <data key="e_radius_SD">0.581771618713164</data>
+      <data key="e_vis_radius">5.76936281533674</data>
+    </edge>
+    <edge source="n18" target="n19">
+      <data key="e_volume">393.430015088453</data>
+      <data key="e_surface_area">83.6173068544037</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.41025320926689</data>
+      <data key="e_radius_max">10.0035747530674</data>
+      <data key="e_radius_min">8.8169316654664</data>
+      <data key="e_radius_SD">0.593321543800487</data>
+      <data key="e_vis_radius">9.41025320926689</data>
+    </edge>
+    <edge source="n19" target="n22">
+      <data key="e_volume">1599.88417586258</data>
+      <data key="e_surface_area">323.850311468033</data>
+      <data key="e_length">5.21663236187822</data>
+      <data key="e_tortuosity">1.13836250814587</data>
+      <data key="e_radius_avg">9.88039300385543</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.5612381486459</data>
+      <data key="e_radius_SD">0.203800236983807</data>
+      <data key="e_vis_radius">9.88039300385543</data>
+    </edge>
+    <edge source="n20" target="n22">
+      <data key="e_volume">430.264353523796</data>
+      <data key="e_surface_area">87.4440199251752</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.84090973612529</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.5612381486459</data>
+      <data key="e_radius_SD">0.27967158747939</data>
+      <data key="e_vis_radius">9.84090973612529</data>
+    </edge>
+    <edge source="n21" target="n23">
+      <data key="e_volume">127.34845649032</data>
+      <data key="e_surface_area">47.5728613619843</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">5.3538279113093</data>
+      <data key="e_radius_max">5.78775727069166</data>
+      <data key="e_radius_min">4.91989855192694</data>
+      <data key="e_radius_SD">0.433929359382361</data>
+      <data key="e_vis_radius">5.3538279113093</data>
+    </edge>
+    <edge source="n22" target="n24">
+      <data key="e_volume">857.642596597655</data>
+      <data key="e_surface_area">174.594516740053</data>
+      <data key="e_length">2.82842712474619</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.82439325828964</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.23201712765957</data>
+      <data key="e_radius_SD">0.418873178981576</data>
+      <data key="e_vis_radius">9.82439325828964</data>
+    </edge>
+    <edge source="n22" target="n26">
+      <data key="e_volume">3334.27684059427</data>
+      <data key="e_surface_area">672.303032384015</data>
+      <data key="e_length">10.7874456423709</data>
+      <data key="e_tortuosity">1.04776934433823</data>
+      <data key="e_radius_avg">9.91897010718748</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.5612381486459</data>
+      <data key="e_radius_SD">0.176395866945081</data>
+      <data key="e_vis_radius">9.91897010718748</data>
+    </edge>
+    <edge source="n23" target="n27">
+      <data key="e_volume">9427.57715820218</data>
+      <data key="e_surface_area">3348.33652720698</data>
+      <data key="e_length">94.634227589006</data>
+      <data key="e_tortuosity">1.00059440307239</data>
+      <data key="e_radius_avg">5.63120049708158</data>
+      <data key="e_radius_max">5.93614066163451</data>
+      <data key="e_radius_min">5.24209216036364</data>
+      <data key="e_radius_SD">0.222008133313138</data>
+      <data key="e_vis_radius">5.63120049708158</data>
+    </edge>
+    <edge source="n25" target="n26">
+      <data key="e_volume">421.035932485326</data>
+      <data key="e_surface_area">86.5011759640446</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.73480251090078</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.34902369819688</data>
+      <data key="e_radius_SD">0.385778812703903</data>
+      <data key="e_vis_radius">9.73480251090078</data>
+    </edge>
+    <edge source="n26" target="n29">
+      <data key="e_volume">15210.9985682852</data>
+      <data key="e_surface_area">3202.91281336796</data>
+      <data key="e_length">53.6688938471674</data>
+      <data key="e_tortuosity">1.04830856420038</data>
+      <data key="e_radius_avg">9.49822830318654</data>
+      <data key="e_radius_max">10.1205813236047</data>
+      <data key="e_radius_min">9.0510946974817</data>
+      <data key="e_radius_SD">0.234686174927971</data>
+      <data key="e_vis_radius">9.49822830318654</data>
+    </edge>
+    <edge source="n28" target="n29">
+      <data key="e_volume">400.576555056199</data>
+      <data key="e_surface_area">84.3733309022571</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">9.49533580747807</data>
+      <data key="e_radius_max">9.61484466072148</data>
+      <data key="e_radius_min">9.37582695423467</data>
+      <data key="e_radius_SD">0.119508853243406</data>
+      <data key="e_vis_radius">9.49533580747807</data>
+    </edge>
+    <edge source="n29" target="n30">
+      <data key="e_volume">30436.2767927993</data>
+      <data key="e_surface_area">6602.94500338423</data>
+      <data key="e_length">113.991894360911</data>
+      <data key="e_tortuosity">1.06339608887775</data>
+      <data key="e_radius_avg">9.21900054512029</data>
+      <data key="e_radius_max">10.0622829504312</data>
+      <data key="e_radius_min">3.22452000383698</data>
+      <data key="e_radius_SD">1.19196769807991</data>
+      <data key="e_vis_radius">9.21900054512029</data>
+    </edge>
+    <edge source="n2" target="n4">
+      <data key="e_volume">340.984871275287</data>
+      <data key="e_surface_area">77.8448679556745</data>
+      <data key="e_length">1.4142135623731</data>
+      <data key="e_tortuosity">1</data>
+      <data key="e_radius_avg">8.76062559369866</data>
+      <data key="e_radius_max">8.77496438739212</data>
+      <data key="e_radius_min">8.74628680000519</data>
+      <data key="e_radius_SD">0.0143387936934669</data>
+      <data key="e_vis_radius">8.76062559369866</data>
+    </edge>
+  </graph>
+</graphml>
