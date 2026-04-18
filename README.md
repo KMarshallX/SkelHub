@@ -18,8 +18,8 @@ python -m pip install -e .
 ```
 
 To use the built-in GraphML viewer: 
-      
-*Note: the visualizing module has a known bug - you have to click the current file under **File** tab around 3 times to render the complete graph*
+
+*Note: the visualizing module has a known bug - you have to hit the **Rebuild** button around 3 times to render the complete graph*
 
 ```bash
 # Initialze the viewer
