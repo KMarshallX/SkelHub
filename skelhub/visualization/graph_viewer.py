@@ -110,8 +110,13 @@ class _QtModules:
     QTransform: Any
     QPointLight: Any
     QPhongMaterial: Any
+    QPerVertexColorMaterial: Any
     QSphereMesh: Any
     QCylinderMesh: Any
+    QGeometryRenderer: Any
+    QGeometry: Any
+    QBuffer: Any
+    QAttribute: Any
     Qt3DWindow: Any
 
 
@@ -192,26 +197,29 @@ class _GraphSceneController:
         self._qt = qt
         self._options = options
         self._root_entity = qt.QEntity()
+        self._graph_entity = qt.QEntity(self._root_entity)
         self._window.setRootEntity(self._root_entity)
 
-    def _clear_scene_children(self) -> None:
-        for child in list(self._root_entity.children()):
-            child.setParent(None)
-            if hasattr(child, "deleteLater"):
-                child.deleteLater()
+    def _replace_graph_entity(self) -> Any:
+        old_graph_entity = self._graph_entity
+        self._graph_entity = self._qt.QEntity(self._root_entity)
+        old_graph_entity.setParent(None)
+        if hasattr(old_graph_entity, "deleteLater"):
+            old_graph_entity.deleteLater()
+        return self._graph_entity
 
     def show_graph(
         self,
         graph_data: GraphVisualizationData | None,
     ) -> tuple[GraphSceneDiagnostics | None, GraphSceneBuildStats | None]:
-        self._clear_scene_children()
+        graph_entity = self._replace_graph_entity()
 
         if graph_data is None:
-            _populate_empty_scene(self._window, self._root_entity, self._qt, self._options)
+            _populate_empty_scene(self._window, graph_entity, self._qt, self._options)
             diagnostics = None
             build_stats = None
         else:
-            _populate_scene(self._window, self._root_entity, graph_data, self._options, self._qt)
+            _populate_scene(self._window, graph_entity, graph_data, self._options, self._qt)
             diagnostics = _build_scene_diagnostics(self._window, graph_data, self._options)
             build_stats = _build_scene_build_stats(graph_data)
 
@@ -294,6 +302,9 @@ class _GraphViewerWindow:
 
         fit_action = toolbar.addAction("Fit Graph")
         fit_action.triggered.connect(self._fit_active_graph)
+
+        rebuild_action = toolbar.addAction("Rebuild")
+        rebuild_action.triggered.connect(self._rebuild_active_graph)
 
     def _loaded_file_action_label(self, entry: GraphViewerSessionEntry) -> str:
         path = Path(entry.source_path)
@@ -445,6 +456,14 @@ class _GraphViewerWindow:
         self._sync_view_from_session(status_message=status_message)
 
     def _activate_loaded_graph(self, file_key: str) -> None:
+        active_entry = self._session.active_entry
+        if active_entry is not None and active_entry.file_key == file_key:
+            self._sync_view_from_session(
+                status_message=f"Re-fit graph view: {Path(active_entry.source_path).name}",
+                rebuild_scene=False,
+            )
+            return
+
         try:
             entry = self._session.set_active_file(file_key)
         except GraphVisualizationError as exc:
@@ -465,6 +484,17 @@ class _GraphViewerWindow:
         self._sync_view_from_session(
             status_message=f"Re-fit graph view: {Path(active_entry.source_path).name}",
             rebuild_scene=False,
+        )
+
+    def _rebuild_active_graph(self) -> None:
+        active_entry = self._session.active_entry
+        if active_entry is None:
+            self._show_status("No GraphML file is currently loaded.")
+            return
+
+        self._sync_view_from_session(
+            status_message=f"Rebuilt graph scene: {Path(active_entry.source_path).name}",
+            rebuild_scene=True,
         )
 
     def show(self) -> None:
@@ -669,8 +699,13 @@ def _import_qt_modules() -> _QtModules:
         QTransform = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QTransform")
         QPointLight = _resolve_qt_symbol(Qt3DRender, "Qt3DRender", "QPointLight")
         QPhongMaterial = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QPhongMaterial")
+        QPerVertexColorMaterial = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QPerVertexColorMaterial")
         QSphereMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QSphereMesh")
         QCylinderMesh = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "QCylinderMesh")
+        QGeometryRenderer = _resolve_qt_symbol(Qt3DRender, "Qt3DRender", "QGeometryRenderer")
+        QGeometry = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QGeometry")
+        QBuffer = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QBuffer")
+        QAttribute = _resolve_qt_symbol(Qt3DCore, "Qt3DCore", "QAttribute")
         Qt3DWindow = _resolve_qt_symbol(Qt3DExtras, "Qt3DExtras", "Qt3DWindow")
     except AttributeError as exc:
         raise _build_optional_dependency_error(ImportError(str(exc))) from exc
@@ -686,8 +721,13 @@ def _import_qt_modules() -> _QtModules:
         QTransform=QTransform,
         QPointLight=QPointLight,
         QPhongMaterial=QPhongMaterial,
+        QPerVertexColorMaterial=QPerVertexColorMaterial,
         QSphereMesh=QSphereMesh,
         QCylinderMesh=QCylinderMesh,
+        QGeometryRenderer=QGeometryRenderer,
+        QGeometry=QGeometry,
+        QBuffer=QBuffer,
+        QAttribute=QAttribute,
         Qt3DWindow=Qt3DWindow,
     )
 
@@ -926,6 +966,29 @@ def _center_graph_positions(
 
 def _qvector3d_from_array(QtGui: Any, values: Sequence[float]) -> Any:
     return QtGui.QVector3D(float(values[0]), float(values[1]), float(values[2]))
+
+
+def _qt3d_enum_value(enum_owner: Any, *names: str) -> Any:
+    for name in names:
+        value = getattr(enum_owner, name, None)
+        if value is not None:
+            return value
+
+    nested_namespaces = [
+        getattr(enum_owner, "PrimitiveType", None),
+        getattr(enum_owner, "BufferType", None),
+        getattr(enum_owner, "AttributeType", None),
+        getattr(enum_owner, "VertexBaseType", None),
+    ]
+    for namespace in nested_namespaces:
+        if namespace is None:
+            continue
+        for name in names:
+            value = getattr(namespace, name, None)
+            if value is not None:
+                return value
+
+    raise AttributeError(f"{enum_owner!r} does not define any of {names!r}")
 
 
 def _camera_aspect_ratio(window: Any) -> float:
@@ -1237,6 +1300,90 @@ def _populate_empty_scene(window: Any, root_entity: Any, qt: _QtModules, options
     _add_light(root_entity, qt, np.zeros(3, dtype=float), metrics.camera_distance)
 
 
+def _build_batched_geometry_renderer(
+    parent_entity: Any,
+    qt: _QtModules,
+    positions: np.ndarray,
+    colors: np.ndarray,
+    *,
+    primitive_type_name: str,
+) -> Any:
+    geometry = qt.QGeometry(parent_entity)
+
+    position_buffer = qt.QBuffer(geometry)
+    position_data = np.ascontiguousarray(positions, dtype=np.float32)
+    position_buffer.setData(position_data.tobytes())
+
+    color_buffer = qt.QBuffer(geometry)
+    color_data = np.ascontiguousarray(colors, dtype=np.float32)
+    color_buffer.setData(color_data.tobytes())
+
+    float_base_type = _qt3d_enum_value(qt.QAttribute, "Float")
+    vertex_attribute_type = _qt3d_enum_value(qt.QAttribute, "VertexAttribute")
+
+    position_attribute = qt.QAttribute(geometry)
+    position_attribute.setName(qt.QAttribute.defaultPositionAttributeName())
+    position_attribute.setAttributeType(vertex_attribute_type)
+    position_attribute.setVertexBaseType(float_base_type)
+    position_attribute.setVertexSize(3)
+    position_attribute.setByteStride(3 * np.dtype(np.float32).itemsize)
+    position_attribute.setCount(int(position_data.shape[0]))
+    position_attribute.setBuffer(position_buffer)
+    geometry.addAttribute(position_attribute)
+
+    color_attribute = qt.QAttribute(geometry)
+    color_attribute.setName(qt.QAttribute.defaultColorAttributeName())
+    color_attribute.setAttributeType(vertex_attribute_type)
+    color_attribute.setVertexBaseType(float_base_type)
+    color_attribute.setVertexSize(3)
+    color_attribute.setByteStride(3 * np.dtype(np.float32).itemsize)
+    color_attribute.setCount(int(color_data.shape[0]))
+    color_attribute.setBuffer(color_buffer)
+    geometry.addAttribute(color_attribute)
+
+    renderer = qt.QGeometryRenderer(parent_entity)
+    renderer.setGeometry(geometry)
+    renderer.setVertexCount(int(position_data.shape[0]))
+    renderer.setPrimitiveType(_qt3d_enum_value(qt.QGeometryRenderer, primitive_type_name))
+    return renderer
+
+
+def _add_batched_points(root_entity: Any, qt: _QtModules, positions: np.ndarray) -> None:
+    if positions.size == 0:
+        return
+
+    point_entity = qt.QEntity(root_entity)
+    colors = np.tile(np.asarray([[0.8627, 0.0784, 0.2353]], dtype=np.float32), (positions.shape[0], 1))
+    point_renderer = _build_batched_geometry_renderer(
+        point_entity,
+        qt,
+        positions,
+        colors,
+        primitive_type_name="Points",
+    )
+    point_material = qt.QPerVertexColorMaterial(point_entity)
+    point_entity.addComponent(point_renderer)
+    point_entity.addComponent(point_material)
+
+
+def _add_batched_lines(root_entity: Any, qt: _QtModules, positions: np.ndarray) -> None:
+    if positions.size == 0:
+        return
+
+    line_entity = qt.QEntity(root_entity)
+    colors = np.tile(np.asarray([[0.1333, 0.5451, 0.1333]], dtype=np.float32), (positions.shape[0], 1))
+    line_renderer = _build_batched_geometry_renderer(
+        line_entity,
+        qt,
+        positions,
+        colors,
+        primitive_type_name="Lines",
+    )
+    line_material = qt.QPerVertexColorMaterial(line_entity)
+    line_entity.addComponent(line_renderer)
+    line_entity.addComponent(line_material)
+
+
 def _populate_scene(window: Any, root_entity: Any, graph_data: GraphVisualizationData, options: GraphVisualizationOptions, qt: _QtModules) -> None:
     metrics = _compute_scene_metrics(
         graph_data.node_positions,
@@ -1250,59 +1397,8 @@ def _populate_scene(window: Any, root_entity: Any, graph_data: GraphVisualizatio
     _configure_camera(window, qt, origin, metrics)
 
     _add_light(root_entity, qt, origin, metrics.camera_distance)
-
-    node_material = qt.QPhongMaterial(root_entity)
-    node_material.setDiffuse(qt.QtGui.QColor(220, 20, 60))
-    node_material.setAmbient(qt.QtGui.QColor(180, 35, 70))
-    node_material.setSpecular(qt.QtGui.QColor(255, 220, 220))
-    node_material.setShininess(32.0)
-
-    for position in centered_node_positions:
-        node_entity = qt.QEntity(root_entity)
-        node_mesh = qt.QSphereMesh(node_entity)
-        node_mesh.setRadius(1.0)
-        node_mesh.setRings(12)
-        node_mesh.setSlices(16)
-        node_transform = qt.QTransform(node_entity)
-        node_transform.setTranslation(_qvector3d_from_array(qt.QtGui, position))
-        node_transform.setScale(metrics.node_radius)
-        node_entity.addComponent(node_mesh)
-        node_entity.addComponent(node_material)
-        node_entity.addComponent(node_transform)
-
-    if graph_data.edge_count > 0:
-        edge_material = qt.QPhongMaterial(root_entity)
-        edge_material.setDiffuse(qt.QtGui.QColor(34, 139, 34))
-        edge_material.setAmbient(qt.QtGui.QColor(40, 160, 70))
-        edge_material.setSpecular(qt.QtGui.QColor(220, 255, 220))
-        edge_material.setShininess(24.0)
-
-        y_axis = qt.QtGui.QVector3D(0.0, 1.0, 0.0)
-        for edge_index in range(0, centered_edge_positions.shape[0], 2):
-            start = centered_edge_positions[edge_index]
-            end = centered_edge_positions[edge_index + 1]
-            delta = end - start
-            length = float(np.linalg.norm(delta))
-            if length <= 0:
-                continue
-
-            edge_entity = qt.QEntity(root_entity)
-            edge_mesh = qt.QCylinderMesh(edge_entity)
-            edge_mesh.setRadius(1.0)
-            edge_mesh.setLength(1.0)
-            edge_mesh.setRings(8)
-            edge_mesh.setSlices(12)
-            edge_transform = qt.QTransform(edge_entity)
-            edge_transform.setTranslation(_qvector3d_from_array(qt.QtGui, (start + end) * 0.5))
-
-            direction = qt.QtGui.QVector3D(float(delta[0]), float(delta[1]), float(delta[2]))
-            direction.normalize()
-            edge_transform.setRotation(qt.QtGui.QQuaternion.rotationTo(y_axis, direction))
-            edge_transform.setScale3D(qt.QtGui.QVector3D(metrics.edge_radius, length, metrics.edge_radius))
-
-            edge_entity.addComponent(edge_mesh)
-            edge_entity.addComponent(edge_material)
-            edge_entity.addComponent(edge_transform)
+    _add_batched_points(root_entity, qt, centered_node_positions)
+    _add_batched_lines(root_entity, qt, centered_edge_positions)
 
 
 def launch_graph_viewer(
