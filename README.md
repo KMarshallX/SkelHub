@@ -6,7 +6,7 @@ Current status:
 
 - Supported algorithm backends: `mcp`, `lee94`
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphviz`
-- Evaluation: placeholder path that validates and loads skeleton NIfTI predictions
+- Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph visualization: optional PySide6-based GraphML viewer for 3D vessel graphs
 
 ## Installation
@@ -60,7 +60,7 @@ Framework notes:
 - `skelhub.core` contains shared result objects, framework interfaces, and the backend registry.
 - `skelhub.algorithms.mcp` contains the current MCP implementation and its thin framework adapter.
 - `skelhub.algorithms.lee94` contains the Lee et al. 1994 thinning backend adapter around `scikit-image`.
-- `skelhub.evaluation` currently contains a placeholder evaluator that validates and loads a skeleton NIfTI through the framework path.
+- `skelhub.evaluation` contains the algorithm-agnostic voxel-based v1 evaluator, with separate validation, geometry, morphology, and reporting helpers.
 
 ## CLI Usage
 
@@ -104,11 +104,22 @@ Lee94 parameters exposed at the framework level:
 
 - `--binarize-threshold FLOAT`
 
-Run the evaluation placeholder:
+Run the voxel-based evaluation suite:
 
 ```bash
-skelhub evaluate --pred ./test_outputs/skelhub_mcp_small.nii.gz
+skelhub evaluate \
+  --pred ./test_outputs/skelhub_mcp_small.nii.gz \
+  --ref ./test_data/lsys_gt/reference_skeleton.nii.gz \
+  --buffer-radius 1 \
+  --buffer-radius-unit voxels
 ```
+
+Optional evaluation flags:
+
+- `-b, --buffer-radius FLOAT` required buffer dilation radius
+- `--buffer-radius-unit {voxels,um}` optional radius unit, default `voxels`
+- `--json-output PATH` optional structured JSON report output
+- `-v, --verbose` optional progress logs and detailed terminal report
 
 Open a GraphML vessel graph in the interactive PySide6 viewer:
 
@@ -136,9 +147,14 @@ result = run_algorithm_from_path(
     config=Lee94Config(binarize_threshold=0.5),
 )
 
-evaluation = evaluate_prediction_path("out.nii.gz")
+evaluation = evaluate_prediction_path(
+    "pred.nii.gz",
+    "ref.nii.gz",
+    buffer_radius=1.0,
+    buffer_radius_unit="voxels",
+)
 print(result.backend_metadata["config"])
-print(evaluation.message)
+print(evaluation.P)
 ```
 
 ## Outputs
@@ -155,6 +171,16 @@ print(evaluation.message)
 
 The MCP backend keeps its current per-object runtime metadata under `result.backend_metadata["mcp"]`.
 The Lee94 backend records its wrapper metadata under `result.backend_metadata["lee94"]` and uses `scikit-image`'s Lee-method implementation rather than a custom in-repo thinning implementation.
+
+`EvaluationResult` now records the v1 evaluation outputs explicitly, including:
+
+- `TP`, `FP`, `FN`
+- `Cp`, `Cr`
+- raw, clipped, and normalized morphology values for `OCC`, `BCC`, and `E`
+- global performance score `P`
+- buffer radius metadata
+- connectivity metadata
+- warnings
 
 ## Graph Visualization
 
@@ -175,14 +201,28 @@ If the GraphML file does not contain usable node coordinates, the command fails 
 
 ## Evaluation Overview
 
-The current evaluation subsystem is intentionally minimal. It:
+The current evaluation subsystem is a real but intentionally conservative v1 implementation. It:
 
-- accepts a skeleton prediction path in `.nii` or `.nii.gz`
-- validates the path and loads the NIfTI correctly
-- runs through a framework-level evaluation function
-- emits a clear placeholder success message
+- evaluates two binary 3D skeleton volumes: predicted and reference
+- fails hard on mismatched shape, mismatched spacing, or non-binary values
+- computes geometry preservation with the buffer method
+- computes 3D morphology quality from connected components and voxel endpoints
+- reports a global quality-style score `P`
+- stays voxel-based and algorithm-agnostic
 
-Metric computation is intentionally deferred until the common framework interfaces settle.
+The v1 metrics are:
+
+- Geometry preservation: `TP`, `FP`, `FN`, completeness `Cp`, and correctness `Cr`
+- Morphology quality: raw signed `OCC`, `BCC`, and `E`, plus clipped and normalized quality variants
+- Global score: `P = mean(Cp, Cr, OCC_normalized, BCC_normalized, E_normalized)`
+
+Current limitations:
+
+- 3D only
+- raw binary skeleton inputs only
+- voxel-based only
+- not graph-based
+- not yet exposed primarily through `SkeletonResult` objects, though the array-level evaluator is structured to make that extension straightforward
 
 ## Documentation
 
