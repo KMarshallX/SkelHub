@@ -46,5 +46,28 @@ class EvaluationResult:
     """Standardized evaluation result."""
 
     message: str
-    input_path: str
+    input_path: str | None = None
+    pred_path: str | None = None
+    ref_path: str | None = None
+    TP: int = 0
+    FP: int = 0
+    FN: int = 0
+    Cp: float = 0.0
+    Cr: float = 0.0
+    OCC: float = 0.0
+    OCC_clipped: float = 0.0
+    OCC_normalized: float = 1.0
+    BCC: float = 0.0
+    BCC_clipped: float = 0.0
+    BCC_normalized: float = 1.0
+    E: float = 0.0
+    E_clipped: float = 0.0
+    E_normalized: float = 1.0
+    P: float = 0.0
+    buffer_radius: float | None = None
+    buffer_radius_unit: str | None = None
+    buffer_radius_mode: str | None = None
+    foreground_connectivity: int = 26
+    background_connectivity: int = 6
+    warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

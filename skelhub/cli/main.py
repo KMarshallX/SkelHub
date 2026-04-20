@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Optional
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.api import evaluate_prediction_path, launch_graph_viewer_from_path, run_algorithm_from_path
 from skelhub.visualization import GraphVisualizationError
 from skelhub.core import list_backends
+from skelhub.evaluation import format_evaluation_report, write_evaluation_json
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,8 +55,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
-    eval_parser = subparsers.add_parser("evaluate", help="Run the framework evaluation path.")
-    eval_parser.add_argument("--pred", required=True, help="Skeleton NIfTI path to evaluate.")
+    eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")
+    eval_parser.add_argument("--pred", required=True, help="Predicted skeleton NIfTI path.")
+    eval_parser.add_argument("--ref", required=True, help="Reference skeleton NIfTI path.")
+    eval_parser.add_argument(
+        "-b",
+        "--buffer-radius",
+        required=True,
+        type=float,
+        help="Buffer dilation radius used by the geometry-preservation metric.",
+    )
+    eval_parser.add_argument(
+        "--buffer-radius-unit",
+        choices=("voxels", "um"),
+        default="voxels",
+        help="Unit for --buffer-radius. Use 'um' for physical micrometers.",
+    )
+    eval_parser.add_argument(
+        "--json-output",
+        help="Optional path to write a structured JSON evaluation report.",
+    )
+    eval_parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Emit progress logs and a detailed terminal report.",
+    )
 
     graphviz_parser = subparsers.add_parser(
         "graphviz",
@@ -102,9 +128,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "evaluate":
-        result = evaluate_prediction_path(args.pred)
-        print(result.message)
-        return 0
+        try:
+            result = evaluate_prediction_path(
+                args.pred,
+                args.ref,
+                buffer_radius=args.buffer_radius,
+                buffer_radius_unit=args.buffer_radius_unit,
+                log=print if args.verbose else None,
+            )
+            print(format_evaluation_report(result, verbose=args.verbose))
+            if args.json_output:
+                json_path = write_evaluation_json(result, Path(args.json_output))
+                if args.verbose:
+                    print(f"JSON report written to {json_path}")
+            return 0
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            parser.exit(status=2, message=f"skelhub evaluate: error: {exc}\n")
 
     if args.command == "graphviz":
         try:
