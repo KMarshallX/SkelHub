@@ -35,7 +35,7 @@ Framework-facing usage:
 skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz
 # Run with custom parameters:
 skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz \
-    --root-method topmost \
+    --root-method max_fdt \
     --threshold-scale 1.0 \
     --dilation-factor 2.0 \
     --max-iterations 200 \
@@ -48,6 +48,7 @@ Backend-specific parameters:
 
 - `--root-method {max_fdt,topmost}` controls how the root voxel is chosen for each disconnected object.
   Use `max_fdt` (default) to start from the deepest interior voxel. Use `topmost` to prefer a root near the top of the object, which can be useful for airway-like data with a known superior-to-inferior orientation.
+  Default is `max_fdt`.
 - `--threshold-scale FLOAT` multiplies the branch-significance acceptance threshold. The default is `1.0`.
   Increase it to make branch acceptance more conservative and reduce weak side branches. Decrease it slightly to keep more marginal branches. The value must be positive.
 - `--dilation-factor FLOAT` scales the FDT value used when generating the marked-mask dilation around the root and accepted branches. The default is `2.0`.
@@ -57,7 +58,7 @@ Backend-specific parameters:
 - `--min-object-size INT` ignores connected components smaller than the given voxel count. Default: `50`.
   This is useful for filtering out isolated specks or segmentation noise before skeletonization begins.
 - `--label-objects` writes each object's skeleton voxels using its connected-component label instead of writing all skeleton voxels as `1`.
-  This is useful when the input volume contains multiple disconnected trees and you want to keep them distinguishable in the output.
+  This is useful when the input volume contains multiple disconnected trees and you want to keep them distinguishable in the output. Default behavior is to write all skeleton voxels as `1`, without this flag.
 - `--verbose` prints progress and runtime reporting during processing.
 
 Implementation notes:
