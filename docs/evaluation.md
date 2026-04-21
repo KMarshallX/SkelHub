@@ -30,12 +30,19 @@ Implemented v1 metrics from (Youssef et al. 2015):
 
 - Geometry preservation using the buffer method:
   `TP`, `FP`, `FN`, completeness `Cp`, and correctness `Cr`
+  - Completeness: `Cp = TP / (TP + FN)`
+  - Correctness: `Cr = TP / (TP + FP)`
 - Morphology quality in 3D:
   raw signed `OCC`, `BCC`, and endpoint difference `E`
+  - $ BCC = \frac{N_b BCC(S_*)−N_b BCC(S)}{N_b BCC(S_∗)}$
+  - $OCC = \frac{N_b OCC(S_∗)−N_b OCC(S)}{N_b OCC(S_∗)}$
+  - $E = \frac{Nb E(S∗)−Nb E(S)}{Nb E(S∗)}$
+  - Ideal values for raw BCC, OCC and E should be 0
 - Clipped and normalized morphology quality values:
-  `X_clip = clip(X, -5, 5)` and `X_norm = 1 - abs(X_clip) / 5`
+  `X_clip = clip(X, -5, 5)` and `X_norm = 1 - abs(X_clip) / 5` (ideal case x_norm=1)
 - Global performance score:
   `P = mean(Cp, Cr, OCC_normalized, BCC_normalized, E_normalized)`
+  - NOTE: this is different compared to (Youssef 2015) since the normalization of values is different. However, the higher index still point to higher performance in this case
 
 Connectivity conventions:
 
@@ -62,8 +69,8 @@ Current limitations:
 - no graph-based metrics
 - no direct `SkeletonResult`-first public path yet, though the current array-level evaluator leaves a clean extension seam for that future step
 
-
 ## Citations
+
 @inproceedings{youssef_evaluation_2015,
 	address = {Adelaide, Australia},
 	title = {Evaluation {Protocol} of {Skeletonization} {Applied} to {Grayscale} {Curvilinear} {Structures}},
