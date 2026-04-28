@@ -14,6 +14,52 @@ from typing import Any, Callable, Sequence
 import igraph as ig
 import numpy as np
 
+_NODE_SIZE_MIN = 0.5
+_NODE_SIZE_MAX = 40.0
+_NODE_SIZE_SLIDER_SCALE = 10
+_EDGE_LINE_WIDTH_MIN = 2.0
+_EDGE_LINE_WIDTH_MAX = 10.0
+_EDGE_LINE_WIDTH_SCALE = 1.6
+_EDGE_THICKNESS_SLIDER_SCALE = 100
+_PANEL_OPACITY_MIN = 0.25
+_PANEL_OPACITY_MAX = 1.0
+_PANEL_OPACITY_DEFAULT = 0.5
+_PANEL_OPACITY_SLIDER_SCALE = 100
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return min(max(float(value), float(minimum)), float(maximum))
+
+
+def _float_to_slider_value(value: float, scale: int) -> int:
+    return int(round(float(value) * int(scale)))
+
+
+def _slider_value_to_float(value: int, *, scale: int) -> float:
+    return float(value) / float(scale)
+
+
+def _right_dock_widget_area(qt: Any) -> Any:
+    dock_area = getattr(qt.QtCore.Qt, "DockWidgetArea", None)
+    if dock_area is not None:
+        return dock_area.RightDockWidgetArea
+    return qt.QtCore.Qt.RightDockWidgetArea
+
+
+def _no_dock_widget_features(qt: Any) -> Any:
+    dock_features = getattr(qt.QtWidgets.QDockWidget, "DockWidgetFeature", None)
+    if dock_features is not None:
+        return dock_features.NoDockWidgetFeatures
+    return qt.QtWidgets.QDockWidget.NoDockWidgetFeatures
+
+
+def _edge_thickness_min() -> float:
+    return _EDGE_LINE_WIDTH_MIN / _EDGE_LINE_WIDTH_SCALE
+
+
+def _edge_thickness_max() -> float:
+    return _EDGE_LINE_WIDTH_MAX / _EDGE_LINE_WIDTH_SCALE
+
 
 class GraphVisualizationError(RuntimeError):
     """Raised when a graph cannot be prepared or displayed."""
@@ -58,7 +104,6 @@ class _SceneMetrics:
     near_plane: float
     far_plane: float
     node_radius: float
-    edge_radius: float
 
 
 class _MouseCameraControllerProtocol:
@@ -266,12 +311,16 @@ class _GraphViewerWindow:
         self._options = options
         self._main_window = qt.QtWidgets.QMainWindow()
         self._main_window.resize(1200, 800)
+        self._appearance_update_active = False
 
         self._scene_window = qt.Qt3DWindow()
         _configure_frame_graph(self._scene_window, qt)
         self._scene_container = qt.QtWidgets.QWidget.createWindowContainer(self._scene_window)
         self._scene_container.setFocusPolicy(qt.QtCore.Qt.FocusPolicy.StrongFocus)
         self._main_window.setCentralWidget(self._scene_container)
+        self._appearance_panel = self._build_appearance_panel()
+        self._appearance_dock = self._build_appearance_dock()
+        self._main_window.addDockWidget(_right_dock_widget_area(qt), self._appearance_dock)
         self._status_bar = self._main_window.statusBar()
         self._file_menu = qt.QtWidgets.QMenu("File", self._main_window)
         self._install_toolbar()
@@ -286,6 +335,172 @@ class _GraphViewerWindow:
 
         self._scene_controller = _GraphSceneController(self._scene_window, qt, options)
         self._sync_view_from_session(status_message=None, rebuild_scene=True)
+
+    def _build_appearance_panel(self) -> Any:
+        panel = self._qt.QtWidgets.QFrame(self._main_window)
+        panel.setObjectName("appearancePanel")
+        panel.setMinimumWidth(280)
+        panel.setMaximumWidth(360)
+        panel.setStyleSheet(
+            """
+            QFrame#appearancePanel {
+                background-color: rgba(248, 248, 248, 235);
+                border: 1px solid rgba(90, 90, 90, 150);
+                border-radius: 6px;
+            }
+            QLabel {
+                color: #202020;
+            }
+            """
+        )
+        panel.setAutoFillBackground(True)
+        self._panel_opacity_effect = self._qt.QtWidgets.QGraphicsOpacityEffect(panel)
+        self._panel_opacity_effect.setOpacity(_PANEL_OPACITY_DEFAULT)
+        panel.setGraphicsEffect(self._panel_opacity_effect)
+
+        layout = self._qt.QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+
+        self._node_size_value_label = self._qt.QtWidgets.QLabel(panel)
+        self._node_size_slider = self._create_float_slider(
+            panel,
+            minimum=_NODE_SIZE_MIN,
+            maximum=_NODE_SIZE_MAX,
+            scale=_NODE_SIZE_SLIDER_SCALE,
+            initial=_clamp(self._options.node_size, _NODE_SIZE_MIN, _NODE_SIZE_MAX),
+        )
+        layout.addLayout(
+            self._labeled_slider_layout(
+                "Node size",
+                self._node_size_value_label,
+                self._node_size_slider,
+            )
+        )
+        self._node_size_slider.valueChanged.connect(self._handle_node_size_slider_changed)
+
+        self._edge_thickness_value_label = self._qt.QtWidgets.QLabel(panel)
+        self._edge_thickness_slider = self._create_float_slider(
+            panel,
+            minimum=_edge_thickness_min(),
+            maximum=_edge_thickness_max(),
+            scale=_EDGE_THICKNESS_SLIDER_SCALE,
+            initial=_clamp(
+                self._options.edge_thickness,
+                _edge_thickness_min(),
+                _edge_thickness_max(),
+            ),
+        )
+        layout.addLayout(
+            self._labeled_slider_layout(
+                "Edge thickness",
+                self._edge_thickness_value_label,
+                self._edge_thickness_slider,
+            )
+        )
+        self._edge_thickness_slider.valueChanged.connect(self._handle_edge_thickness_slider_changed)
+
+        self._panel_opacity_value_label = self._qt.QtWidgets.QLabel(panel)
+        self._panel_opacity_slider = self._create_float_slider(
+            panel,
+            minimum=_PANEL_OPACITY_MIN,
+            maximum=_PANEL_OPACITY_MAX,
+            scale=_PANEL_OPACITY_SLIDER_SCALE,
+            initial=_PANEL_OPACITY_DEFAULT,
+        )
+        layout.addLayout(
+            self._labeled_slider_layout(
+                "Panel opacity",
+                self._panel_opacity_value_label,
+                self._panel_opacity_slider,
+            )
+        )
+        self._panel_opacity_slider.valueChanged.connect(self._handle_panel_opacity_slider_changed)
+
+        self._refresh_appearance_value_labels()
+        return panel
+
+    def _build_appearance_dock(self) -> Any:
+        dock = self._qt.QtWidgets.QDockWidget("Appearance", self._main_window)
+        dock.setObjectName("appearanceDock")
+        dock.setWidget(self._appearance_panel)
+        dock.setAllowedAreas(_right_dock_widget_area(self._qt))
+        dock.setFeatures(_no_dock_widget_features(self._qt))
+        dock.visibilityChanged.connect(self._sync_appearance_action_checked)
+        return dock
+
+    def _create_float_slider(
+        self,
+        parent: Any,
+        *,
+        minimum: float,
+        maximum: float,
+        scale: int,
+        initial: float,
+    ) -> Any:
+        slider = self._qt.QtWidgets.QSlider(self._qt.QtCore.Qt.Orientation.Horizontal, parent)
+        slider.setMinimum(_float_to_slider_value(minimum, scale))
+        slider.setMaximum(_float_to_slider_value(maximum, scale))
+        slider.setSingleStep(1)
+        slider.setPageStep(max(1, int(scale)))
+        slider.setTracking(True)
+        slider.setValue(_float_to_slider_value(initial, scale))
+        return slider
+
+    def _labeled_slider_layout(self, label_text: str, value_label: Any, slider: Any) -> Any:
+        layout = self._qt.QtWidgets.QVBoxLayout()
+        header_layout = self._qt.QtWidgets.QHBoxLayout()
+        label = self._qt.QtWidgets.QLabel(label_text, slider.parent())
+        header_layout.addWidget(label)
+        header_layout.addStretch(1)
+        value_label.setMinimumWidth(58)
+        value_label.setAlignment(self._qt.QtCore.Qt.AlignmentFlag.AlignRight)
+        header_layout.addWidget(value_label)
+        layout.addLayout(header_layout)
+        layout.addWidget(slider)
+        return layout
+
+    def _refresh_appearance_value_labels(self) -> None:
+        self._node_size_value_label.setText(f"{self._options.node_size:.1f}")
+        line_width = _batched_edge_line_width(self._options)
+        self._edge_thickness_value_label.setText(f"{self._options.edge_thickness:.2f} / {line_width:.1f}")
+        opacity = _slider_value_to_float(
+            self._panel_opacity_slider.value(),
+            scale=_PANEL_OPACITY_SLIDER_SCALE,
+        )
+        self._panel_opacity_value_label.setText(f"{opacity:.2f}")
+
+    def _set_panel_opacity(self, opacity: float) -> None:
+        clamped_opacity = _clamp(opacity, _PANEL_OPACITY_MIN, _PANEL_OPACITY_MAX)
+        self._panel_opacity_effect.setOpacity(clamped_opacity)
+
+    def _apply_appearance_change(self, *, status_message: str) -> None:
+        if self._appearance_update_active:
+            return
+        self._appearance_update_active = True
+        try:
+            self._sync_view_from_session(
+                status_message=status_message,
+                rebuild_scene=True,
+                emit_diagnostics=False,
+            )
+        finally:
+            self._appearance_update_active = False
+
+    def _handle_node_size_slider_changed(self, value: int) -> None:
+        self._options.node_size = _slider_value_to_float(value, scale=_NODE_SIZE_SLIDER_SCALE)
+        self._refresh_appearance_value_labels()
+        self._apply_appearance_change(status_message="Updated node size.")
+
+    def _handle_edge_thickness_slider_changed(self, value: int) -> None:
+        self._options.edge_thickness = _slider_value_to_float(value, scale=_EDGE_THICKNESS_SLIDER_SCALE)
+        self._refresh_appearance_value_labels()
+        self._apply_appearance_change(status_message="Updated edge thickness.")
+
+    def _handle_panel_opacity_slider_changed(self, value: int) -> None:
+        opacity = _slider_value_to_float(value, scale=_PANEL_OPACITY_SLIDER_SCALE)
+        self._set_panel_opacity(opacity)
+        self._refresh_appearance_value_labels()
 
     def _install_toolbar(self) -> None:
         toolbar = self._main_window.addToolBar("File")
@@ -306,6 +521,25 @@ class _GraphViewerWindow:
 
         rebuild_action = toolbar.addAction("Rebuild")
         rebuild_action.triggered.connect(self._rebuild_active_graph)
+
+        spacer = self._qt.QtWidgets.QWidget(self._main_window)
+        spacer.setSizePolicy(
+            self._qt.QtWidgets.QSizePolicy.Policy.Expanding,
+            self._qt.QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        toolbar.addWidget(spacer)
+
+        self._appearance_action = toolbar.addAction("Appearance")
+        self._appearance_action.setCheckable(True)
+        self._appearance_action.setChecked(True)
+        self._appearance_action.triggered.connect(self._toggle_appearance_panel)
+
+    def _toggle_appearance_panel(self, checked: bool) -> None:
+        self._appearance_dock.setVisible(bool(checked))
+
+    def _sync_appearance_action_checked(self, visible: bool) -> None:
+        if hasattr(self, "_appearance_action"):
+            self._appearance_action.setChecked(bool(visible))
 
     def _loaded_file_action_label(self, entry: GraphViewerSessionEntry) -> str:
         path = Path(entry.source_path)
@@ -358,7 +592,13 @@ class _GraphViewerWindow:
                 lambda checked=False, file_key=entry.file_key: self._activate_loaded_graph(file_key)
             )
 
-    def _sync_view_from_session(self, *, status_message: str | None, rebuild_scene: bool = True) -> None:
+    def _sync_view_from_session(
+        self,
+        *,
+        status_message: str | None,
+        rebuild_scene: bool = True,
+        emit_diagnostics: bool = True,
+    ) -> None:
         active_entry = self._session.active_entry
         active_graph = None if active_entry is None else active_entry.graph_data
         if rebuild_scene:
@@ -378,8 +618,9 @@ class _GraphViewerWindow:
             self._show_status(status_message)
             return
 
-        print(_format_scene_diagnostics(diagnostics))
-        if build_stats is not None:
+        if emit_diagnostics:
+            print(_format_scene_diagnostics(diagnostics))
+        if build_stats is not None and emit_diagnostics:
             print(_format_scene_build_stats(build_stats))
         self._show_status(_format_scene_status(diagnostics, build_stats=build_stats, prefix=status_message))
 
@@ -901,10 +1142,6 @@ def _size_to_world_radius(span: float, size: float) -> float:
     return max(size * 0.12, span * 0.025, 0.35)
 
 
-def _edge_radius(span: float, thickness: float) -> float:
-    return max(thickness * 0.08, span * 0.0125, 0.14)
-
-
 def _compute_scene_metrics(
     node_positions: np.ndarray,
     *,
@@ -931,7 +1168,6 @@ def _compute_scene_metrics(
         near_plane=near_plane,
         far_plane=far_plane,
         node_radius=_size_to_world_radius(span, node_size),
-        edge_radius=_edge_radius(span, edge_thickness),
     )
 
 
@@ -1003,7 +1239,13 @@ def _apply_render_state_factories(material: Any, state_factories: Sequence[Calla
 
 
 def _batched_edge_line_width(options: GraphVisualizationOptions) -> float:
-    return float(np.clip(options.edge_thickness * 1.6, 2.0, 6.0))
+    return float(
+        np.clip(
+            options.edge_thickness * _EDGE_LINE_WIDTH_SCALE,
+            _EDGE_LINE_WIDTH_MIN,
+            _EDGE_LINE_WIDTH_MAX,
+        )
+    )
 
 
 def _configure_line_width_state(qt: _QtModules, parent: Any, line_width: float) -> Any:

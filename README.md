@@ -192,10 +192,12 @@ The Lee94 backend records its wrapper metadata under `result.backend_metadata["l
 - supports the mouse wheel for zooming
 - opens with a toolbar-based `File` menu for loading, unloading, and switching between GraphML files in the current session
 - accepts appearance controls through `--edge_thickness` and `--node_size`
+- includes a toolbar-toggled right-side appearance panel for real-time node size, edge thickness, and panel opacity adjustment
 
 When the viewer is launched from the CLI with `--input`, that GraphML file is loaded as the initial active file in the `File` menu. If `--input` is omitted, the viewer opens in a clean empty state and files can be loaded from the toolbar. Additional GraphML files can then be loaded from the toolbar, and unloading the last remaining file returns the window to a clean empty state instead of closing or crashing.
 
 Compared with the previous `pyqtgraph` implementation, node and edge sizing is now applied in scene units inside Qt3D rather than pixel-space OpenGL primitives. The CLI flags and their overall purpose stay the same, but exact apparent thickness can vary a little with camera distance and graph scale.
+The appearance panel maps edge thickness to the same rendered Qt line-width interval used by the backend, currently `2.0` to `10.0`.
 
 If the GraphML file does not contain usable node coordinates, the command fails clearly instead of guessing layout data.
 
