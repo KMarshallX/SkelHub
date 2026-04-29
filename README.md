@@ -142,6 +142,25 @@ skelhub graphviz \
 
 The graph viewer expects per-node spatial metadata. SkelHub's current GraphML export writes node coordinates as `X`, `Y`, and `Z`, and the viewer uses those fields directly.
 
+### Note:
+When deploy on HPC (e.g., Bunya), it's necessary to use conda environment then install/update conda C++ runtime:
+
+```bash
+conda activate your_env
+conda install -c conda-forge libstdcxx-ng
+skelhub graphviz 
+```
+
+Safer option:
+```bash
+module unload Miniconda3
+module load Miniconda3
+conda activate your_env
+conda install -c conda-forge libstdcxx-ng
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+skelhub graphviz 
+```
+
 ## Python API
 
 ```python
