@@ -8,7 +8,7 @@ Current status:
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
-- Graph visualization: optional PySide6-based GraphML viewer for 3D vessel graphs
+- Graph visualization: lightweight PyVista-based GraphML viewer for 3D vessel graphs
 
 ## Installation
 
@@ -18,20 +18,16 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-To use the built-in GraphML viewer: 
-
-*Note: the visualizing module has a known bug - you have to hit the **Rebuild** button around 3 times to render the complete graph*
+To use the built-in GraphML viewer:
 
 ```bash
 # Initialze the viewer
 python -m skelhub graphviz
 # Initialize the viewer with a GraphML file
 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
-# Troubleshooting mode
-SKELHUB_GRAPH_VIEWER_TROUBLESHOOT=1 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
 ```
 
-If `skelhub` on your `PATH` comes from a different environment than the `python`/`pip` you used for installation, the graph viewer extras may still appear missing.
+If `skelhub` on your `PATH` comes from a different environment than the `python`/`pip` you used for installation, the graph viewer dependencies may still appear missing.
 
 You can also install dependencies with `pip install -r requirements.txt`, but the console command `skelhub` is exposed through the package install.
 
@@ -133,7 +129,7 @@ skelhub graphgen \
   --verbose
 ```
 
-Open a GraphML vessel graph in the interactive PySide6 viewer:
+Open a GraphML vessel graph in the interactive PyVista viewer:
 
 ```bash
 skelhub graphviz
@@ -202,20 +198,13 @@ The Lee94 backend records its wrapper metadata under `result.backend_metadata["l
 
 ## Graph Visualization
 
-`skelhub graphviz` opens a lightweight PySide6 Qt3D viewer for GraphML vessel graphs. The viewer:
+`skelhub graphviz` opens a lightweight PyVista viewer for GraphML vessel graphs. The viewer:
 
 - loads GraphML through the existing `igraph` dependency
-- renders nodes and edges in 3D
-- supports mouse dragging for camera rotation
-- supports the mouse wheel for zooming
-- opens with a toolbar-based `File` menu for loading, unloading, and switching between GraphML files in the current session
+- renders nodes and edges in 3D with simple constant-size geometry
+- uses PyVista's built-in mouse controls for camera interaction
 - accepts appearance controls through `--edge_thickness` and `--node_size`
-- includes a toolbar-toggled right-side appearance panel for real-time node size, edge thickness, and panel opacity adjustment
-
-When the viewer is launched from the CLI with `--input`, that GraphML file is loaded as the initial active file in the `File` menu. If `--input` is omitted, the viewer opens in a clean empty state and files can be loaded from the toolbar. Additional GraphML files can then be loaded from the toolbar, and unloading the last remaining file returns the window to a clean empty state instead of closing or crashing.
-
-Compared with the previous `pyqtgraph` implementation, node and edge sizing is now applied in scene units inside Qt3D rather than pixel-space OpenGL primitives. The CLI flags and their overall purpose stay the same, but exact apparent thickness can vary a little with camera distance and graph scale.
-The appearance panel maps edge thickness to the same rendered Qt line-width interval used by the backend, currently `2.0` to `10.0`.
+- opens an empty PyVista window if `--input` is omitted
 
 If the GraphML file does not contain usable node coordinates, the command fails clearly instead of guessing layout data.
 

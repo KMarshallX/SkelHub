@@ -97,7 +97,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     graphviz_parser = subparsers.add_parser(
         "graphviz",
-        help="Open a 3D PySide6 viewer for a GraphML vessel graph.",
+        help="Open a 3D PyVista viewer for a GraphML vessel graph.",
     )
     graphviz_parser.add_argument(
         "-i",

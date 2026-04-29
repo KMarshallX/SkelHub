@@ -1,5 +1,54 @@
 # Development Log
 
+## 2026-04-29 15:51:59 AEST
+
+1. Summary of what changed
+- Rewrote `skelhub graphviz` from the old PySide6/Qt3D implementation to a lightweight PyVista-based GraphML viewer.
+- Kept the public `skelhub graphviz` command and `launch_graph_viewer(...)` API, including the optional empty-viewer launch when `--input` is omitted.
+- Reduced the viewer scope to loading GraphML node coordinates and rendering constant-size nodes and edges; removed the old multi-file session, toolbar, rebuild, diagnostics, and appearance-panel behavior.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `skelhub/visualization/__init__.py`.
+- Modified `skelhub/cli/main.py`.
+- Modified `pyproject.toml`.
+- Modified `requirements.txt`.
+- Modified `README.md`.
+- Modified `docs/architecture.md`.
+- Modified `.gitignore` to keep most test artifacts ignored while allowing `tests/test_graph_visualization.py` to be tracked.
+- Added `tests/test_graph_visualization.py`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Split visualization responsibilities into GraphML I/O/validation and PyVista scene construction within the visualization module.
+- Used `igraph` for GraphML loading and PyVista for rendering, with `pyvista>=0.47,<0.48` as the only new direct visualization dependency.
+- Removed direct `PySide6` and `matplotlib` dependencies from SkelHub config; PyVista brings its own render stack transitively.
+- Implemented the viewer independently from VesselVio code so the change uses only the general idea of PyVista graph rendering and does not copy GPL-covered implementation details.
+
+4. Assumptions
+- SkelHub GraphML node coordinates are supplied as `X`, `Y`, `Z`, with lowercase `x`, `y`, `z` accepted as a small compatibility convenience.
+- Radius, length, tortuosity, annotations, movies, file menus, multi-file sessions, and live appearance controls remain out of scope for this first PyVista rewrite.
+- `docs/LOG.md` is the project log to update; no root `LOG.md` was created.
+
+5. Limitations
+- The local session is headless, so the interactive desktop window was not manually exercised.
+- The PyVista offscreen smoke test emits a VTK warning about the missing `DISPLAY`, but still builds and closes the plotter successfully.
+- `python -m pytest -q` still has one unrelated evaluation failure in `tests/test_evaluation_metrics.py::test_endpoint_count_uses_6_connectivity_for_diagonal_tip_cases`.
+
+6. Tests run
+- `python -m pip install --dry-run 'pyvista>=0.47,<0.48'`
+- `python -m pip install 'pyvista>=0.47,<0.48'`
+- `python -c "import pyvista, vtk, igraph, numpy; print('imports ok', pyvista.__version__, vtk.vtkVersion.GetVTKVersion())"`
+- Direct PyVista offscreen smoke script creating a tiny graph plotter with `build_graph_plotter(..., off_screen=True)`.
+- `python -m skelhub graphviz --help`
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py tests/test_framework_cli.py::test_framework_graphviz_cli_reports_missing_coordinates -q` passed with 14 tests.
+- `python -m pytest -q` completed with 67 passed and 1 unrelated evaluation failure.
+
+7. Remaining risks or recommended next steps
+- Run `python -m skelhub graphviz --input ./test_data/simple_graph/sample.graphml` in a desktop-capable environment to confirm the interactive PyVista window behavior.
+- Decide separately whether more of `/tests/` should be tracked; this change only unignores the visualization test file needed for the PyVista rewrite.
+
 ## 2026-04-29 12:47:02 AEST
 
 1. Summary of what changed
