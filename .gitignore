@@ -1,5 +1,7 @@
 /test_data/*
-/tests/
+/tests/**
+!/tests/
+!/tests/test_graph_visualization.py
 /tmp/
 /outputs/
 /test_outputs/
