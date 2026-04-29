@@ -5,8 +5,9 @@ SkelHub is a Python framework for 3D skeletonization. It provides a shared packa
 Current status:
 
 - Supported algorithm backends: `mcp`, `lee94`
-- Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphviz`
+- Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
+- Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
 - Graph visualization: optional PySide6-based GraphML viewer for 3D vessel graphs
 
 ## Installation
@@ -49,6 +50,7 @@ SkelHub/
 │   ├── evaluation/
 │   ├── preprocessing/
 │   ├── postprocessing/
+│   │   └── graphgen/
 │   ├── visualization/
 │   └── datasets/
 ├── tests/
@@ -61,6 +63,7 @@ Framework notes:
 - `skelhub.algorithms.mcp` contains the current MCP implementation and its thin framework adapter.
 - `skelhub.algorithms.lee94` contains the Lee et al. 1994 thinning backend adapter around `scikit-image`.
 - `skelhub.evaluation` contains the algorithm-agnostic voxel-based v1 evaluator, with separate validation, geometry, morphology, and reporting helpers.
+- `skelhub.postprocessing.graphgen` contains [Voreen](https://github.com/voreen-project/voreen)-style skeleton-to-protograph GraphML generation.
 
 ## CLI Usage
 
@@ -121,6 +124,15 @@ Optional evaluation flags:
 - `--json-output PATH` optional structured JSON report output
 - `-v, --verbose` optional progress logs and detailed terminal report
 
+Generate a Voreen-style proto-graph GraphML file from a skeleton NIfTI:
+
+```bash
+skelhub graphgen \
+  --input ./test_data/lsys_gt/iter_4_8_step_1/Lnet_i4_0_tort_centreline_26conn.nii.gz \
+  --output ./test_outputs/lsys.graphml \
+  --verbose
+```
+
 Open a GraphML vessel graph in the interactive PySide6 viewer:
 
 ```bash
@@ -137,7 +149,11 @@ The graph viewer expects per-node spatial metadata. SkelHub's current GraphML ex
 ## Python API
 
 ```python
-from skelhub.api import evaluate_prediction_path, run_algorithm_from_path
+from skelhub.api import (
+    evaluate_prediction_path,
+    generate_graphml_from_skeleton_path,
+    run_algorithm_from_path,
+)
 from skelhub.algorithms import Lee94Config, MCPConfig
 
 result = run_algorithm_from_path(
@@ -153,8 +169,10 @@ evaluation = evaluate_prediction_path(
     buffer_radius=1.0,
     buffer_radius_unit="voxels",
 )
+graph = generate_graphml_from_skeleton_path("pred.nii.gz", "pred.graphml")
 print(result.backend_metadata["config"])
 print(evaluation.P)
+print(len(graph.nodes), len(graph.edges))
 ```
 
 ## Outputs
@@ -231,4 +249,3 @@ Current limitations:
 - [Architecture](docs/architecture.md)
 - [Algorithms](docs/algorithms.md)
 - [Evaluation](docs/evaluation.md)
-- [Development Log](LOG.md)
