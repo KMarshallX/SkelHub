@@ -2,7 +2,7 @@
 
 ## Lee94 Backend
 
-The Lee94 backend is integrated under `skelhub.algorithms.lee94`.
+The Lee94 backend is integrated under `skelhub.algorithms.lee94`. The original implementation(skimage) already does zero padding to the input volume, so the SkelHub adapter does not add additional padding. 
 
 Framework-facing usage:
 
