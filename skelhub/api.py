@@ -1,4 +1,4 @@
-"""Framework API for running algorithms, evaluation, and graph viewing."""
+"""Framework API for running algorithms, evaluation, graphgen, and graph viewing."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.core import EvaluationResult, SkeletonResult, VolumeData, get_backend
 from skelhub.evaluation import evaluate_skeleton_files
 from skelhub.io import read_nifti, write_nifti
+from skelhub.postprocessing.graphgen import generate_graphml_from_nifti
 from skelhub.visualization import launch_graph_viewer
 
 
@@ -56,6 +57,16 @@ def evaluate_prediction_path(
         buffer_radius_unit=buffer_radius_unit,
         log=log,
     )
+
+
+def generate_graphml_from_skeleton_path(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    log: Callable[[str], None] | None = None,
+):
+    """Generate a Voreen-style proto-graph GraphML file from a skeleton NIfTI."""
+    return generate_graphml_from_nifti(input_path, output_path, log=log)
 
 
 def launch_graph_viewer_from_path(

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
-from skelhub.api import evaluate_prediction_path, launch_graph_viewer_from_path, run_algorithm_from_path
+from skelhub.api import (
+    evaluate_prediction_path,
+    generate_graphml_from_skeleton_path,
+    launch_graph_viewer_from_path,
+    run_algorithm_from_path,
+)
 from skelhub.visualization import GraphVisualizationError
 from skelhub.core import list_backends
 from skelhub.evaluation import format_evaluation_report, write_evaluation_json
@@ -82,6 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit progress logs and a detailed terminal report.",
     )
 
+    graphgen_parser = subparsers.add_parser(
+        "graphgen",
+        help="Generate a Voreen-style proto-graph GraphML file from a skeleton NIfTI.",
+    )
+    graphgen_parser.add_argument("-i", "--input", required=True, help="Path to the input skeleton NIfTI.")
+    graphgen_parser.add_argument("-o", "--output", required=True, help="Path to the output GraphML file.")
+    graphgen_parser.add_argument("--verbose", action="store_true", help="Emit graph generation progress logs.")
+
     graphviz_parser = subparsers.add_parser(
         "graphviz",
         help="Open a 3D PySide6 viewer for a GraphML vessel graph.",
@@ -144,6 +157,22 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         except (FileNotFoundError, OSError, ValueError) as exc:
             parser.exit(status=2, message=f"skelhub evaluate: error: {exc}\n")
+
+    if args.command == "graphgen":
+        try:
+            graph = generate_graphml_from_skeleton_path(
+                args.input,
+                args.output,
+                log=print if args.verbose else None,
+            )
+            if args.verbose:
+                print(
+                    f"graphgen complete: nodes={len(graph.nodes)}, "
+                    f"edges={len(graph.edges)}, output={args.output}"
+                )
+            return 0
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            parser.exit(status=2, message=f"skelhub graphgen: error: {exc}\n")
 
     if args.command == "graphviz":
         try:
