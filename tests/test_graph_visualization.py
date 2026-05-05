@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -16,8 +15,15 @@ from skelhub.visualization import (
     GraphVisualizationOptions,
     build_graph_meshes,
     build_graph_plotter,
+    close_active_graph,
+    create_graph_viewer_session,
+    handle_dropped_graphml_paths,
     launch_graph_viewer,
     load_graph_visualization_data,
+    refresh_active_graph,
+    render_active_graph,
+    switch_next_graph,
+    switch_previous_graph,
 )
 from skelhub.visualization import graph_viewer
 
@@ -69,6 +75,73 @@ def _write_graphml(
 class _FakeMesh:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.text_property = _FakeTextProperty()
+
+    def GetTextProperty(self) -> "_FakeTextProperty":
+        return self.text_property
+
+
+class _FakeTextProperty:
+    def __init__(self) -> None:
+        self.background_color: tuple[float, float, float] | None = None
+        self.background_opacity: float | None = None
+        self.frame = False
+        self.frame_width: int | None = None
+        self.frame_color: tuple[float, float, float] | None = None
+
+    def SetBackgroundColor(self, *color: float) -> None:
+        self.background_color = tuple(color)
+
+    def SetBackgroundOpacity(self, opacity: float) -> None:
+        self.background_opacity = opacity
+
+    def SetFrame(self, frame: bool) -> None:
+        self.frame = frame
+
+    def SetFrameWidth(self, width: int) -> None:
+        self.frame_width = width
+
+    def SetFrameColor(self, *color: float) -> None:
+        self.frame_color = tuple(color)
+
+
+class _FakeCamera:
+    def __init__(self) -> None:
+        self.position = (1.0, 2.0, 3.0)
+        self.focal_point = (0.0, 0.0, 0.0)
+        self.up = (0.0, 1.0, 0.0)
+        self.clipping_range = (0.1, 1000.0)
+        self.parallel_scale = 1.0
+
+    def GetPosition(self) -> tuple[float, float, float]:
+        return self.position
+
+    def SetPosition(self, *value: float) -> None:
+        self.position = tuple(value)  # type: ignore[assignment]
+
+    def GetFocalPoint(self) -> tuple[float, float, float]:
+        return self.focal_point
+
+    def SetFocalPoint(self, *value: float) -> None:
+        self.focal_point = tuple(value)  # type: ignore[assignment]
+
+    def GetViewUp(self) -> tuple[float, float, float]:
+        return self.up
+
+    def SetViewUp(self, *value: float) -> None:
+        self.up = tuple(value)  # type: ignore[assignment]
+
+    def GetClippingRange(self) -> tuple[float, float]:
+        return self.clipping_range
+
+    def SetClippingRange(self, *value: float) -> None:
+        self.clipping_range = tuple(value)  # type: ignore[assignment]
+
+    def GetParallelScale(self) -> float:
+        return self.parallel_scale
+
+    def SetParallelScale(self, value: float) -> None:
+        self.parallel_scale = value
 
 
 class _FakePolyData:
@@ -89,6 +162,14 @@ class _FakeSphere:
         self.radius = radius
 
 
+class _FakeInteractor:
+    def __init__(self) -> None:
+        self.observers: list[tuple[str, Any]] = []
+
+    def add_observer(self, event_name: str, callback: Any) -> None:
+        self.observers.append((event_name, callback))
+
+
 class _FakePlotter:
     instances: list["_FakePlotter"] = []
 
@@ -99,7 +180,18 @@ class _FakePlotter:
         self.background: str | None = None
         self.axes_added = False
         self.camera_reset = False
+        self.reset_count = 0
+        self.camera = _FakeCamera()
         self.shown = False
+        self.rendered = False
+        self.removed_actors: list[Any] = []
+        self.rectangles: list[dict[str, Any]] = []
+        self.texts: list[tuple[str, dict[str, Any]]] = []
+        self.text_actors: list[_FakeMesh] = []
+        self.buttons: list[tuple[Any, dict[str, Any]]] = []
+        self.sliders: list[tuple[Any, dict[str, Any]]] = []
+        self.iren = _FakeInteractor()
+        self.window_size = (1280, 800)
         _FakePlotter.instances.append(self)
 
     def set_background(self, color: str) -> None:
@@ -109,10 +201,61 @@ class _FakePlotter:
         self.axes_added = True
 
     def add_mesh(self, mesh: Any, **kwargs: Any) -> None:
+        actor = _FakeMesh(f"actor:{mesh.name}")
         self.meshes.append((mesh, kwargs))
+        return actor
+
+    def remove_actor(self, actor: Any, **_kwargs: Any) -> None:
+        self.removed_actors.append(actor)
 
     def reset_camera(self) -> None:
         self.camera_reset = True
+        self.reset_count += 1
+        self.camera.position = (10.0, 20.0, 30.0)
+        self.camera.focal_point = (1.0, 1.0, 1.0)
+        self.camera.up = (0.0, 0.0, 1.0)
+        self.camera.clipping_range = (0.2, 2000.0)
+        self.camera.parallel_scale = 2.0
+
+    def render(self) -> None:
+        self.rendered = True
+
+    def add_text(self, text: str, **kwargs: Any) -> _FakeMesh:
+        actor = _FakeMesh(f"text:{text}")
+        self.texts.append((text, kwargs))
+        self.text_actors.append(actor)
+        return actor
+
+    def add_overlay_rect(
+        self,
+        *,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        color: tuple[float, float, float],
+        opacity: float,
+    ) -> _FakeMesh:
+        actor = _FakeMesh(f"rect:{x}:{y}:{width}:{height}")
+        self.rectangles.append(
+            {
+                "actor": actor,
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "color": color,
+                "opacity": opacity,
+            }
+        )
+        return actor
+
+    def add_checkbox_button_widget(self, callback: Any, **kwargs: Any) -> None:
+        self.buttons.append((callback, kwargs))
+
+    def add_slider_widget(self, callback: Any, rng: Any, **kwargs: Any) -> None:
+        self.sliders.append((callback, {"rng": rng, **kwargs}))
+        return None
 
     def show(self) -> None:
         self.shown = True
@@ -230,6 +373,383 @@ def test_build_graph_plotter_populates_graph_scene() -> None:
     assert plotter.axes_added is True
     assert plotter.camera_reset is True
     assert len(plotter.meshes) == 2
+
+
+def test_graph_viewer_session_starts_empty() -> None:
+    session = create_graph_viewer_session(None)
+
+    assert session.loaded_files == []
+    assert session.active_index is None
+    assert session.active_graph_data is None
+    assert session.status_text() == "No GraphML loaded"
+
+
+def test_graph_viewer_session_initial_input_becomes_active(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+
+    session = create_graph_viewer_session(graph_path, edge_thickness=3.5, node_size=8.5)
+
+    assert len(session.loaded_files) == 1
+    assert session.active_index == 0
+    assert session.active_file is not None
+    assert session.active_file.path == graph_path.resolve()
+    assert session.options.edge_thickness == 3.5
+    assert session.options.node_size == 8.5
+
+
+def test_graph_viewer_session_loading_multiple_files_displays_one_active_graph(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+
+    handle_dropped_graphml_paths(plotter, session, [graph_a, graph_b], pv_module=_FakePyVista)
+
+    assert len(session.loaded_files) == 2
+    assert session.active_file is not None
+    assert session.active_file.path == graph_a.resolve()
+    assert session.active_graph_data is not None
+    assert session.active_graph_data.node_count == 1
+    assert len(plotter.meshes) == 1
+
+
+def test_graph_viewer_session_duplicate_load_reactivates_existing_file(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    session = create_graph_viewer_session(None)
+
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+    session.load_graph(graph_a)
+
+    assert len(session.loaded_files) == 2
+    assert session.active_index == 0
+
+
+def test_graph_viewer_session_prev_next_wrap(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+
+    switch_next_graph(plotter, session, pv_module=_FakePyVista)
+    assert session.active_index == 0
+    switch_previous_graph(plotter, session, pv_module=_FakePyVista)
+    assert session.active_index == 1
+
+
+def test_close_active_graph_updates_active_selection_or_empty_state(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+
+    close_active_graph(plotter, session, pv_module=_FakePyVista)
+    assert len(session.loaded_files) == 1
+    assert session.active_index == 0
+    assert session.active_file is not None
+    assert session.active_file.path == graph_a.resolve()
+
+    close_active_graph(plotter, session, pv_module=_FakePyVista)
+    assert session.loaded_files == []
+    assert session.active_index is None
+    assert session.active_graph_data is None
+
+
+def test_slider_preview_updates_session_without_rebuild_until_refresh(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(graph_path, edge_thickness=2.0, node_size=6.0)
+    render_active_graph(plotter, session, pv_module=_FakePyVista)
+    mesh_count = len(plotter.meshes)
+
+    session.set_preview_node_size(9.0)
+    session.set_preview_edge_thickness(3.0)
+
+    assert session.options.node_size == 6.0
+    assert session.options.edge_thickness == 2.0
+    assert len(plotter.meshes) == mesh_count
+
+
+def test_refresh_rebuilds_graph_with_latest_slider_values(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(graph_path, edge_thickness=2.0, node_size=6.0)
+    render_active_graph(plotter, session, pv_module=_FakePyVista)
+
+    session.set_preview_node_size(9.0)
+    session.set_preview_edge_thickness(3.0)
+    refresh_active_graph(plotter, session, pv_module=_FakePyVista)
+
+    assert session.options.node_size == 9.0
+    assert session.options.edge_thickness == 3.0
+    assert plotter.removed_actors
+    assert plotter.meshes[-2][0].name == "tube:3.0:12"
+    assert plotter.meshes[-1][0].name == "glyph:9.0:False"
+
+
+def test_drag_drop_handler_accepts_graphml_and_rejects_other_paths(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    text_path = tmp_path / "notes.txt"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+    text_path.write_text("not graphml", encoding="utf-8")
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+
+    loaded = handle_dropped_graphml_paths(plotter, session, [text_path, graph_path], pv_module=_FakePyVista)
+
+    assert len(loaded) == 1
+    assert len(session.loaded_files) == 1
+    assert session.active_file is not None
+    assert session.active_file.path == graph_path.resolve()
+
+
+def test_collapsed_file_label_uses_small_status_text(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(graph_path)
+
+    graph_viewer.render_file_panel(plotter, session)
+
+    label_text, label_kwargs = plotter.texts[-1]
+    assert "1/1  graph.graphml" in label_text
+    assert label_kwargs["font_size"] == 9
+    assert session.file_hitboxes[0].action == "open-file-list"
+
+
+def test_hover_state_exposes_loaded_files_in_display_order(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+    graph_viewer.render_file_panel(plotter, session)
+
+    panel_hitbox = session.file_hitboxes[0]
+    graph_viewer.update_file_list_hover(plotter, session, panel_hitbox.x + 2, panel_hitbox.y + 2)
+
+    rendered_text = "\n".join(text for text, _kwargs in plotter.texts)
+    assert session.file_list_open is True
+    assert "1. a.graphml" in rendered_text
+    assert "2. b.graphml" in rendered_text
+    assert [hitbox.action for hitbox in session.file_hitboxes].count("switch-file") == 2
+
+
+def test_filename_hitbox_click_switches_active_file(tmp_path: Path) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+    session.active_index = 0
+    session.file_list_open = True
+    graph_viewer.render_file_panel(plotter, session)
+    second_file_hitbox = [hitbox for hitbox in session.file_hitboxes if hitbox.index == 1][0]
+
+    handled = graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        second_file_hitbox.x + 2,
+        second_file_hitbox.y + 2,
+        pv_module=_FakePyVista,
+    )
+
+    assert handled is True
+    assert session.active_index == 1
+    assert session.active_file is not None
+    assert session.active_file.path == graph_b.resolve()
+
+
+def test_command_button_hitboxes_dispatch_actions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph_a = tmp_path / "a.graphml"
+    graph_b = tmp_path / "b.graphml"
+    _write_graphml(graph_a, [(0.0, 0.0, 0.0)])
+    _write_graphml(graph_b, [(1.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+    session.load_graph(graph_a)
+    session.load_graph(graph_b)
+    session.active_index = 0
+    imported = []
+
+    def _fake_import(_plotter: Any, _session: Any, **_kwargs: Any) -> bool:
+        imported.append(True)
+        return True
+
+    monkeypatch.setattr(graph_viewer, "import_graph_from_dialog", _fake_import)
+    graph_viewer.render_command_buttons(plotter, session)
+
+    button_by_action = {hitbox.action: hitbox for hitbox in session.command_hitboxes}
+    assert set(button_by_action) == {"import", "close", "previous", "next", "refresh", "reset-view"}
+    graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        button_by_action["next"].x + 1,
+        button_by_action["next"].y + 1,
+        pv_module=_FakePyVista,
+    )
+    assert session.active_index == 1
+    graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        button_by_action["previous"].x + 1,
+        button_by_action["previous"].y + 1,
+        pv_module=_FakePyVista,
+    )
+    assert session.active_index == 0
+    graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        button_by_action["import"].x + 1,
+        button_by_action["import"].y + 1,
+        pv_module=_FakePyVista,
+    )
+    assert imported == [True]
+    graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        button_by_action["close"].x + 1,
+        button_by_action["close"].y + 1,
+        pv_module=_FakePyVista,
+    )
+    assert len(session.loaded_files) == 1
+    active_file = session.active_file
+    assert active_file is not None
+    assert active_file.initial_camera_state is not None
+    saved_position = active_file.initial_camera_state.position
+    reset_count = plotter.reset_count
+    plotter.camera.position = (44.0, 55.0, 66.0)
+    graph_viewer.dispatch_ui_click(
+        plotter,
+        session,
+        button_by_action["reset-view"].x + 1,
+        button_by_action["reset-view"].y + 1,
+        pv_module=_FakePyVista,
+    )
+    assert plotter.camera.position == saved_position
+    assert plotter.reset_count == reset_count
+
+
+def test_command_buttons_are_right_aligned_evenly_spaced_and_colored() -> None:
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+
+    graph_viewer.render_command_buttons(plotter, session)
+
+    hitboxes = session.command_hitboxes
+    assert all(hitbox.height == graph_viewer.COMMAND_BUTTON_HEIGHT for hitbox in hitboxes)
+    gaps = [right.x - (left.x + left.width) for left, right in zip(hitboxes, hitboxes[1:])]
+    assert gaps == [graph_viewer.COMMAND_BUTTON_GAP] * (len(hitboxes) - 1)
+    assert hitboxes[-1].x + hitboxes[-1].width == plotter.window_size[0] - graph_viewer.COMMAND_BUTTON_RIGHT_MARGIN
+    assert hitboxes[0].x > 0
+
+    reset_index = [hitbox.action for hitbox in hitboxes].index("reset-view")
+    refresh_index = [hitbox.action for hitbox in hitboxes].index("refresh")
+    assert reset_index == refresh_index + 1
+    assert plotter.rectangles[reset_index]["color"] == (0.05, 0.28, 0.68)
+    assert plotter.rectangles[refresh_index]["color"] == (0.70, 0.08, 0.09)
+    assert all(rectangle["height"] == graph_viewer.COMMAND_BUTTON_HEIGHT for rectangle in plotter.rectangles)
+    for rectangle, hitbox in zip(plotter.rectangles, hitboxes):
+        assert rectangle["x"] == hitbox.x
+        assert rectangle["y"] == hitbox.y
+        assert rectangle["width"] == hitbox.width
+        assert rectangle["height"] == hitbox.height
+
+
+def test_button_backgrounds_cover_expected_glyph_extents() -> None:
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+
+    graph_viewer.render_command_buttons(plotter, session)
+
+    labels = ["Import", "Close", "<", ">", "Refresh", "Reset View"]
+    for rectangle, label in zip(plotter.rectangles, labels):
+        expected_text_width = max(len(label) * 7, 8)
+        assert rectangle["width"] >= expected_text_width + 4
+        assert rectangle["height"] >= graph_viewer.COMMAND_TEXT_Y_OFFSET + 12
+
+
+def test_reset_view_restores_saved_initial_camera_state(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(graph_path)
+
+    render_active_graph(plotter, session, pv_module=_FakePyVista)
+    active_file = session.active_file
+    assert active_file is not None
+    assert active_file.initial_camera_state is not None
+    saved_position = active_file.initial_camera_state.position
+    saved_focal_point = active_file.initial_camera_state.focal_point
+    reset_count = plotter.reset_count
+
+    plotter.camera.position = (99.0, 88.0, 77.0)
+    plotter.camera.focal_point = (9.0, 8.0, 7.0)
+    graph_viewer.reset_active_view(plotter, session)
+
+    assert plotter.camera.position == saved_position
+    assert plotter.camera.focal_point == saved_focal_point
+    assert plotter.reset_count == reset_count
+
+
+def test_reset_view_falls_back_to_reset_camera_without_saved_state(tmp_path: Path) -> None:
+    graph_path = tmp_path / "graph.graphml"
+    _write_graphml(graph_path, [(0.0, 0.0, 0.0)])
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(graph_path)
+
+    graph_viewer.reset_active_view(plotter, session)
+
+    assert plotter.reset_count == 1
+    assert session.active_file is not None
+    assert session.active_file.initial_camera_state is not None
+
+
+def test_slider_setup_uses_separated_right_aligned_compact_positions() -> None:
+    plotter = _FakePlotter(title="test")
+    session = create_graph_viewer_session(None)
+
+    graph_viewer.add_graph_viewer_controls(plotter, session, pv_module=_FakePyVista)
+
+    assert plotter.buttons == []
+    assert len(plotter.sliders) == 2
+    first_slider = plotter.sliders[0][1]
+    second_slider = plotter.sliders[1][1]
+    assert first_slider["pointa"] == (0.66, 0.93)
+    assert first_slider["pointb"] == (0.86, 0.93)
+    assert first_slider["style"] == "modern"
+    assert first_slider["color"] == graph_viewer.SLIDER_COLOR
+    assert first_slider["tube_width"] == 0.010
+    assert second_slider["pointa"] == (0.66, 0.83)
+    assert second_slider["pointb"] == (0.86, 0.83)
+    assert second_slider["title"] == "Edge"
+    assert first_slider["pointb"][0] <= 0.86
+    assert first_slider["pointa"][1] - second_slider["pointa"][1] >= 0.09
 
 
 def test_launch_graph_viewer_without_input_starts_empty(monkeypatch: pytest.MonkeyPatch) -> None:

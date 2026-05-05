@@ -224,6 +224,12 @@ The Lee94 backend records its wrapper metadata under `result.backend_metadata["l
 - uses PyVista's built-in mouse controls for camera interaction
 - accepts appearance controls through `--edge_thickness` and `--node_size`
 - opens an empty PyVista window if `--input` is omitted
+- can load multiple GraphML files in one session while displaying one active file at a time
+- provides a right-aligned in-canvas command row with fixed-size button backgrounds for `Import`, `Close`, `<`, `>`, red `Refresh`, and blue `Reset View`
+- previews node-size and edge-thickness slider values with compact left-shifted silver/steel sliders, then applies them when `Refresh` is pressed
+- restores the active graph's initial camera view with `Reset View` without changing loaded files or slider values
+- unfolds the loaded-file list when the mouse hovers over the compact top-left file label
+- accepts `.graphml` drag-and-drop events when the desktop VTK/PyVista backend exposes file drops to the render window
 
 If the GraphML file does not contain usable node coordinates, the command fails clearly instead of guessing layout data.
 
