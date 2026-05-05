@@ -1,5 +1,157 @@
 # Development Log
 
+## 2026-05-05 18:10:21 AEST
+
+1. Summary of what changed
+- Moved the graph viewer's node-size and edge-thickness sliders farther left while keeping them compact and away from the window boundary.
+- Replaced text-background-only command buttons with fixed-size rectangle-backed overlay buttons so the button backgrounds cover their glyphs.
+- Replaced the previous `Reset View` behavior with saved initial-camera-state restoration for the active loaded graph.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `tests/test_graph_visualization.py`.
+- Modified `README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Added a small `CameraState` model and store the initial camera state on each loaded GraphML entry after its first default render.
+- Kept `Reset View` separate from `Refresh`; it restores camera state only and does not rebuild meshes or apply preview slider values.
+- Used VTK 2D rectangle actors behind command labels, with a fallback text-background path if the rectangle actor imports are unavailable.
+
+4. Assumptions
+- `Reset View` should restore the graph's initial default orientation/framing, not just call `plotter.reset_camera()` from the current orientation.
+- Slider span `0.66` to `0.86` provides a clearer left shift while keeping a visible right-side margin.
+- Fixed button backgrounds should cover text and icon glyphs with padding.
+
+5. Limitations
+- Button rectangles are custom VTK/PyVista overlay actors rather than native GUI controls.
+- Camera-state capture depends on the PyVista/VTK camera exposing standard position, focal point, view-up, clipping range, and parallel-scale accessors.
+- Live desktop review is still needed to confirm exact glyph centering and rectangle layering across display scaling settings.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py -q`
+
+7. Remaining risks or recommended next steps
+- Manually run `python -m skelhub graphviz` and verify the slider position, button background coverage, and Reset View after rotating/zooming the camera.
+
+## 2026-05-05 17:52:46 AEST
+
+1. Summary of what changed
+- Adjusted the pure-PyVista `skelhub graphviz` overlay layout based on the latest screenshot review.
+- Increased vertical separation between the node-size and edge-thickness sliders and kept the compact slider cluster right-aligned with a visible window margin.
+- Moved the command controls into an evenly spaced, same-height, bottom-right aligned row.
+- Added a blue `Reset View` button next to the red `Refresh` button; it resets camera framing without changing loaded files, meshes, or slider values.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `tests/test_graph_visualization.py`.
+- Modified `README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the controls as pure PyVista/VTK overlay text actors with explicit hitboxes and did not add a native GUI layer.
+- Added a small `reset_active_view(...)` helper so camera reset is separate from graph rebuilding and refresh-driven appearance changes.
+- Computed command button positions from the current plotter window width so the row stays right-aligned with a fixed margin.
+
+4. Assumptions
+- `Reset View` means `plotter.reset_camera()` plus render, not resetting files, style values, or graph contents.
+- The command row should sit near the bottom-right with a fixed margin from the window edges.
+- Wider slider vertical spacing is preferred over keeping the two sliders tightly grouped.
+
+5. Limitations
+- The command buttons are still text-actor overlays rather than native widgets, so exact visual dimensions need desktop review.
+- Slider placement uses normalized PyVista viewport coordinates; the layout should be checked on both normal and maximized window sizes.
+- The local automated checks do not manually exercise the live desktop window.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py -q`
+
+7. Remaining risks or recommended next steps
+- Manually run `python -m skelhub graphviz` in a desktop-capable environment and review slider overlap, bottom-right row spacing, and Reset View behavior after rotating/zooming the camera.
+
+## 2026-05-05 17:29:31 AEST
+
+1. Summary of what changed
+- Polished the pure-PyVista `skelhub graphviz` overlay based on the desktop screenshot review.
+- Replaced the large top-left status text with a compact opaque file label that unfolds into a loaded-file list on hover.
+- Replaced checkbox-style command controls with custom opaque hitbox buttons for `Import`, `Close`, `<`, `>`, and a red `Refresh`.
+- Restyled the node-size and edge-thickness sliders into a smaller upper-right cluster using silver/steel PyVista slider styling.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `tests/test_graph_visualization.py`.
+- Modified `README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the viewer pure PyVista and implemented the file list and buttons as overlay text actors with explicit hitboxes and VTK mouse observers.
+- Retained the existing session model and graph rendering behavior; the change is limited to overlay controls and event dispatch.
+- Kept refresh-based slider application so large graphs are not rebuilt on every slider drag event.
+
+4. Assumptions
+- Hovering the top-left file label is the intended trigger for showing the loaded-file list.
+- Clicking a filename in the unfolded list should switch the active graph immediately.
+- Silver/steel compact 2D sliders are an acceptable approximation of the requested metallic style in pure PyVista.
+
+5. Limitations
+- The file list and buttons are custom PyVista/VTK overlays, not native GUI widgets.
+- PyVista's 2D slider widget does not support true metallic sphere materials, so the implementation uses metallic-looking colors and compact styling.
+- The local automated checks do not manually exercise live hover/click behavior in a desktop window.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py -q`
+- `python -m pytest tests/test_graph_visualization.py tests/test_framework_cli.py::test_framework_graphviz_cli_reports_missing_coordinates -q`
+- `python -m skelhub graphviz --help`
+
+7. Remaining risks or recommended next steps
+- Manually run `python -m skelhub graphviz` in a desktop-capable environment and review top-left hover behavior, filename click accuracy, command-button sizing, and slider readability.
+- If text-actor button backgrounds still feel too text-shaped on the target desktop, consider adding thin rectangle actors behind the text while keeping the same hitbox dispatch.
+
+## 2026-05-05 15:23:26 AEST
+
+1. Summary of what changed
+- Added pure-PyVista session controls to `skelhub graphviz` so one viewer can load multiple GraphML files while displaying one active graph at a time.
+- Added in-canvas `Import`, `Close`, `Prev`, `Next`, and `Refresh` controls, plus node-size and edge-thickness sliders whose preview values apply on refresh.
+- Added best-effort `.graphml` drag-and-drop handling through VTK drop-file events when the active render-window backend supports them.
+- Kept the existing CLI/API contract for empty launches, initial `--input`, `--node_size`, and `--edge_thickness`.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `skelhub/visualization/__init__.py`.
+- Modified `tests/test_graph_visualization.py`.
+- Modified `README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the viewer on pure PyVista instead of adding a Qt application shell, so controls are VTK/PyVista overlays rather than native menus or dock widgets.
+- Added a local `GraphViewerSession` state model for loaded files, active file selection, preview slider values, committed appearance options, and current graph actors.
+- Rebuilds active graph actors only when switching files, closing files, importing files, dropping files, or pressing `Refresh`; slider movement alone updates preview state.
+- Used a small Tk file dialog for local import because pure PyVista does not provide a native file picker.
+
+4. Assumptions
+- Re-loading the same GraphML path should reactivate the existing session entry instead of adding a duplicate.
+- Dropping several valid GraphML files should load them all and activate the first valid file in the dropped batch.
+- Slider ranges of `0.5` to `40.0` for node size and `0.1` to `10.0` for edge thickness are practical defaults for this pure-PyVista viewer.
+
+5. Limitations
+- There is no native `File` dropdown, native `Tool` tab, docked sidebar, or separate adjacent tool window in this implementation.
+- The in-canvas controls are simple PyVista/VTK widgets, so their final look and placement must be reviewed in a desktop session.
+- Drag-and-drop depends on whether the active VTK/PyVista desktop backend emits `DropFilesEvent` with file paths.
+- The local automated checks do not manually exercise the interactive desktop window.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py -q`
+- `python -m pytest tests/test_graph_visualization.py tests/test_framework_cli.py::test_framework_graphviz_cli_reports_missing_coordinates -q`
+- `python -m skelhub graphviz --help`
+
+7. Remaining risks or recommended next steps
+- Manually run `python -m skelhub graphviz` in a desktop-capable environment and review the in-canvas controls, file dialog, drag-and-drop behavior, and refresh-time performance on representative GraphML files.
+- If drag-and-drop does not fire on the target desktop backend, keep `Import` as the supported local-file path and revisit a Qt shell only if native drop behavior becomes essential.
+
 ## 2026-04-29 15:51:59 AEST
 
 1. Summary of what changed
