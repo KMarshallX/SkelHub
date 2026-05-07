@@ -101,7 +101,7 @@ skelhub run \
   --verbose
 ```
 
-Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`.
+Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`. (NOTE: output graph is only available for this one, as the original work was based on dense graph and no intermediate rasterized output could be used as skeleton. Here I added a rasterized skeleton built upon the cleaned graph)
 
 MCP parameters exposed at the framework level:
 
