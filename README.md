@@ -8,7 +8,7 @@ Current status:
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
-- Graph visualization: lightweight PyVista-based GraphML viewer for 3D vessel graphs
+- Graph visualization: lightweight PyVista-based GraphML/NIfTI viewer for 3D vessel data
 
 ## Installation
 
@@ -18,13 +18,15 @@ source .venv/bin/activate
 python -m pip install -e .
 ```
 
-To use the built-in GraphML viewer:
+To use the built-in GraphML/NIfTI viewer:
 
 ```bash
 # Initialze the viewer
 python -m skelhub graphviz
 # Initialize the viewer with a GraphML file
 python -m skelhub graphviz --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml
+# Initialize the viewer with a binary NIfTI file
+python -m skelhub graphviz --input ./test_outputs/skelhub_mcp_small.nii.gz
 ```
 
 If `skelhub` on your `PATH` comes from a different environment than the `python`/`pip` you used for installation, the graph viewer dependencies may still appear missing.
@@ -158,7 +160,7 @@ skelhub graphgen \
   --verbose
 ```
 
-Open a GraphML vessel graph in the interactive PyVista viewer:
+Open a GraphML vessel graph or binary NIfTI volume in the interactive PyVista viewer:
 
 ```bash
 skelhub graphviz
@@ -167,9 +169,13 @@ skelhub graphviz \
   --input ./test_data/lsys_graph/Lnet_i4_0_tort_centreline.graphml \
   --edge_thickness 2.5 \
   --node_size 7
+
+skelhub graphviz \
+  --input ./test_outputs/skelhub_mcp_small.nii.gz
 ```
 
 The graph viewer expects per-node spatial metadata. SkelHub's current GraphML export writes node coordinates as `X`, `Y`, and `Z`, and the viewer uses those fields directly.
+For NIfTI inputs, the viewer requires a 3D binary volume with values exactly in `{0, 1}` and renders each foreground voxel as one unit block in voxel-index coordinates.
 
 ### Note:
 When deploy on HPC (e.g., Bunya), it's necessary to use conda environment then install/update conda C++ runtime:
@@ -253,21 +259,25 @@ The Laplacian backend records graph-contraction metadata under `result.backend_m
 
 ## Graph Visualization
 
-`skelhub graphviz` opens a lightweight PyVista viewer for GraphML vessel graphs. The viewer:
+`skelhub graphviz` opens a lightweight PyVista viewer for GraphML vessel graphs and binary NIfTI volumes. The viewer:
 
 - loads GraphML through the existing `igraph` dependency
+- loads NIfTI through the existing `nibabel` dependency
 - renders nodes and edges in 3D with simple constant-size geometry
+- renders binary NIfTI foreground voxels as unit 3D blocks
 - uses PyVista's built-in mouse controls for camera interaction
-- accepts appearance controls through `--edge_thickness` and `--node_size`
+- accepts GraphML appearance controls through `--edge_thickness` and `--node_size`
 - opens an empty PyVista window if `--input` is omitted
-- can load multiple GraphML files in one session while displaying one active file at a time
+- can load multiple GraphML and NIfTI files in one session while displaying one active file at a time
 - provides a right-aligned in-canvas command row with fixed-size button backgrounds for `Import`, `Close`, `<`, `>`, red `Refresh`, and blue `Reset View`
-- previews node-size and edge-thickness slider values with compact left-shifted silver/steel sliders, then applies them when `Refresh` is pressed
+- previews node-size and edge-thickness slider values for active GraphML files, then applies them when `Refresh` is pressed
+- hides the node-size and edge-thickness sliders for active NIfTI files while keeping the command buttons visible
 - restores the active graph's initial camera view with `Reset View` without changing loaded files or slider values
 - unfolds the loaded-file list when the mouse hovers over the compact top-left file label
-- accepts `.graphml` drag-and-drop events when the desktop VTK/PyVista backend exposes file drops to the render window
+- accepts `.graphml`, `.nii`, and `.nii.gz` drag-and-drop events when the desktop VTK/PyVista backend exposes file drops to the render window
 
 If the GraphML file does not contain usable node coordinates, the command fails clearly instead of guessing layout data.
+If a NIfTI file is not exactly binary, the viewer shows a warning and rejects the import.
 
 ## Evaluation Overview
 
