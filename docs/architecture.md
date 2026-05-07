@@ -16,10 +16,12 @@ Current implementation details:
 - `skelhub.visualization` contains the optional PyVista-based GraphML viewer used by `skelhub graphviz`.
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
 - `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
+- `skelhub.algorithms.laplacian.backend` adapts the VascGraph Laplacian graph-contraction path. It is graph-native internally, but returns a standard rasterized binary skeleton volume and stores the cleaned graph as optional metadata/output.
 
 Compatibility notes:
 
-- The unified run path now supports multiple algorithms, including `mcp` and `lee94`, through the same registry-driven CLI and API route.
+- The unified run path now supports multiple algorithms, including `mcp`, `lee94`, and `laplacian`, through the same registry-driven CLI and API route.
 - The unified evaluation path currently operates on paired binary skeleton volumes and remains purely voxel-based; it does not depend on graph-generation code yet or backend-specific result internals.
 - The evaluation modules are structured so a future `SkeletonResult` wrapper can reuse the same array-level evaluator rather than reimplementing metrics.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.
+- Graph-native backends such as `laplacian` must adapt to `SkeletonResult.skeleton` by rasterizing their internal graph output; optional graph files remain backend extras rather than replacing the common volume contract.

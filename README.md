@@ -4,7 +4,7 @@ SkelHub is a Python framework for 3D skeletonization. It provides a shared packa
 
 Current status:
 
-- Supported algorithm backends: `mcp`, `lee94`
+- Supported algorithm backends: `mcp`, `lee94`, `laplacian`
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
@@ -41,6 +41,7 @@ SkelHub/
 │   ├── core/
 │   ├── io/
 │   ├── algorithms/
+│   │   ├── laplacian/
 │   │   ├── lee94/
 │   │   └── mcp/
 │   ├── evaluation/
@@ -58,6 +59,7 @@ Framework notes:
 - `skelhub.core` contains shared result objects, framework interfaces, and the backend registry.
 - `skelhub.algorithms.mcp` contains the current MCP implementation and its thin framework adapter.
 - `skelhub.algorithms.lee94` contains the Lee et al. 1994 thinning backend adapter around `scikit-image`.
+- `skelhub.algorithms.laplacian` contains the VascGraph Laplacian graph-contraction backend, adapted to output a rasterized skeleton volume plus optional cleaned GraphML.
 - `skelhub.evaluation` contains the algorithm-agnostic voxel-based v1 evaluator, with separate validation, geometry, morphology, and reporting helpers.
 - `skelhub.postprocessing.graphgen` contains [Voreen](https://github.com/voreen-project/voreen)-style skeleton-to-protograph GraphML generation.
 
@@ -89,6 +91,18 @@ skelhub run \
   --verbose
 ```
 
+Run the VascGraph Laplacian backend:
+
+```bash
+skelhub run \
+  --algorithm laplacian \
+  --input ./test_data/lsys_data/iter_4_8_step_1/Lnet_i4_0_tort.nii.gz \
+  --output ./test_outputs/skelhub_laplacian.nii.gz \
+  --verbose
+```
+
+Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`. (NOTE: output graph is only available for this one, as the original work was based on dense graph and no intermediate rasterized output could be used as skeleton. Here I added a rasterized skeleton built upon the cleaned graph)
+
 MCP parameters exposed at the framework level:
 
 - `--root-method {max_fdt,topmost}`
@@ -102,6 +116,21 @@ MCP parameters exposed at the framework level:
 Lee94 parameters exposed at the framework level:
 
 - `--binarize-threshold FLOAT`
+
+Laplacian parameters exposed at the framework level:
+
+- `--graph_output PATH` optional cleaned GraphML output path
+- `--graph_original PATH` optional refined pre-cleaning GraphML output path
+- `--speed_param FLOAT` default `0.05`
+- `--dist_param FLOAT` default `0.5`
+- `--med_param FLOAT` default `0.5`
+- `--degree_threshold FLOAT` default `5.0`
+- `--sampling FLOAT` default `1.0`
+- `--clustering_r FLOAT` default `1.0`
+- `--stop_param FLOAT` default `0.001`
+- `--n_free_iteration INT` default `0`
+- `--area_param FLOAT` default `50.0`
+- `--poly_param INT` default `10`
 
 Run the voxel-based evaluation suite:
 
@@ -169,7 +198,7 @@ from skelhub.api import (
     generate_graphml_from_skeleton_path,
     run_algorithm_from_path,
 )
-from skelhub.algorithms import Lee94Config, MCPConfig
+from skelhub.algorithms import LaplacianConfig, Lee94Config, MCPConfig
 
 result = run_algorithm_from_path(
     algorithm="lee94",
@@ -185,6 +214,12 @@ evaluation = evaluate_prediction_path(
     buffer_radius_unit="voxels",
 )
 graph = generate_graphml_from_skeleton_path("pred.nii.gz", "pred.graphml")
+laplacian = run_algorithm_from_path(
+    algorithm="laplacian",
+    input_path="input.nii.gz",
+    output_path="laplacian.nii.gz",
+    config=LaplacianConfig(graph_output="laplacian.graphml"),
+)
 print(result.backend_metadata["config"])
 print(evaluation.P)
 print(len(graph.nodes), len(graph.edges))
@@ -204,6 +239,7 @@ print(len(graph.nodes), len(graph.edges))
 
 The MCP backend keeps its current per-object runtime metadata under `result.backend_metadata["mcp"]`.
 The Lee94 backend records its wrapper metadata under `result.backend_metadata["lee94"]` and uses `scikit-image`'s Lee-method implementation rather than a custom in-repo thinning implementation.
+The Laplacian backend records graph-contraction metadata under `result.backend_metadata["laplacian"]`, including cleaned graph node/edge counts and the rasterized skeleton voxel count.
 
 `EvaluationResult` now records the v1 evaluation outputs explicitly, including:
 

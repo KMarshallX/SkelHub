@@ -1,5 +1,42 @@
 # Algorithms
 
+## Laplacian Backend
+
+The Laplacian backend is integrated under `skelhub.algorithms.laplacian`. It ports the required VascGraph `Skeletonize` path into SkelHub and updates the graph code for NetworkX 3.x compatibility.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
+    --graph_output out.graphml \
+    --graph_original original.graphml \
+    --speed_param 0.05 \
+    --dist_param 0.5 \
+    --med_param 0.5 \
+    --degree_threshold 5.0 \
+    --sampling 1 \
+    --clustering_r 1 \
+    --stop_param 0.001 \
+    --n_free_iteration 0 \
+    --area_param 50.0 \
+    --poly_param 10 \
+    --verbose
+```
+
+Backend-specific parameters:
+
+- `--graph_output PATH` writes the cleaned graph after `post_node_cleaning()` as GraphML with world-coordinate `X`, `Y`, `Z` fields and voxel-position metadata.
+- `--graph_original PATH` writes the refined graph before `post_node_cleaning()` as GraphML with the same coordinate convention.
+- `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, and `--poly_param` expose the VascGraph demo skeleton settings with the same defaults used in `demo_skeleton.py`.
+
+Implementation notes:
+
+- This backend is graph-native internally: it builds a dense foreground graph, contracts it toward vessel centerlines, refines small polygon artifacts, and removes degree-2 nodes from the cleaned graph.
+- SkelHub still receives a standard binary skeleton NIfTI output. The cleaned graph is rasterized into the source volume shape by drawing every graph edge as a 26-connected voxel path.
+- `--graph_output` is written from the cleaned graph rather than from the rasterized skeleton. `--graph_original` is available when the refined pre-cleaning graph is needed for inspection.
+- Only the required VascGraph skeleton path is ported; unrelated VascGraph I/O, visualization, directed-graph, Pajek/SWC, and patch-stitching features are not included in this backend.
+
 ## Lee94 Backend
 
 The Lee94 backend is integrated under `skelhub.algorithms.lee94`. The original implementation(skimage) already does zero padding to the input volume, so the SkelHub adapter does not add additional padding. 
