@@ -91,16 +91,17 @@ skelhub run \
   --verbose
 ```
 
-Run the VascGraph Laplacian backend and optionally export the cleaned graph:
+Run the VascGraph Laplacian backend:
 
 ```bash
 skelhub run \
   --algorithm laplacian \
   --input ./test_data/lsys_data/iter_4_8_step_1/Lnet_i4_0_tort.nii.gz \
   --output ./test_outputs/skelhub_laplacian.nii.gz \
-  --graph_output ./test_outputs/skelhub_laplacian.graphml \
   --verbose
 ```
+
+Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`.
 
 MCP parameters exposed at the framework level:
 
@@ -119,6 +120,7 @@ Lee94 parameters exposed at the framework level:
 Laplacian parameters exposed at the framework level:
 
 - `--graph_output PATH` optional cleaned GraphML output path
+- `--graph_original PATH` optional refined pre-cleaning GraphML output path
 - `--speed_param FLOAT` default `0.05`
 - `--dist_param FLOAT` default `0.5`
 - `--med_param FLOAT` default `0.5`

@@ -56,4 +56,4 @@ def skeletonize_graph(
         "cleaned_edges": int(cleaned_graph.number_of_edges()),
         "final_cycle_area": float(getattr(contract, "final_cycle_area", 0.0)),
     }
-    return cleaned_graph, metadata
+    return cleaned_graph, refined_graph, metadata

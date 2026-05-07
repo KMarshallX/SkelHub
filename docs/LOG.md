@@ -5,7 +5,7 @@
 1. Summary of what changed
 - Added the VascGraph Laplacian graph-contraction skeletonization path as SkelHub's third backend, registered as `laplacian`.
 - Ported the required graph generation, contraction, refinement, node cleaning, 26-connected rasterization, and cleaned GraphML export into `skelhub.algorithms.laplacian`.
-- Added CLI support for `--graph_output` and the Laplacian parameters from `VascularGraph/demo_skeleton.py`.
+- Added CLI support for `--graph_output`, `--graph_original`, and the Laplacian parameters from `VascularGraph/demo_skeleton.py`.
 - Updated README and algorithm/architecture docs for the new backend.
 
 2. Files added, removed, or modified
@@ -21,6 +21,7 @@
 - Kept the backend self-contained instead of importing VascularGraph at runtime, because the original code relies on old NetworkX APIs.
 - Preserved the graph-native algorithm internally while returning SkelHub's standard rasterized skeleton NIfTI output.
 - Wrote optional GraphML from the cleaned graph with world-coordinate `X`, `Y`, `Z` fields and explicit voxel-position metadata.
+- Added optional GraphML export for the refined graph before `post_node_cleaning()`.
 
 4. Assumptions
 - The backend name is `laplacian`.
@@ -33,6 +34,9 @@
 - `python -m pytest tests/test_laplacian_backend.py tests/test_framework_cli.py tests/test_lee94_backend.py tests/test_graphgen.py -q`
 - `python -m pytest tests/test_laplacian_backend.py tests/test_framework_cli.py -q`
 - `python -m pytest -q` completed with 92 passed and 2 unrelated failures: `tests/test_evaluation_metrics.py::test_endpoint_count_uses_6_connectivity_for_diagonal_tip_cases` and `tests/test_graph_visualization.py::test_slider_setup_uses_separated_right_aligned_compact_positions`.
+- `python -m py_compile skelhub/algorithms/laplacian/config.py skelhub/algorithms/laplacian/skeleton.py skelhub/algorithms/laplacian/backend.py skelhub/cli/main.py`
+- `python -m skelhub run --algorithm laplacian --input /tmp/skelhub_laplacian_graph_original/input.nii.gz --output /tmp/skelhub_laplacian_graph_original/output.nii.gz --graph_output /tmp/skelhub_laplacian_graph_original/clean.graphml --graph_original /tmp/skelhub_laplacian_graph_original/original.graphml --verbose`
+- `python -m skelhub run --algorithm laplacian --input /tmp/skelhub_laplacian_graph_original/input.nii.gz --output /tmp/skelhub_laplacian_graph_original/output_no_graph_original.nii.gz --verbose`
 
 ## 2026-05-05 18:10:21 AEST
 

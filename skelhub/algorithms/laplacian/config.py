@@ -20,6 +20,7 @@ class LaplacianConfig:
     area_param: float = 50.0
     poly_param: int = 10
     graph_output: str | None = None
+    graph_original: str | None = None
 
     def validate(self) -> "LaplacianConfig":
         """Validate config values and return self for chaining."""

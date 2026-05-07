@@ -39,6 +39,7 @@ class LaplacianBackend:
             area_param=getattr(args, "area_param", 50.0),
             poly_param=getattr(args, "poly_param", 10),
             graph_output=getattr(args, "graph_output", None),
+            graph_original=getattr(args, "graph_original", None),
         ).validate()
 
     def run(
@@ -61,6 +62,7 @@ class LaplacianBackend:
             warnings.append("Input volume contained no foreground voxels.")
             skeleton = np.zeros_like(binary, dtype=np.uint8)
             graph = None
+            original_graph = None
             graph_metadata = {
                 "initial_nodes": 0,
                 "initial_edges": 0,
@@ -73,7 +75,7 @@ class LaplacianBackend:
         else:
             if log:
                 log("Running VascGraph Laplacian graph contraction...")
-            graph, graph_metadata = skeletonize_graph(
+            graph, original_graph, graph_metadata = skeletonize_graph(
                 binary,
                 speed_param=config.speed_param,
                 dist_param=config.dist_param,
@@ -94,6 +96,13 @@ class LaplacianBackend:
             graph_output_path = str(config.graph_output)
             if log:
                 log(f"Cleaned Laplacian graph written to {graph_output_path}")
+
+        graph_original_path = None
+        if config.graph_original and original_graph is not None:
+            write_laplacian_graphml(original_graph, config.graph_original, volume.affine, binary.shape)
+            graph_original_path = str(config.graph_original)
+            if log:
+                log(f"Original refined Laplacian graph written to {graph_original_path}")
 
         elapsed = time.perf_counter() - started
         output_voxels = int(np.count_nonzero(skeleton))
@@ -116,6 +125,7 @@ class LaplacianBackend:
             "input_foreground_voxels": input_voxels,
             "output_foreground_voxels": output_voxels,
             "graph_output": graph_output_path,
+            "graph_original": graph_original_path,
         }
 
         return SkeletonResult(

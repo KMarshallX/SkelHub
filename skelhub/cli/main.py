@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="graph_output",
         help="Optional cleaned GraphML output path for graph-native backends such as laplacian.",
     )
+    run_parser.add_argument(
+        "--graph_original",
+        "--graph-original",
+        dest="graph_original",
+        help="Optional refined pre-cleaning GraphML output path for the laplacian backend.",
+    )
     run_parser.add_argument("--speed_param", type=float, default=0.05, help="Laplacian contraction speed gamma.")
     run_parser.add_argument("--dist_param", type=float, default=0.5, help="Laplacian distance weight alpha.")
     run_parser.add_argument("--med_param", type=float, default=0.5, help="Laplacian medial/radius weight beta.")
