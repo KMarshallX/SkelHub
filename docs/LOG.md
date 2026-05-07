@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-05-08 AEST
+
+1. Summary of what changed
+- Extended `skelhub graphviz` so the PyVista viewer can load both GraphML files and binary NIfTI volumes in the same session.
+- Added NIfTI validation that accepts exactly binary `{0, 1}` values, renders foreground voxels as unit blocks, and rejects non-binary volumes with a warning.
+- Added mixed-format import/drop handling, type labels in the top-left file list, and slider visibility rules that hide graph appearance sliders for active NIfTI files while keeping command buttons available.
+- Updated README and CLI help text for GraphML/NIfTI viewer support.
+
+2. Files added, removed, or modified
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Modified `skelhub/visualization/__init__.py`.
+- Modified `skelhub/cli/main.py`.
+- Modified `skelhub/api.py`.
+- Modified `tests/test_graph_visualization.py`.
+- Modified `README.md` and `docs/LOG.md`.
+
+3. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_visualization.py`
+- `python -m pytest tests/test_graph_visualization.py -q`
+- `python -m pytest tests/test_framework_cli.py::test_framework_graphviz_cli_reports_missing_coordinates -q`
+- `python -m skelhub graphviz --help`
+
 ## 2026-05-07 18:34:15 AEST
 
 1. Summary of what changed

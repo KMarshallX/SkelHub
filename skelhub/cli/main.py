@@ -154,12 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     graphviz_parser = subparsers.add_parser(
         "graphviz",
-        help="Open a 3D PyVista viewer for a GraphML vessel graph.",
+        help="Open a 3D PyVista viewer for GraphML vessel graphs or binary NIfTI volumes.",
     )
     graphviz_parser.add_argument(
         "-i",
         "--input",
-        help="Optional path to an input GraphML file. If omitted, the viewer opens in an empty state.",
+        help="Optional path to an input GraphML or binary NIfTI file. If omitted, the viewer opens empty.",
     )
     graphviz_parser.add_argument(
         "--edge_thickness",
