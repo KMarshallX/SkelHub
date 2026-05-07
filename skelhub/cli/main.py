@@ -58,6 +58,57 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write object labels instead of binary skeleton voxels.",
     )
+    run_parser.add_argument(
+        "--graph_output",
+        "--graph-output",
+        dest="graph_output",
+        help="Optional cleaned GraphML output path for graph-native backends such as laplacian.",
+    )
+    run_parser.add_argument("--speed_param", type=float, default=0.05, help="Laplacian contraction speed gamma.")
+    run_parser.add_argument("--dist_param", type=float, default=0.5, help="Laplacian distance weight alpha.")
+    run_parser.add_argument("--med_param", type=float, default=0.5, help="Laplacian medial/radius weight beta.")
+    run_parser.add_argument(
+        "--degree_threshold",
+        type=float,
+        default=5.0,
+        help="Laplacian angle threshold used to detect skeletal nodes.",
+    )
+    run_parser.add_argument(
+        "--sampling",
+        type=float,
+        default=1.0,
+        help="Laplacian initial graph sampling factor.",
+    )
+    run_parser.add_argument(
+        "--clustering_r",
+        type=float,
+        default=1.0,
+        help="Laplacian topology clustering radius.",
+    )
+    run_parser.add_argument(
+        "--stop_param",
+        type=float,
+        default=0.001,
+        help="Laplacian convergence area scale.",
+    )
+    run_parser.add_argument(
+        "--n_free_iteration",
+        type=int,
+        default=0,
+        help="Laplacian iterations before convergence checks begin.",
+    )
+    run_parser.add_argument(
+        "--area_param",
+        type=float,
+        default=50.0,
+        help="Laplacian small-polygon area refinement threshold.",
+    )
+    run_parser.add_argument(
+        "--poly_param",
+        type=int,
+        default=10,
+        help="Laplacian maximum polygon size considered during refinement.",
+    )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")

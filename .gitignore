@@ -1,6 +1,7 @@
 /test_data/*
 /tests/**
 /tests/test_graph_visualization.py
+!/tests/test_laplacian_backend.py
 /tmp/
 /outputs/
 /test_outputs/
