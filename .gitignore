@@ -3,6 +3,7 @@
 /tests/test_graph_visualization.py
 /tmp/
 /outputs/
+/refs/
 /test_outputs/
 __pycache__/
 .venv/
