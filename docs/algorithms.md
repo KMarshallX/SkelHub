@@ -1,5 +1,42 @@
 # Algorithms
 
+## L1 Skeleton Backend
+
+The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the v2 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz \
+    --l1-sample-count 512 \
+    --l1-initial-radius 2.0 \
+    --l1-max-radius 8.0 \
+    --l1-max-iterations 80 \
+    --verbose
+```
+
+Backend-specific parameters:
+
+- `--l1-sample-count` limits the number of moving samples seeded from foreground voxels.
+- `--l1-initial-radius`, `--l1-radius-growth`, and `--l1-max-radius` control the local neighborhood schedule.
+- `--l1-max-iterations` and `--l1-stop-error` control contraction convergence.
+- `--l1-repulsion-mu` and `--l1-repulsion-mu-min` control conditional repulsion.
+- `--l1-random-seed` makes foreground point sampling deterministic.
+- `--l1-output-mode {branches,points}` selects the default v2 branch-curve rasterization or the previous contracted-point rasterization.
+- `--l1-use-density-weighting` / `--no-l1-use-density-weighting` controls inverse local-density weighting during attraction.
+- `--l1-use-recentering` / `--no-l1-use-recentering` controls branch-local ellipse re-centering before branch rasterization.
+
+Implementation notes:
+
+- Input NIfTI foreground is `data > 0`; output is same-shape binary `uint8`.
+- Foreground voxels are converted to point coordinates using voxel spacing when available, contracted with KDTree neighborhoods, and processed through the v2 branch flow by default.
+- V2 applies optional inverse local-density weighting, searches high-confidence contracted samples into branch curves with virtual endpoint handling, merges nearby branch endpoints, segments/smooths final curves, and optionally re-centers branch nodes by fitting local cross-section ellipses described in the local `ALGORITHM.md` note.
+- The default skeleton output rasterizes final branch curves. `--l1-output-mode points` keeps the earlier contracted-sample rasterization path available for direct comparison.
+- The current backend does not emit GraphML or attach a `GraphResult`; the previous sparse graph builder was removed because it was not part of the original L1-Skeleton code path.
+- The backend metadata records output mode, branch counts, branch points, density weighting, re-centering attempts/applications, segmentation status, and convergence statistics.
+- The original L1-Skeleton C++ repository does not contain a clear license file, and its README contains only placeholder license text. The backend therefore does not copy original source code; it uses the report/repo for traceability only.
+
 ## Laplacian Backend
 
 The Laplacian backend is integrated under `skelhub.algorithms.laplacian`. It ports the required VascGraph `Skeletonize` path into SkelHub and updates the graph code for NetworkX 3.x compatibility.

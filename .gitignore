@@ -1,8 +1,8 @@
 /test_data/*
-/tests/**
-/tests/test_graph_visualization.py
+/tests/fixtures/*
 /tmp/
 /outputs/
+/refs/
 /test_outputs/
 __pycache__/
 .venv/
