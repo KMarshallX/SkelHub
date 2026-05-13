@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    name: Release merged dev PR
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Parse release version
+        id: version
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import re
+          import tomllib
+          from pathlib import Path
+
+          VERSION_RE = re.compile(r"^[0-9]\.[0-9]\.[0-9]$")
+
+          version = tomllib.loads(
+              Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+
+          if not VERSION_RE.fullmatch(version):
+              raise SystemExit(
+                  f"Release version must use single-digit X.Y.Z format; got {version!r}"
+              )
+
+          print(f"version={version}")
+          print(f"tag=v{version}")
+          PY
+
+      - name: Ensure release tag does not exist
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git fetch --tags --force
+
+          if git rev-parse --verify --quiet "refs/tags/${TAG}"; then
+            echo "Tag ${TAG} already exists."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Remote tag ${TAG} already exists."
+            exit 1
+          fi
+
+      - name: Ensure GitHub Release does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists."
+            exit 1
+          fi
+
+      - name: Remove tests from main
+        run: |
+          if [ -d tests ]; then
+            git rm -r tests
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No tests directory cleanup needed."
+          else
+            git commit -m "Remove tests from main release branch"
+            git push origin main
+          fi
+
+      - name: Create tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "${TAG}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes "Release ${TAG}"
+
