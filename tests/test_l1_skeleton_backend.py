@@ -43,6 +43,12 @@ def test_l1_skeleton_config_validation_rejects_bad_values() -> None:
         L1SkeletonConfig(radius_growth=1.0),
         L1SkeletonConfig(max_iterations=0),
         L1SkeletonConfig(random_seed=-1),
+        L1SkeletonConfig(output_mode="cloud"),
+        L1SkeletonConfig(eigen_threshold=1.1),
+        L1SkeletonConfig(branch_search_knn=0),
+        L1SkeletonConfig(accept_branch_size=0),
+        L1SkeletonConfig(branch_search_angle=0.0),
+        L1SkeletonConfig(curve_segment_length=0.0),
     ):
         try:
             config.validate()
@@ -101,6 +107,9 @@ def test_l1_skeleton_backend_returns_centered_binary_tube_skeleton() -> None:
     assert abs(float(np.mean(voxels[:, 1])) - 4.0) <= 1.5
     assert result.graph is None
     assert result.backend_metadata["l1_skeleton"]["output_points"] > 0
+    assert result.backend_metadata["l1_skeleton"]["output_mode"] == "branches"
+    assert result.backend_metadata["l1_skeleton"]["branch_count"] > 0
+    assert result.backend_metadata["l1_skeleton"]["density_weighting"] is True
 
 
 def test_l1_skeleton_y_branch_returns_binary_skeleton_volume() -> None:
@@ -119,6 +128,85 @@ def test_l1_skeleton_y_branch_returns_binary_skeleton_volume() -> None:
     assert result.graph is None
     assert result.skeleton.shape == data.shape
     assert result.skeleton.dtype == np.uint8
+    assert result.backend_metadata["l1_skeleton"]["branch_points"] > 0
+
+
+def test_l1_skeleton_points_output_mode_preserves_contracted_sample_output() -> None:
+    data = _tube()
+    volume = VolumeData(data=data, affine=np.eye(4), header=None, path="memory", spacing=(1.0, 1.0, 1.0))
+    config = L1SkeletonConfig(
+        sample_count=80,
+        initial_radius=2.0,
+        max_radius=4.0,
+        max_iterations=20,
+        stop_error=0.02,
+        output_mode="points",
+    )
+
+    result = get_backend("l1_skeleton").run(volume=volume, config=config)
+
+    assert np.count_nonzero(result.skeleton) > 0
+    assert result.backend_metadata["l1_skeleton"]["output_mode"] == "points"
+    assert result.backend_metadata["l1_skeleton"]["recentering_attempted"] == 0
+
+
+def test_l1_skeleton_density_weighting_can_be_disabled_in_metadata() -> None:
+    data = _tube()
+    data[3:6, 3:6, 2:5] = 2.0
+    volume = VolumeData(data=data, affine=np.eye(4), header=None, path="memory", spacing=(1.0, 1.0, 1.0))
+    config = L1SkeletonConfig(
+        sample_count=60,
+        initial_radius=2.0,
+        max_radius=4.0,
+        max_iterations=12,
+        output_mode="branches",
+        use_density_weighting=False,
+    )
+
+    result = get_backend("l1_skeleton").run(volume=volume, config=config)
+
+    assert np.count_nonzero(result.skeleton) > 0
+    assert result.backend_metadata["l1_skeleton"]["density_weighting"] is False
+
+
+def test_l1_skeleton_recentering_records_attempted_branch_adjustments() -> None:
+    data = _tube()
+    volume = VolumeData(data=data, affine=np.eye(4), header=None, path="memory", spacing=(1.0, 1.0, 1.0))
+    config = L1SkeletonConfig(
+        sample_count=80,
+        initial_radius=2.0,
+        max_radius=4.0,
+        max_iterations=20,
+        output_mode="branches",
+        use_recentering=True,
+    )
+
+    result = get_backend("l1_skeleton").run(volume=volume, config=config)
+    metadata = result.backend_metadata["l1_skeleton"]
+
+    assert metadata["recentering_attempted"] > 0
+    assert metadata["recentering_applied"] > 0
+
+
+def test_l1_skeleton_branch_segmentation_can_reduce_branch_nodes() -> None:
+    data = _tube()
+    volume = VolumeData(data=data, affine=np.eye(4), header=None, path="memory", spacing=(1.0, 1.0, 1.0))
+    config = L1SkeletonConfig(
+        sample_count=80,
+        initial_radius=2.0,
+        max_radius=4.0,
+        max_iterations=20,
+        output_mode="branches",
+        use_recentering=False,
+        curve_segment_length=2.0,
+    )
+
+    result = get_backend("l1_skeleton").run(volume=volume, config=config)
+    metadata = result.backend_metadata["l1_skeleton"]
+
+    assert np.count_nonzero(result.skeleton) > 0
+    assert metadata["segmentation_applied"] is True
+    assert metadata["branch_points"] < metadata["sample_count"]
 
 
 def test_framework_run_cli_executes_l1_skeleton(tmp_path: Path) -> None:
@@ -146,6 +234,8 @@ def test_framework_run_cli_executes_l1_skeleton(tmp_path: Path) -> None:
             "4.0",
             "--l1-max-iterations",
             "20",
+            "--l1-output-mode",
+            "branches",
             "--verbose",
         ],
         check=True,
