@@ -11,12 +11,12 @@ import numpy as np
 from skelhub.core import SkeletonResult, VolumeData
 
 from .config import L1SkeletonConfig
-from .rasterize import rasterize_l1_points
+from .rasterize import rasterize_l1_branches, rasterize_l1_points
 from .skeleton import run_l1_skeleton
 
 
 class L1SkeletonBackend:
-    """SkelHub adapter for the L1-medial skeleton core v1 implementation."""
+    """SkelHub adapter for the L1-medial skeleton v2 implementation."""
 
     name = "l1_skeleton"
 
@@ -36,6 +36,9 @@ class L1SkeletonBackend:
             repulsion_mu=getattr(args, "l1_repulsion_mu", 0.35),
             repulsion_mu_min=getattr(args, "l1_repulsion_mu_min", 0.15),
             random_seed=getattr(args, "l1_random_seed", 0),
+            output_mode=getattr(args, "l1_output_mode", "branches"),
+            use_density_weighting=getattr(args, "l1_use_density_weighting", True),
+            use_recentering=getattr(args, "l1_use_recentering", True),
         ).validate()
 
     def run(
@@ -67,20 +70,29 @@ class L1SkeletonBackend:
                 "converged": True,
                 "hit_iteration_cap": False,
                 "output_points": 0,
-                "implementation": "Python-native L1-medial skeleton core v1",
-                "deferred_features": ["density weighting", "ellipse re-centering", "reference branch search"],
+                "output_mode": config.output_mode,
+                "branch_count": 0,
+                "branch_points": 0,
+                "density_weighting": bool(config.use_density_weighting),
+                "recentering_attempted": 0,
+                "recentering_applied": 0,
+                "segmentation_applied": False,
+                "implementation": "Python-native L1-medial skeleton v2",
             }
         else:
             spacing = volume.spacing if volume.spacing is not None else (1.0, 1.0, 1.0)
             spacing = tuple(float(value) for value in spacing)
             if log:
-                log("Running Python-native L1-medial skeleton core v1...")
+                log("Running Python-native L1-medial skeleton v2...")
             run_result = run_l1_skeleton(
                 foreground_voxels,
                 spacing=spacing,
                 config=config,
             )
-            skeleton = rasterize_l1_points(run_result.points, data.shape)
+            if config.output_mode == "points":
+                skeleton = rasterize_l1_points(run_result.points, data.shape)
+            else:
+                skeleton = rasterize_l1_branches(run_result.branches, data.shape)
             metadata = dict(run_result.metadata)
             metadata["output_foreground_voxels"] = int(np.count_nonzero(skeleton))
 

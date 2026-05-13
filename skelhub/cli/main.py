@@ -178,6 +178,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="L1 skeleton deterministic sample seed.",
     )
+    run_parser.add_argument(
+        "--l1-output-mode",
+        dest="l1_output_mode",
+        choices=("branches", "points"),
+        default="branches",
+        help="L1 skeleton output source: final branch curves or contracted sample points.",
+    )
+    run_parser.add_argument(
+        "--l1-use-density-weighting",
+        dest="l1_use_density_weighting",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable L1 inverse local-density weighting during attraction.",
+    )
+    run_parser.add_argument(
+        "--l1-use-recentering",
+        dest="l1_use_recentering",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable L1 per-branch ellipse re-centering before rasterization.",
+    )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")

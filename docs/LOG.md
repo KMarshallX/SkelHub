@@ -2,6 +2,39 @@
 
 ## 2026-05-13 AEST
 
+### L1 v2 refinements
+
+1. Summary of what changed
+- Implemented the v2 L1-medial skeleton refinement path inside `skelhub.algorithms.l1_skeleton`.
+- Added inverse local-density weighting during attraction, branch-curve extraction from high-confidence contracted samples, endpoint merging, final branch smoothing/segmentation, and branch-local ellipse re-centering based on the `ALGORITHM.md` additional note.
+- Added `--l1-output-mode {branches,points}` so the default output rasterizes final branch curves while the earlier contracted-point output remains available for comparison.
+- Added CLI/config toggles for density weighting and ellipse re-centering.
+
+2. Files added, removed, or modified
+- Modified `skelhub/algorithms/l1_skeleton/config.py`, `skeleton.py`, `rasterize.py`, and `backend.py`.
+- Modified `skelhub/cli/main.py`.
+- Modified `tests/test_l1_skeleton_backend.py`.
+- Modified `README.md`, `docs/algorithms.md`, `docs/architecture.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the implementation Python-native rather than copying C++ source because the local L1-Skeleton reference still has unclear license coverage and UI-heavy C++ dependencies.
+- Treated branches as L1-internal data, not framework graphs; the backend still returns a standard binary `SkeletonResult.skeleton` and leaves `SkeletonResult.graph` unset.
+- Used `/scratch/user/uqmxu4/Tools/Skel_Refs/L1-Skeleton/ALGORITHM.md` as the authority for ellipse re-centering because the C++ tree exposes only a `Need Recentering` parameter, not a concrete implementation path.
+
+4. Assumptions
+- Foreground voxels remain `data > 0`; outputs remain binary `{0, 1}` `uint8`.
+- Branch mode is the v2 default. Point mode exists for regression and visual comparison with the earlier contraction-only behavior.
+- The ellipse re-centering fit is skipped when a branch node has too few cross-section points, with attempted/applied counts recorded in metadata.
+
+5. Tests run
+- `python -m py_compile skelhub/algorithms/l1_skeleton/config.py skelhub/algorithms/l1_skeleton/skeleton.py skelhub/algorithms/l1_skeleton/rasterize.py skelhub/algorithms/l1_skeleton/backend.py skelhub/cli/main.py`
+- `python -m pytest tests/test_l1_skeleton_backend.py -q`
+- `python -m pytest tests/test_framework_cli.py -q`
+
+6. Remaining risks or recommended next steps
+- Compare v2 branch outputs against representative real L1-Skeleton reference cases when a runnable/reference output is available.
+- Tune branch-search thresholds for highly anisotropic or sparse foreground volumes if visual inspection shows over-merged or under-segmented branches.
+
 1. Summary of what changed
 - Added the Python-native L1-medial skeleton backend, registered as `l1_skeleton`.
 - Implemented foreground voxel to point-cloud sampling, KDTree-based L1 attraction and conditional repulsion, PCA directionality scoring, and point rasterization.

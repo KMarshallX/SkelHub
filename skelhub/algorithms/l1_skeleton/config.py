@@ -18,6 +18,17 @@ class L1SkeletonConfig:
     repulsion_mu: float = 0.35
     repulsion_mu_min: float = 0.15
     random_seed: int = 0
+    output_mode: str = "branches"
+    use_density_weighting: bool = True
+    use_recentering: bool = True
+    eigen_threshold: float = 0.901
+    branch_search_knn: int = 12
+    accept_branch_size: int = 6
+    add_accept_branch_size: int = 1
+    branch_search_angle: float = 25.0
+    branch_merge_distance: float = 0.08
+    clean_near_branch_distance: float = 0.05
+    curve_segment_length: float = 0.051
 
     def validate(self) -> "L1SkeletonConfig":
         """Validate config values and return self for chaining."""
@@ -39,4 +50,22 @@ class L1SkeletonConfig:
             raise ValueError("repulsion_mu_min must be non-negative.")
         if self.random_seed < 0:
             raise ValueError("random_seed must be non-negative.")
+        if self.output_mode not in {"branches", "points"}:
+            raise ValueError("output_mode must be either 'branches' or 'points'.")
+        if not 0.0 <= self.eigen_threshold <= 1.0:
+            raise ValueError("eigen_threshold must be between 0 and 1.")
+        if self.branch_search_knn <= 0:
+            raise ValueError("branch_search_knn must be positive.")
+        if self.accept_branch_size <= 0:
+            raise ValueError("accept_branch_size must be positive.")
+        if self.add_accept_branch_size < 0:
+            raise ValueError("add_accept_branch_size must be non-negative.")
+        if not 0.0 < self.branch_search_angle <= 180.0:
+            raise ValueError("branch_search_angle must be in (0, 180].")
+        if self.branch_merge_distance < 0.0:
+            raise ValueError("branch_merge_distance must be non-negative.")
+        if self.clean_near_branch_distance < 0.0:
+            raise ValueError("clean_near_branch_distance must be non-negative.")
+        if self.curve_segment_length <= 0.0:
+            raise ValueError("curve_segment_length must be positive.")
         return self

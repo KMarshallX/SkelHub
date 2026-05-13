@@ -2,7 +2,7 @@
 
 ## L1 Skeleton Backend
 
-The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the core v1 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
+The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the v2 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
 
 Framework-facing usage:
 
@@ -23,13 +23,18 @@ Backend-specific parameters:
 - `--l1-max-iterations` and `--l1-stop-error` control contraction convergence.
 - `--l1-repulsion-mu` and `--l1-repulsion-mu-min` control conditional repulsion.
 - `--l1-random-seed` makes foreground point sampling deterministic.
+- `--l1-output-mode {branches,points}` selects the default v2 branch-curve rasterization or the previous contracted-point rasterization.
+- `--l1-use-density-weighting` / `--no-l1-use-density-weighting` controls inverse local-density weighting during attraction.
+- `--l1-use-recentering` / `--no-l1-use-recentering` controls branch-local ellipse re-centering before branch rasterization.
 
 Implementation notes:
 
 - Input NIfTI foreground is `data > 0`; output is same-shape binary `uint8`.
-- Foreground voxels are converted to point coordinates using voxel spacing when available, contracted with KDTree neighborhoods, then rasterized back into the input grid as contracted sample points.
+- Foreground voxels are converted to point coordinates using voxel spacing when available, contracted with KDTree neighborhoods, and processed through the v2 branch flow by default.
+- V2 applies optional inverse local-density weighting, searches high-confidence contracted samples into branch curves with virtual endpoint handling, merges nearby branch endpoints, segments/smooths final curves, and optionally re-centers branch nodes by fitting local cross-section ellipses described in the local `ALGORITHM.md` note.
+- The default skeleton output rasterizes final branch curves. `--l1-output-mode points` keeps the earlier contracted-sample rasterization path available for direct comparison.
 - The current backend does not emit GraphML or attach a `GraphResult`; the previous sparse graph builder was removed because it was not part of the original L1-Skeleton code path.
-- This is the first SkelHub-oriented core implementation. Density weighting, ellipse re-centering, and the original branch-search/final-segmentation machinery are documented as deferred refinements.
+- The backend metadata records output mode, branch counts, branch points, density weighting, re-centering attempts/applications, segmentation status, and convergence statistics.
 - The original L1-Skeleton C++ repository does not contain a clear license file, and its README contains only placeholder license text. The backend therefore does not copy original source code; it uses the report/repo for traceability only.
 
 ## Laplacian Backend
