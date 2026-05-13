@@ -17,10 +17,11 @@ Current implementation details:
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
 - `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
 - `skelhub.algorithms.laplacian.backend` adapts the VascGraph Laplacian graph-contraction path. It is graph-native internally, but returns a standard rasterized binary skeleton volume and stores the cleaned graph as optional metadata/output.
+- `skelhub.algorithms.l1_skeleton.backend` adapts a Python-native L1-medial skeleton core v1 path. It converts foreground voxels to point samples, contracts them with local L1 attraction and conditional repulsion, and returns a rasterized binary skeleton without backend-specific graph generation.
 
 Compatibility notes:
 
-- The unified run path now supports multiple algorithms, including `mcp`, `lee94`, and `laplacian`, through the same registry-driven CLI and API route.
+- The unified run path now supports multiple algorithms, including `mcp`, `lee94`, `laplacian`, and `l1_skeleton`, through the same registry-driven CLI and API route.
 - The unified evaluation path currently operates on paired binary skeleton volumes and remains purely voxel-based; it does not depend on graph-generation code yet or backend-specific result internals.
 - The evaluation modules are structured so a future `SkeletonResult` wrapper can reuse the same array-level evaluator rather than reimplementing metrics.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.

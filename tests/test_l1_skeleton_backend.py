@@ -42,7 +42,7 @@ def test_l1_skeleton_config_validation_rejects_bad_values() -> None:
         L1SkeletonConfig(initial_radius=0.0),
         L1SkeletonConfig(radius_growth=1.0),
         L1SkeletonConfig(max_iterations=0),
-        L1SkeletonConfig(branch_threshold=1.1),
+        L1SkeletonConfig(random_seed=-1),
     ):
         try:
             config.validate()
@@ -99,11 +99,11 @@ def test_l1_skeleton_backend_returns_centered_binary_tube_skeleton() -> None:
     assert len(voxels) > 0
     assert abs(float(np.mean(voxels[:, 0])) - 4.0) <= 1.5
     assert abs(float(np.mean(voxels[:, 1])) - 4.0) <= 1.5
-    assert result.graph is not None
-    assert result.backend_metadata["l1_skeleton"]["graph_nodes"] > 0
+    assert result.graph is None
+    assert result.backend_metadata["l1_skeleton"]["output_points"] > 0
 
 
-def test_l1_skeleton_y_branch_has_multiple_edges() -> None:
+def test_l1_skeleton_y_branch_returns_binary_skeleton_volume() -> None:
     data = _y_branch()
     volume = VolumeData(data=data, affine=np.eye(4), header=None, path="memory", spacing=(1.0, 1.0, 1.0))
     config = L1SkeletonConfig(
@@ -111,21 +111,19 @@ def test_l1_skeleton_y_branch_has_multiple_edges() -> None:
         initial_radius=2.0,
         max_radius=5.0,
         max_iterations=18,
-        branch_threshold=0.5,
     )
 
     result = get_backend("l1_skeleton").run(volume=volume, config=config)
 
     assert np.count_nonzero(result.skeleton) > 0
-    assert result.graph is not None
-    assert len(result.graph.edges) >= 2
-    assert result.backend_metadata["l1_skeleton"]["graph_edges"] >= 2
+    assert result.graph is None
+    assert result.skeleton.shape == data.shape
+    assert result.skeleton.dtype == np.uint8
 
 
-def test_framework_run_cli_executes_l1_skeleton_and_writes_graphml(tmp_path: Path) -> None:
+def test_framework_run_cli_executes_l1_skeleton(tmp_path: Path) -> None:
     input_path = tmp_path / "input.nii.gz"
     output_path = tmp_path / "out.nii.gz"
-    graph_path = tmp_path / "out.graphml"
     nib.save(nib.Nifti1Image(_tube(), affine=np.eye(4)), str(input_path))
 
     result = subprocess.run(
@@ -148,8 +146,6 @@ def test_framework_run_cli_executes_l1_skeleton_and_writes_graphml(tmp_path: Pat
             "4.0",
             "--l1-max-iterations",
             "20",
-            "--l1-graph-output",
-            str(graph_path),
             "--verbose",
         ],
         check=True,
@@ -160,6 +156,5 @@ def test_framework_run_cli_executes_l1_skeleton_and_writes_graphml(tmp_path: Pat
 
     out = np.asarray(nib.load(str(output_path)).dataobj)
     assert output_path.exists()
-    assert graph_path.exists()
     assert np.count_nonzero(out) > 0
     assert "framework run complete: algorithm=l1_skeleton" in result.stdout

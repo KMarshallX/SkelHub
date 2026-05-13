@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-05-13 AEST
+
+1. Summary of what changed
+- Added the Python-native L1-medial skeleton backend, registered as `l1_skeleton`.
+- Implemented foreground voxel to point-cloud sampling, KDTree-based L1 attraction and conditional repulsion, PCA directionality scoring, and point rasterization.
+- Added CLI flags for L1 sampling, radius scheduling, convergence, repulsion, and deterministic seeding.
+- Documented provenance and license status for the local L1-Skeleton C++ reference repository.
+
+2. Files added, removed, or modified
+- Added `skelhub/algorithms/l1_skeleton/`.
+- Added `tests/test_l1_skeleton_backend.py`.
+- Modified `.gitignore`, `skelhub/algorithms/__init__.py`, `skelhub/cli/main.py`, `README.md`, `docs/algorithms.md`, `docs/architecture.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Implemented a Python-native backend instead of binding the C++/Qt reference code because the original repo does not include a clear license file and has heavyweight UI/build dependencies.
+- Kept L1-specific point-cloud contraction and rasterization isolated inside `skelhub.algorithms.l1_skeleton`.
+- Removed the earlier sparse graph builder and optional GraphML output because that processing path was not part of the original L1-Skeleton codebase.
+- Returned a standard binary `SkeletonResult.skeleton`; `SkeletonResult.graph` is left unset for this backend.
+
+4. Assumptions
+- Foreground voxels are `data > 0`; outputs are binary `{0, 1}` `uint8`.
+- Density weighting, ellipse re-centering, and the original branch-search/final-segmentation machinery are deferred refinements.
+- Spacing is used as a simple per-axis scale for point coordinates when available.
+
 ## 2026-05-08 AEST
 
 1. Summary of what changed

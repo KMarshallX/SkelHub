@@ -1,5 +1,37 @@
 # Algorithms
 
+## L1 Skeleton Backend
+
+The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the core v1 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz \
+    --l1-sample-count 512 \
+    --l1-initial-radius 2.0 \
+    --l1-max-radius 8.0 \
+    --l1-max-iterations 80 \
+    --verbose
+```
+
+Backend-specific parameters:
+
+- `--l1-sample-count` limits the number of moving samples seeded from foreground voxels.
+- `--l1-initial-radius`, `--l1-radius-growth`, and `--l1-max-radius` control the local neighborhood schedule.
+- `--l1-max-iterations` and `--l1-stop-error` control contraction convergence.
+- `--l1-repulsion-mu` and `--l1-repulsion-mu-min` control conditional repulsion.
+- `--l1-random-seed` makes foreground point sampling deterministic.
+
+Implementation notes:
+
+- Input NIfTI foreground is `data > 0`; output is same-shape binary `uint8`.
+- Foreground voxels are converted to point coordinates using voxel spacing when available, contracted with KDTree neighborhoods, then rasterized back into the input grid as contracted sample points.
+- The current backend does not emit GraphML or attach a `GraphResult`; the previous sparse graph builder was removed because it was not part of the original L1-Skeleton code path.
+- This is the first SkelHub-oriented core implementation. Density weighting, ellipse re-centering, and the original branch-search/final-segmentation machinery are documented as deferred refinements.
+- The original L1-Skeleton C++ repository does not contain a clear license file, and its README contains only placeholder license text. The backend therefore does not copy original source code; it uses the report/repo for traceability only.
+
 ## Laplacian Backend
 
 The Laplacian backend is integrated under `skelhub.algorithms.laplacian`. It ports the required VascGraph `Skeletonize` path into SkelHub and updates the graph code for NetworkX 3.x compatibility.

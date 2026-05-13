@@ -115,6 +115,69 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Laplacian maximum polygon size considered during refinement.",
     )
+    run_parser.add_argument(
+        "--l1-sample-count",
+        dest="l1_sample_count",
+        type=int,
+        default=512,
+        help="L1 skeleton maximum number of moving sample points.",
+    )
+    run_parser.add_argument(
+        "--l1-initial-radius",
+        dest="l1_initial_radius",
+        type=float,
+        default=None,
+        help="L1 skeleton initial neighborhood radius in physical units; auto-estimated when omitted.",
+    )
+    run_parser.add_argument(
+        "--l1-radius-growth",
+        dest="l1_radius_growth",
+        type=float,
+        default=1.5,
+        help="L1 skeleton radius multiplier after each converged stage.",
+    )
+    run_parser.add_argument(
+        "--l1-max-radius",
+        dest="l1_max_radius",
+        type=float,
+        default=None,
+        help="L1 skeleton maximum neighborhood radius in physical units; auto-estimated when omitted.",
+    )
+    run_parser.add_argument(
+        "--l1-max-iterations",
+        dest="l1_max_iterations",
+        type=int,
+        default=80,
+        help="L1 skeleton total contraction iteration cap.",
+    )
+    run_parser.add_argument(
+        "--l1-stop-error",
+        dest="l1_stop_error",
+        type=float,
+        default=0.01,
+        help="L1 skeleton mean movement threshold for stage convergence.",
+    )
+    run_parser.add_argument(
+        "--l1-repulsion-mu",
+        dest="l1_repulsion_mu",
+        type=float,
+        default=0.35,
+        help="L1 skeleton maximum conditional repulsion strength.",
+    )
+    run_parser.add_argument(
+        "--l1-repulsion-mu-min",
+        dest="l1_repulsion_mu_min",
+        type=float,
+        default=0.15,
+        help="L1 skeleton minimum conditional repulsion strength.",
+    )
+    run_parser.add_argument(
+        "--l1-random-seed",
+        dest="l1_random_seed",
+        type=int,
+        default=0,
+        help="L1 skeleton deterministic sample seed.",
+    )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")
