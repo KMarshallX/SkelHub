@@ -4,7 +4,7 @@ SkelHub is a Python framework for 3D skeletonization. It provides a shared packa
 
 Current status:
 
-- Supported algorithm backends: `mcp`, `lee94`, `laplacian`, `l1_skeleton`
+- Supported algorithm backends: `mcp`, `lee94`, `laplacian`, `l1_skeleton`, `palagyi_kuba`
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
@@ -64,6 +64,7 @@ Framework notes:
 - `skelhub.algorithms.lee94` contains the Lee et al. 1994 thinning backend adapter around `scikit-image`.
 - `skelhub.algorithms.laplacian` contains the VascGraph Laplacian graph-contraction backend, adapted to output a rasterized skeleton volume plus optional cleaned GraphML.
 - `skelhub.algorithms.l1_skeleton` contains the Python-native L1-medial skeleton v2 backend, adapted from point-cloud contraction and branch extraction to SkelHub's NIfTI volume contract.
+- `skelhub.algorithms.palagyi_kuba` contains a Python-native Palagyi-Kuba 12-subiteration 3D thinning backend for curve or surface skeletons.
 - `skelhub.evaluation` contains the algorithm-agnostic voxel-based v1 evaluator, with separate validation, geometry, morphology, and reporting helpers.
 - `skelhub.postprocessing.graphgen` contains [Voreen](https://github.com/voreen-project/voreen)-style skeleton-to-protograph GraphML generation.
 
@@ -117,6 +118,17 @@ skelhub run \
   --verbose
 ```
 
+Run the Palagyi-Kuba 12-subiteration thinning backend:
+
+```bash
+skelhub run \
+  --algorithm palagyi_kuba \
+  --input ./test_data/small_test_data/CLIP_MASKED_sub_160um_seg.nii.gz \
+  --output ./test_outputs/skelhub_palagyi_kuba_small.nii.gz \
+  --pk-mode curve \
+  --verbose
+```
+
 MCP parameters exposed at the framework level:
 
 - `--root-method {max_fdt,topmost}`
@@ -160,6 +172,12 @@ L1 skeleton parameters exposed at the framework level:
 - `--l1-output-mode {branches,points}` default `branches`
 - `--l1-use-density-weighting` / `--no-l1-use-density-weighting` default enabled
 - `--l1-use-recentering` / `--no-l1-use-recentering` default enabled
+
+Palagyi-Kuba parameters exposed at the framework level:
+
+- `--pk-mode {curve,surface}` default `curve`
+- `--pk-binarize-threshold FLOAT` default `0.5`
+- `--pk-max-cycles INT` optional full 12-subiteration cycle cap
 
 Run the voxel-based evaluation suite:
 
@@ -231,7 +249,7 @@ from skelhub.api import (
     generate_graphml_from_skeleton_path,
     run_algorithm_from_path,
 )
-from skelhub.algorithms import L1SkeletonConfig, LaplacianConfig, Lee94Config, MCPConfig
+from skelhub.algorithms import L1SkeletonConfig, LaplacianConfig, Lee94Config, MCPConfig, PalagyiKubaConfig
 
 result = run_algorithm_from_path(
     algorithm="lee94",
@@ -252,6 +270,12 @@ laplacian = run_algorithm_from_path(
     input_path="input.nii.gz",
     output_path="laplacian.nii.gz",
     config=LaplacianConfig(graph_output="laplacian.graphml"),
+)
+pk = run_algorithm_from_path(
+    algorithm="palagyi_kuba",
+    input_path="input.nii.gz",
+    output_path="pk.nii.gz",
+    config=PalagyiKubaConfig(mode="curve"),
 )
 print(result.backend_metadata["config"])
 print(evaluation.P)

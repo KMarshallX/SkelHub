@@ -199,6 +199,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Enable L1 per-branch ellipse re-centering before rasterization.",
     )
+    run_parser.add_argument(
+        "--pk-mode",
+        dest="pk_mode",
+        choices=("curve", "surface"),
+        default="curve",
+        help="Palagyi-Kuba thinning mode.",
+    )
+    run_parser.add_argument(
+        "--pk-binarize-threshold",
+        dest="pk_binarize_threshold",
+        type=float,
+        default=0.5,
+        help="Palagyi-Kuba threshold used to convert non-binary inputs to foreground.",
+    )
+    run_parser.add_argument(
+        "--pk-max-cycles",
+        dest="pk_max_cycles",
+        type=int,
+        default=None,
+        help="Optional Palagyi-Kuba full 12-subiteration cycle cap.",
+    )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")

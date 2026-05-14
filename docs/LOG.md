@@ -2,6 +2,34 @@
 
 ## 2026-05-13 AEST
 
+### Palagyi-Kuba backend
+
+1. Summary of what changed
+- Added the Python-native Palagyi-Kuba 12-subiteration thinning backend, registered as `palagyi_kuba`.
+- Added curve and surface modes, PK-specific CLI flags, explicit template inventories, direction scheduling, topology guards, and standard `SkeletonResult` metadata.
+- Updated README and algorithm documentation with usage and parameter notes.
+
+2. Files added, removed, or modified
+- Added `skelhub/algorithms/palagyi_kuba/`.
+- Added `tests/test_palagyi_kuba_backend.py`.
+- Modified `skelhub/algorithms/__init__.py`, `skelhub/cli/main.py`, `README.md`, `docs/algorithms.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept all PK-specific template, direction, endpoint, and thinning code inside `skelhub.algorithms.palagyi_kuba`.
+- Used SkelHub's standard NIfTI run path and returned only a binary same-shape skeleton volume; no graph output is produced by this backend.
+- Recorded the implementation's signed axis convention and source template filenames in backend metadata for traceability.
+
+4. Assumptions
+- None left open from the implementation plan: curve and surface modes are both exposed; non-binary input is thresholded at `0.5` by default; axis and sign conventions follow the user-approved mapping.
+
+5. Tests run
+- `python -m py_compile skelhub/algorithms/palagyi_kuba/config.py skelhub/algorithms/palagyi_kuba/directions.py skelhub/algorithms/palagyi_kuba/templates.py skelhub/algorithms/palagyi_kuba/thinning.py skelhub/algorithms/palagyi_kuba/backend.py skelhub/algorithms/palagyi_kuba/__init__.py skelhub/algorithms/__init__.py skelhub/cli/main.py`
+- `python -m pytest tests/test_palagyi_kuba_backend.py -q`
+- `python -m pytest tests/test_palagyi_kuba_backend.py tests/test_framework_cli.py -q`
+
+6. Remaining risks or recommended next steps
+- Visually compare curve and surface outputs against known Palagyi-Kuba reference outputs when small reference volumes are available.
+
 ### L1 v2 refinements
 
 1. Summary of what changed
