@@ -1,5 +1,34 @@
 # Algorithms
 
+## Palagyi-Kuba Backend
+
+The Palagyi-Kuba backend is integrated under `skelhub.algorithms.palagyi_kuba`. It implements a Python-native 12-subiteration 3D thinning flow from the local Palagyi and Kuba reference notes and template figures.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz \
+    --pk-mode surface \
+    --pk-binarize-threshold 0.5 \
+    --pk-max-cycles 20 \
+    --verbose
+```
+
+Backend-specific parameters:
+
+- `--pk-mode {curve,surface}` selects curve endpoint preservation with the 14 curve templates, or surface endpoint preservation with the 6 surface templates.
+- `--pk-binarize-threshold FLOAT` thresholds non-binary input volumes before thinning. Default: `0.5`.
+- `--pk-max-cycles INT` optionally caps full 12-direction thinning cycles.
+
+Implementation notes:
+
+- The direction convention is axis0 = U/D, axis1 = N/S, axis2 = W/E; U/N/W are negative axis directions and D/S/E are positive.
+- The subiteration order is `US, NE, DW, SE, UW, DN, SW, UN, DE, NW, UE, DS`.
+- Template tables are encoded locally from `PK_templates_figure.png` and `PK_surface_templates_figure.png`, then transformed into each subiteration direction.
+- The backend returns a same-shape binary `uint8` skeleton volume and does not attach a graph result.
+- Metadata records template source, axis mapping, per-direction deletion counts, cycle count, input/output foreground counts, and whether `--pk-max-cycles` stopped the run.
+
 ## L1 Skeleton Backend
 
 The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the v2 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
