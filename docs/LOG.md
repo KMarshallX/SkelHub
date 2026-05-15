@@ -1,5 +1,44 @@
 # Development Log
 
+## 2026-05-15 AEST
+
+### Flux backend
+
+1. Summary of what changed
+- Added the Python-native flux-driven medial curve backend, registered as `flux`.
+- Implemented strict binary-volume validation, signed-distance construction, Gaussian-smoothed gradient/AOF computation, and topology-preserving priority thinning.
+- Added CLI flags for flux threshold, sigma, and sigma units.
+- Updated README and algorithm documentation with usage, parameters, and provenance notes.
+
+2. Files added, removed, or modified
+- Added `skelhub/algorithms/flux/`.
+- Added `tests/test_flux_backend.py`.
+- Modified `skelhub/algorithms/__init__.py`, `skelhub/cli/main.py`, `README.md`, `docs/algorithms.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept all flux-specific distance, AOF, topology, and thinning logic isolated inside `skelhub.algorithms.flux`.
+- Preserved SkelHub's standard NIfTI run path and returned only a same-shape binary `uint8` skeleton volume; no graph output is produced by this backend.
+- Did not include vessel surface to binary conversion; the backend accepts binary image volumes only.
+
+4. Original source, license, and acknowledgement
+- Reference path inspected: `/scratch/user/uqmxu4/Tools/vmtk`.
+- VMTK's local `LICENSE` is BSD-style and permits redistribution with copyright/license notice retention.
+- The implementation is Python-native from scratch and does not copy VMTK C++ or Python source. Backend metadata and docs acknowledge the VMTK/EvoLib medial-curve behavior and Bouix-Siddiqi-Tannenbaum flux-driven centerline extraction reference.
+
+5. Assumptions
+- Backend name is `flux`.
+- Valid input values are exactly `{0, 1}`; `{0, 255}` and other non-binary values are rejected.
+- Default parameters follow the VMTK public wrapper: threshold `0.0`, sigma `0.5`.
+- `--flux-sigma-unit physical` is the default, with `voxels` available for direct voxel-space smoothing.
+
+6. Tests run
+- `python -m py_compile skelhub/algorithms/flux/config.py skelhub/algorithms/flux/medial_curve.py skelhub/algorithms/flux/backend.py skelhub/algorithms/flux/__init__.py skelhub/algorithms/__init__.py skelhub/cli/main.py`
+- `python -m pytest tests/test_flux_backend.py -q`
+- `python -m pytest tests/test_flux_backend.py tests/test_framework_cli.py -q`
+
+7. Remaining risks or recommended next steps
+- Compare outputs visually against representative VMTK medial-curve outputs when reference binary-image cases are available.
+
 ## 2026-05-13 AEST
 
 ### Palagyi-Kuba backend

@@ -220,6 +220,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Palagyi-Kuba full 12-subiteration cycle cap.",
     )
+    run_parser.add_argument(
+        "--flux-threshold",
+        dest="flux_threshold",
+        type=float,
+        default=0.0,
+        help="Flux AOF threshold used to preserve endpoint voxels.",
+    )
+    run_parser.add_argument(
+        "--flux-sigma",
+        dest="flux_sigma",
+        type=float,
+        default=0.5,
+        help="Flux Gaussian smoothing sigma for the signed-distance image.",
+    )
+    run_parser.add_argument(
+        "--flux-sigma-unit",
+        dest="flux_sigma_unit",
+        choices=("physical", "voxels"),
+        default="physical",
+        help="Interpret --flux-sigma in NIfTI physical units or voxel units.",
+    )
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")

@@ -1,5 +1,34 @@
 # Algorithms
 
+## Flux Backend
+
+The flux backend is integrated under `skelhub.algorithms.flux`. It implements a Python-native flux-driven medial curve extraction flow for already-binary 3D volumes, following the VMTK/EvoLib medial-curve behavior without copying VMTK source code or including any surface-to-binary conversion.
+
+Framework-facing usage:
+
+```bash
+skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz
+skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz \
+    --flux-threshold 0.0 \
+    --flux-sigma 0.5 \
+    --flux-sigma-unit physical \
+    --verbose
+```
+
+Backend-specific parameters:
+
+- `--flux-threshold FLOAT` controls the average-outward-flux endpoint preservation threshold. Default: `0.0`.
+- `--flux-sigma FLOAT` controls Gaussian smoothing of the signed-distance image before gradient computation. Default: `0.5`.
+- `--flux-sigma-unit {physical,voxels}` controls whether sigma is interpreted in NIfTI physical units or direct voxel units. Default: `physical`.
+
+Implementation notes:
+
+- Input must be exactly binary `{0, 1}`; non-binary volumes are rejected rather than thresholded.
+- The backend computes a signed Euclidean distance with foreground at `<= 0` and background at `> 0`, computes 26-neighborhood average outward flux from the smoothed signed-distance gradient, and performs topology-preserving priority thinning.
+- Topology checks use 26-connected foreground simplicity and 18-neighborhood background simplicity with 6-connectivity.
+- The backend returns a same-shape binary `uint8` skeleton volume and does not attach a graph result.
+- Provenance: the local VMTK repository is BSD-style licensed. This backend documents the VMTK/EvoLib and Bouix-Siddiqi-Tannenbaum reference path but is implemented from scratch in Python; no VMTK source code is copied.
+
 ## Palagyi-Kuba Backend
 
 The Palagyi-Kuba backend is integrated under `skelhub.algorithms.palagyi_kuba`. It implements a Python-native 12-subiteration 3D thinning flow from the local Palagyi and Kuba reference notes and template figures.

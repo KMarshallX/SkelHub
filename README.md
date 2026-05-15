@@ -4,7 +4,7 @@ SkelHub is a Python framework for 3D skeletonization. It provides a shared packa
 
 Current status:
 
-- Supported algorithm backends: `mcp`, `lee94`, `laplacian`, `l1_skeleton`, `palagyi_kuba`
+- Supported algorithm backends: `mcp`, `lee94`, `laplacian`, `l1_skeleton`, `palagyi_kuba`, `flux`
 - Unified CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
 - Evaluation: working voxel-based v1 evaluation suite for binary 3D predicted/reference skeleton volumes
 - Graph generation: Voreen-style skeleton NIfTI to proto-graph GraphML conversion
@@ -43,6 +43,7 @@ SkelHub/
 │   ├── core/
 │   ├── io/
 │   ├── algorithms/
+│   │   ├── flux/
 │   │   ├── l1_skeleton/
 │   │   ├── laplacian/
 │   │   ├── lee94/
@@ -65,6 +66,7 @@ Framework notes:
 - `skelhub.algorithms.laplacian` contains the VascGraph Laplacian graph-contraction backend, adapted to output a rasterized skeleton volume plus optional cleaned GraphML.
 - `skelhub.algorithms.l1_skeleton` contains the Python-native L1-medial skeleton v2 backend, adapted from point-cloud contraction and branch extraction to SkelHub's NIfTI volume contract.
 - `skelhub.algorithms.palagyi_kuba` contains a Python-native Palagyi-Kuba 12-subiteration 3D thinning backend for curve or surface skeletons.
+- `skelhub.algorithms.flux` contains a Python-native flux-driven medial curve backend for already-binary volumes, following the VMTK/EvoLib medial-curve behavior without copying VMTK source code.
 - `skelhub.evaluation` contains the algorithm-agnostic voxel-based v1 evaluator, with separate validation, geometry, morphology, and reporting helpers.
 - `skelhub.postprocessing.graphgen` contains [Voreen](https://github.com/voreen-project/voreen)-style skeleton-to-protograph GraphML generation.
 
@@ -129,6 +131,17 @@ skelhub run \
   --verbose
 ```
 
+Run the flux-driven medial curve backend on an exactly binary `{0, 1}` input:
+
+```bash
+skelhub run \
+  --algorithm flux \
+  --input ./test_data/small_test_data/CLIP_MASKED_sub_160um_seg.nii.gz \
+  --output ./test_outputs/skelhub_flux_small.nii.gz \
+  --flux-sigma-unit physical \
+  --verbose
+```
+
 MCP parameters exposed at the framework level:
 
 - `--root-method {max_fdt,topmost}`
@@ -178,6 +191,14 @@ Palagyi-Kuba parameters exposed at the framework level:
 - `--pk-mode {curve,surface}` default `curve`
 - `--pk-binarize-threshold FLOAT` default `0.5`
 - `--pk-max-cycles INT` optional full 12-subiteration cycle cap
+
+Flux parameters exposed at the framework level:
+
+- `--flux-threshold FLOAT` default `0.0`
+- `--flux-sigma FLOAT` default `0.5`
+- `--flux-sigma-unit {physical,voxels}` default `physical`
+
+The flux backend is strict about input: values must be exactly binary `{0, 1}`. It does not perform vessel surface conversion or threshold non-binary data.
 
 Run the voxel-based evaluation suite:
 
@@ -249,7 +270,7 @@ from skelhub.api import (
     generate_graphml_from_skeleton_path,
     run_algorithm_from_path,
 )
-from skelhub.algorithms import L1SkeletonConfig, LaplacianConfig, Lee94Config, MCPConfig, PalagyiKubaConfig
+from skelhub.algorithms import FluxConfig, L1SkeletonConfig, LaplacianConfig, Lee94Config, MCPConfig, PalagyiKubaConfig
 
 result = run_algorithm_from_path(
     algorithm="lee94",
