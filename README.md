@@ -108,7 +108,7 @@ skelhub run \
   --verbose
 ```
 
-Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`. (NOTE: output graph is only available for this one, as the original work was based on dense graph and no intermediate rasterized output could be used as skeleton. Here I added a rasterized skeleton built upon the cleaned graph)
+Optionally add `--graph_output ./test_outputs/skelhub_laplacian.graphml` to export the cleaned graph. Add `--graph_original ./test_outputs/skelhub_laplacian_original.graphml` to export the refined graph before `post_node_cleaning()`. The standard NIfTI output is rasterized from `graph_original` by marking graph nodes and filling graph-connected gaps as 26-connected voxel paths, with Bezier interpolation on degree-2 chains.
 
 Run the Python-native L1-medial skeleton backend:
 

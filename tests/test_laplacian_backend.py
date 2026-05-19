@@ -26,6 +26,22 @@ def _tiny_tube() -> np.ndarray:
     return volume
 
 
+def _is_single_26_connected_component(skeleton: np.ndarray) -> bool:
+    voxels = [tuple(int(value) for value in voxel) for voxel in np.argwhere(skeleton > 0)]
+    if not voxels:
+        return True
+    remaining = set(voxels)
+    stack = [voxels[0]]
+    remaining.remove(voxels[0])
+    while stack:
+        voxel = np.asarray(stack.pop(), dtype=int)
+        for candidate in list(remaining):
+            if np.all(np.abs(np.asarray(candidate, dtype=int) - voxel) <= 1):
+                remaining.remove(candidate)
+                stack.append(candidate)
+    return not remaining
+
+
 def test_registry_exposes_laplacian_backend() -> None:
     assert "laplacian" in list_backends()
     assert get_backend("laplacian").name == "laplacian"
@@ -75,6 +91,7 @@ def test_laplacian_backend_returns_rasterized_skeleton() -> None:
     metadata = result.backend_metadata["laplacian"]
     assert metadata["cleaned_nodes"] > 0
     assert metadata["cleaned_edges"] > 0
+    assert metadata["rasterized_output_source"] == "graph_original"
     assert metadata["output_foreground_voxels"] == int(np.count_nonzero(result.skeleton))
 
 
@@ -90,6 +107,21 @@ def test_rasterize_graph_edges_are_26_connected() -> None:
     assert tuple(ordered[-1]) == (3, 3, 3)
     diffs = np.abs(np.diff(ordered, axis=0))
     assert np.all(diffs <= 1)
+
+
+def test_rasterize_degree_two_chain_uses_connected_bezier_interpolation() -> None:
+    graph = GeometricGraph(
+        nodes_pos=[(1, 1, 1), (3, 5, 1), (5, 1, 1)],
+        edges=[(0, 1), (1, 2)],
+    )
+
+    skeleton = rasterize_graph_26conn(graph, shape=(7, 7, 3))
+
+    assert skeleton[1, 1, 1] == 1
+    assert skeleton[3, 5, 1] == 1
+    assert skeleton[5, 1, 1] == 1
+    assert int(np.count_nonzero(skeleton)) > 3
+    assert _is_single_26_connected_component(skeleton)
 
 
 def test_laplacian_graphml_export_uses_world_coordinates(tmp_path: Path) -> None:

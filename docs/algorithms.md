@@ -128,8 +128,9 @@ Backend-specific parameters:
 Implementation notes:
 
 - This backend is graph-native internally: it builds a dense foreground graph, contracts it toward vessel centerlines, refines small polygon artifacts, and removes degree-2 nodes from the cleaned graph.
-- SkelHub still receives a standard binary skeleton NIfTI output. The cleaned graph is rasterized into the source volume shape by drawing every graph edge as a 26-connected voxel path.
-- `--graph_output` is written from the cleaned graph rather than from the rasterized skeleton. `--graph_original` is available when the refined pre-cleaning graph is needed for inspection.
+- SkelHub still receives a standard binary skeleton NIfTI output. The refined pre-cleaning graph (`graph_original`) is rasterized into the source volume shape by marking graph nodes and filling graph-connected gaps with 26-connected voxel paths.
+- Degree-2 chains in `graph_original` use quadratic Bezier interpolation through local node triples before the sampled points are connected as 26-neighbor voxel paths. Branch/end edges and short two-node paths use straight 26-connected interpolation.
+- `--graph_output` is written from the cleaned graph rather than from the rasterized skeleton. `--graph_original` exports the refined pre-cleaning graph that now drives the standard NIfTI output.
 - Only the required VascGraph skeleton path is ported; unrelated VascGraph I/O, visualization, directed-graph, Pajek/SWC, and patch-stitching features are not included in this backend.
 
 ## Lee94 Backend

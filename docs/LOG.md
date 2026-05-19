@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-05-19 AEST
+
+### Laplacian output rasterization source
+
+1. Summary of what changed
+- Changed the Laplacian backend's standard NIfTI output to rasterize the refined pre-cleaning `graph_original` instead of the cleaned `graph_output` graph.
+- Kept `--graph_output`, `--graph_original`, and the framework-level `SkeletonResult.graph` behavior unchanged.
+- Added Laplacian metadata recording `rasterized_output_source: graph_original`.
+- Updated the Laplacian rasterizer so degree-2 chains use quadratic Bezier interpolation through local graph-node triples, then enforce 26-connected voxel paths between sampled points.
+
+2. Assumptions and constraints
+- Graph topology drives output connectivity: graph node degree determines how many graph-connected voxel directions may emerge, but exact occupied 26-neighbor counts are not forced after rounding or clipping.
+- Bezier interpolation is limited to degree-2 chains. Branch/end edges and two-node paths continue to use straight 26-connected interpolation.
+- The change is localized to the Laplacian backend, rasterizer, focused tests, and documentation.
+
+3. Tests run
+- `python -m py_compile skelhub/algorithms/laplacian/*.py`
+- `python -m pytest tests/test_laplacian_backend.py -q`
+
 ## 2026-05-15 AEST
 
 ### Flux backend

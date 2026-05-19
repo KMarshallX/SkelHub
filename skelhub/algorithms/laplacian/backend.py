@@ -88,7 +88,7 @@ class LaplacianBackend:
                 area_param=config.area_param,
                 poly_param=config.poly_param,
             )
-            skeleton = rasterize_graph_26conn(graph, binary.shape)
+            skeleton = rasterize_graph_26conn(original_graph, binary.shape)
 
         graph_output_path = None
         if config.graph_output and graph is not None:
@@ -124,6 +124,7 @@ class LaplacianBackend:
             **graph_metadata,
             "input_foreground_voxels": input_voxels,
             "output_foreground_voxels": output_voxels,
+            "rasterized_output_source": "graph_original",
             "graph_output": graph_output_path,
             "graph_original": graph_original_path,
         }
