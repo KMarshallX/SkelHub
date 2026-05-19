@@ -1,10 +1,17 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
     types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
       - closed
 
 permissions:
@@ -12,9 +19,42 @@ permissions:
   pull-requests: read
 
 jobs:
+  remove-tests:
+    name: Remove root tests directory
+    if: github.event_name == 'push' || github.event.action != 'closed'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Remove tests directory
+        env:
+          TARGET_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          if [ -d tests ]; then
+            git rm -r tests
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No root tests directory cleanup needed."
+          else
+            git commit -m "Remove root tests directory"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          fi
+
   release:
     name: Release merged dev PR
-    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
 
     steps:
@@ -106,4 +146,3 @@ jobs:
           gh release create "${TAG}" \
             --title "${TAG}" \
             --notes "Release ${TAG}"
-

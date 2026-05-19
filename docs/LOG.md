@@ -1,5 +1,63 @@
 # Development Log
 
+## 2026-05-19 AEST
+
+### Laplacian output rasterization source
+
+1. Summary of what changed
+- Changed the Laplacian backend's standard NIfTI output to rasterize the refined pre-cleaning `graph_original` instead of the cleaned `graph_output` graph.
+- Kept `--graph_output`, `--graph_original`, and the framework-level `SkeletonResult.graph` behavior unchanged.
+- Added Laplacian metadata recording `rasterized_output_source: graph_original`.
+- Updated the Laplacian rasterizer so degree-2 chains use quadratic Bezier interpolation through local graph-node triples, then enforce 26-connected voxel paths between sampled points.
+
+2. Assumptions and constraints
+- Graph topology drives output connectivity: graph node degree determines how many graph-connected voxel directions may emerge, but exact occupied 26-neighbor counts are not forced after rounding or clipping.
+- Bezier interpolation is limited to degree-2 chains. Branch/end edges and two-node paths continue to use straight 26-connected interpolation.
+- The change is localized to the Laplacian backend, rasterizer, focused tests, and documentation.
+
+3. Tests run
+- `python -m py_compile skelhub/algorithms/laplacian/*.py`
+- `python -m pytest tests/test_laplacian_backend.py -q`
+
+## 2026-05-15 AEST
+
+### Flux backend
+
+1. Summary of what changed
+- Added the Python-native flux-driven medial curve backend, registered as `flux`.
+- Implemented strict binary-volume validation, signed-distance construction, Gaussian-smoothed gradient/AOF computation, and topology-preserving priority thinning.
+- Added CLI flags for flux threshold, sigma, and sigma units.
+- Updated README and algorithm documentation with usage, parameters, and provenance notes.
+
+2. Files added, removed, or modified
+- Added `skelhub/algorithms/flux/`.
+- Added `tests/test_flux_backend.py`.
+- Modified `skelhub/algorithms/__init__.py`, `skelhub/cli/main.py`, `README.md`, `docs/algorithms.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept all flux-specific distance, AOF, topology, and thinning logic isolated inside `skelhub.algorithms.flux`.
+- Preserved SkelHub's standard NIfTI run path and returned only a same-shape binary `uint8` skeleton volume; no graph output is produced by this backend.
+- Did not include vessel surface to binary conversion; the backend accepts binary image volumes only.
+
+4. Original source, license, and acknowledgement
+- Reference path inspected: `/scratch/user/uqmxu4/Tools/vmtk`.
+- VMTK's local `LICENSE` is BSD-style and permits redistribution with copyright/license notice retention.
+- The implementation is Python-native from scratch and does not copy VMTK C++ or Python source. Backend metadata and docs acknowledge the VMTK/EvoLib medial-curve behavior and Bouix-Siddiqi-Tannenbaum flux-driven centerline extraction reference.
+
+5. Assumptions
+- Backend name is `flux`.
+- Valid input values are exactly `{0, 1}`; `{0, 255}` and other non-binary values are rejected.
+- Default parameters follow the VMTK public wrapper: threshold `0.0`, sigma `0.5`.
+- `--flux-sigma-unit physical` is the default, with `voxels` available for direct voxel-space smoothing.
+
+6. Tests run
+- `python -m py_compile skelhub/algorithms/flux/config.py skelhub/algorithms/flux/medial_curve.py skelhub/algorithms/flux/backend.py skelhub/algorithms/flux/__init__.py skelhub/algorithms/__init__.py skelhub/cli/main.py`
+- `python -m pytest tests/test_flux_backend.py -q`
+- `python -m pytest tests/test_flux_backend.py tests/test_framework_cli.py -q`
+
+7. Remaining risks or recommended next steps
+- Compare outputs visually against representative VMTK medial-curve outputs when reference binary-image cases are available.
+
 ## 2026-05-13 AEST
 
 ### Palagyi-Kuba backend
