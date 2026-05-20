@@ -128,7 +128,8 @@ jobs:
             echo "No tests directory cleanup needed."
           else
             git commit -m "Remove tests from main release branch"
-            git push origin main
+            git pull --rebase origin main
+            git push origin HEAD:main
           fi
 
       - name: Create tag
