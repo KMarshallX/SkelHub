@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-05-23 AEST
+
+### Documentation readability refresh
+
+1. Summary of what changed
+- Reworked `README.md` into a shorter project entry point with overview, installation, four CLI doc links, repository structure, and structured-output pointer.
+- Moved Python API guidance into `docs/API.md`.
+- Added `docs/StructuredOutput.md` for the current framework result containers and output files.
+- Added `docs/visualization.md` for `skelhub graphviz` usage, input requirements, and HPC/conda notes.
+- Reorganized `docs/algorithms.md` into distinct backend sections, with `laplacian` first as the current priority backend.
+
+2. Architecture decisions made
+- Kept README focused on orientation and navigation rather than detailed command examples.
+- Kept detailed CLI and API behavior in topic-specific docs.
+- Left the structured output contract marked as review pending.
+
+3. Assumptions
+- The README `CLI Usage` section should contain four links: Algorithms, Evaluation, Visualization, and Python API.
+- `docs/StructuredOutput.md` is referenced from README outside the CLI Usage section.
+
+4. Tests run
+- Documentation-only change; no runtime tests required.
+
 ## 2026-05-19 AEST
 
 ### Laplacian output rasterization source

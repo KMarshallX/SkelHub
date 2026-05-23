@@ -1,108 +1,35 @@
 # Algorithms
 
-## Flux Backend
-
-The flux backend is integrated under `skelhub.algorithms.flux`. It implements a Python-native flux-driven medial curve extraction flow for already-binary 3D volumes, following the VMTK/EvoLib medial-curve behavior without copying VMTK source code or including any surface-to-binary conversion.
-
-Framework-facing usage:
+SkelHub backends all run through the same command shape:
 
 ```bash
-skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz
-skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz \
-    --flux-threshold 0.0 \
-    --flux-sigma 0.5 \
-    --flux-sigma-unit physical \
-    --verbose
+skelhub run --algorithm <name> --input input.nii.gz --output out.nii.gz
 ```
 
-Backend-specific parameters:
+Each backend stays isolated under `skelhub.algorithms.<name>`.
 
-- `--flux-threshold FLOAT` controls the average-outward-flux endpoint preservation threshold. Default: `0.0`.
-- `--flux-sigma FLOAT` controls Gaussian smoothing of the signed-distance image before gradient computation. Default: `0.5`.
-- `--flux-sigma-unit {physical,voxels}` controls whether sigma is interpreted in NIfTI physical units or direct voxel units. Default: `physical`.
+## Contents
 
-Implementation notes:
-
-- Input must be exactly binary `{0, 1}`; non-binary volumes are rejected rather than thresholded.
-- The backend computes a signed Euclidean distance with foreground at `<= 0` and background at `> 0`, computes 26-neighborhood average outward flux from the smoothed signed-distance gradient, and performs topology-preserving priority thinning.
-- Topology checks use 26-connected foreground simplicity and 18-neighborhood background simplicity with 6-connectivity.
-- The backend returns a same-shape binary `uint8` skeleton volume and does not attach a graph result.
-- Provenance: the local VMTK repository is BSD-style licensed. This backend documents the VMTK/EvoLib and Bouix-Siddiqi-Tannenbaum reference path but is implemented from scratch in Python; no VMTK source code is copied.
-
-## Palagyi-Kuba Backend
-
-The Palagyi-Kuba backend is integrated under `skelhub.algorithms.palagyi_kuba`. It implements a Python-native 12-subiteration 3D thinning flow from the local Palagyi and Kuba reference notes and template figures.
-
-Framework-facing usage:
-
-```bash
-skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz
-skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz \
-    --pk-mode surface \
-    --pk-binarize-threshold 0.5 \
-    --pk-max-cycles 20 \
-    --verbose
-```
-
-Backend-specific parameters:
-
-- `--pk-mode {curve,surface}` selects curve endpoint preservation with the 14 curve templates, or surface endpoint preservation with the 6 surface templates.
-- `--pk-binarize-threshold FLOAT` thresholds non-binary input volumes before thinning. Default: `0.5`.
-- `--pk-max-cycles INT` optionally caps full 12-direction thinning cycles.
-
-Implementation notes:
-
-- The direction convention is axis0 = U/D, axis1 = N/S, axis2 = W/E; U/N/W are negative axis directions and D/S/E are positive.
-- The subiteration order is `US, NE, DW, SE, UW, DN, SW, UN, DE, NW, UE, DS`.
-- Template tables are encoded locally from `PK_templates_figure.png` and `PK_surface_templates_figure.png`, then transformed into each subiteration direction.
-- The backend returns a same-shape binary `uint8` skeleton volume and does not attach a graph result.
-- Metadata records template source, axis mapping, per-direction deletion counts, cycle count, input/output foreground counts, and whether `--pk-max-cycles` stopped the run.
-
-## L1 Skeleton Backend
-
-The L1 skeleton backend is integrated under `skelhub.algorithms.l1_skeleton`. It is a Python-native implementation of the v2 L1-medial skeleton flow described in the local L1-Skeleton roadmap and informed by the original C++/Qt point-cloud repository.
-
-Framework-facing usage:
-
-```bash
-skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz
-skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz \
-    --l1-sample-count 512 \
-    --l1-initial-radius 2.0 \
-    --l1-max-radius 8.0 \
-    --l1-max-iterations 80 \
-    --verbose
-```
-
-Backend-specific parameters:
-
-- `--l1-sample-count` limits the number of moving samples seeded from foreground voxels.
-- `--l1-initial-radius`, `--l1-radius-growth`, and `--l1-max-radius` control the local neighborhood schedule.
-- `--l1-max-iterations` and `--l1-stop-error` control contraction convergence.
-- `--l1-repulsion-mu` and `--l1-repulsion-mu-min` control conditional repulsion.
-- `--l1-random-seed` makes foreground point sampling deterministic.
-- `--l1-output-mode {branches,points}` selects the default v2 branch-curve rasterization or the previous contracted-point rasterization.
-- `--l1-use-density-weighting` / `--no-l1-use-density-weighting` controls inverse local-density weighting during attraction.
-- `--l1-use-recentering` / `--no-l1-use-recentering` controls branch-local ellipse re-centering before branch rasterization.
-
-Implementation notes:
-
-- Input NIfTI foreground is `data > 0`; output is same-shape binary `uint8`.
-- Foreground voxels are converted to point coordinates using voxel spacing when available, contracted with KDTree neighborhoods, and processed through the v2 branch flow by default.
-- V2 applies optional inverse local-density weighting, searches high-confidence contracted samples into branch curves with virtual endpoint handling, merges nearby branch endpoints, segments/smooths final curves, and optionally re-centers branch nodes by fitting local cross-section ellipses described in the local `ALGORITHM.md` note.
-- The default skeleton output rasterizes final branch curves. `--l1-output-mode points` keeps the earlier contracted-sample rasterization path available for direct comparison.
-- The current backend does not emit GraphML or attach a `GraphResult`; the previous sparse graph builder was removed because it was not part of the original L1-Skeleton code path.
-- The backend metadata records output mode, branch counts, branch points, density weighting, re-centering attempts/applications, segmentation status, and convergence statistics.
-- The original L1-Skeleton C++ repository does not contain a clear license file, and its README contains only placeholder license text. The backend therefore does not copy original source code; it uses the report/repo for traceability only.
+- [Laplacian Backend](#laplacian-backend)
+- [MCP Backend](#mcp-backend)
+- [Lee94 Backend](#lee94-backend)
+- [L1 Skeleton Backend](#l1-skeleton-backend)
+- [Palagyi-Kuba Backend](#palagyi-kuba-backend)
+- [Flux Backend](#flux-backend)
 
 ## Laplacian Backend
 
-The Laplacian backend is integrated under `skelhub.algorithms.laplacian`. It ports the required VascGraph `Skeletonize` path into SkelHub and updates the graph code for NetworkX 3.x compatibility.
+**Current priority backend.** Use `laplacian` when you want the graph-contraction path adapted from VascGraph, with optional GraphML export.
 
-Framework-facing usage:
+### CLI
 
 ```bash
 skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz
+```
+
+With graph outputs and tuned parameters:
+
+```bash
 skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
     --graph_output out.graphml \
     --graph_original original.graphml \
@@ -119,54 +46,40 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
     --verbose
 ```
 
-Backend-specific parameters:
+### Parameters
 
-- `--graph_output PATH` writes the cleaned graph after `post_node_cleaning()` as GraphML with world-coordinate `X`, `Y`, `Z` fields and voxel-position metadata.
-- `--graph_original PATH` writes the refined graph before `post_node_cleaning()` as GraphML with the same coordinate convention.
-- `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, and `--poly_param` expose the VascGraph demo skeleton settings with the same defaults used in `demo_skeleton.py`.
+- `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`.
+- `--graph_original PATH`: write the refined graph before `post_node_cleaning()`.
+- `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, `--poly_param`: expose the VascGraph demo skeleton settings.
 
-Implementation notes:
+### Notes and Limits
 
-- This backend is graph-native internally: it builds a dense foreground graph, contracts it toward vessel centerlines, refines small polygon artifacts, and removes degree-2 nodes from the cleaned graph.
-- SkelHub still receives a standard binary skeleton NIfTI output. The refined pre-cleaning graph (`graph_original`) is rasterized into the source volume shape by marking graph nodes and filling graph-connected gaps with 26-connected voxel paths.
-- Degree-2 chains in `graph_original` use quadratic Bezier interpolation through local node triples before the sampled points are connected as 26-neighbor voxel paths. Branch/end edges and short two-node paths use straight 26-connected interpolation.
-- `--graph_output` is written from the cleaned graph rather than from the rasterized skeleton. `--graph_original` exports the refined pre-cleaning graph that now drives the standard NIfTI output.
-- Only the required VascGraph skeleton path is ported; unrelated VascGraph I/O, visualization, directed-graph, Pajek/SWC, and patch-stitching features are not included in this backend.
+- The backend is graph-native internally.
+- SkelHub still returns a standard binary skeleton NIfTI.
+- The standard NIfTI output is rasterized from `graph_original`.
+- Degree-2 chains use quadratic Bezier interpolation before 26-connected voxel path filling.
+- `--graph_output` writes the cleaned graph; `--graph_original` writes the graph used for rasterization.
+- Only the required VascGraph skeleton path is ported. Unrelated VascGraph I/O, visualization, directed graph, Pajek/SWC, and patch-stitching features are not included.
 
-## Lee94 Backend
+### Citation
 
-The Lee94 backend is integrated under `skelhub.algorithms.lee94`. The original implementation(skimage) already does zero padding to the input volume, so the SkelHub adapter does not add additional padding. 
-
-Framework-facing usage:
-
-```bash
-skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz
-skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz \
-    --binarize-threshold 0.5 \
-    --verbose
+```text
+R. Damseh, P. Delafontaine-Martel, P. Pouliot, F. Cheriet, and F. Lesage, "Laplacian Flow Dynamics on Geometric Graphs for Anatomical Modeling of Cerebrovascular Networks," *IEEE Transactions on Medical Imaging*, vol. 40, no. 1, pp. 381-394, Jan. 2021, doi: 10.1109/TMI.2020.3027500.
 ```
-
-Backend-specific parameter:
-
-- `--binarize-threshold FLOAT` controls the threshold used to convert normalized input intensities into a binary foreground mask before skeletonization. The default is `0.5`.
-
-Implementation notes:
-
-- This backend does not reimplement Lee et al. 1994 thinning manually.
-- It wraps `skimage.morphology.skeletonize(..., method="lee")` inside a SkelHub backend adapter.
-- The adapter validates that the loaded input is 3D, thresholds it to a binary mask, runs the wrapped scikit-image implementation, and returns the framework-standard `SkeletonResult`.
-- Lee94-specific behavior is isolated under `skelhub/algorithms/lee94/` and does not alter the MCP backend mathematics.
 
 ## MCP Backend
 
-The original repository content is now integrated as the first SkelHub backend under `skelhub.algorithms.mcp`.
+Use `mcp` for the original tree-like NIfTI skeletonization method integrated as a SkelHub backend.
 
-Framework-facing usage:
+### CLI
 
 ```bash
-# Run with default parameters:
 skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz
-# Run with custom parameters:
+```
+
+With custom parameters:
+
+```bash
 skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz \
     --root-method max_fdt \
     --threshold-scale 1.0 \
@@ -177,28 +90,194 @@ skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz \
     --verbose
 ```
 
-Backend-specific parameters:
+### Parameters
 
-- `--root-method {max_fdt,topmost}` controls how the root voxel is chosen for each disconnected object.
-  Use `max_fdt` (default) to start from the deepest interior voxel. Use `topmost` to prefer a root near the top of the object, which can be useful for airway-like data with a known superior-to-inferior orientation.
-  Default is `max_fdt`.
-- `--threshold-scale FLOAT` multiplies the branch-significance acceptance threshold. The default is `1.0`.
-  Increase it to make branch acceptance more conservative and reduce weak side branches. Decrease it slightly to keep more marginal branches. The value must be positive.
-- `--dilation-factor FLOAT` scales the FDT value used when generating the marked-mask dilation around the root and accepted branches. The default is `2.0`.
-  Leaving it unset preserves the current behavior, where the dilation radius is `2 * FDT(p)` at each branch voxel. The value must be positive.
-- `--max-iterations INT` sets the maximum number of outer skeleton-growth iterations per object. Default: `200`.
-  This is a safety cap for complex or pathological inputs. If the cap is reached, the program stops growing that object safely and reports it in verbose mode.
-- `--min-object-size INT` ignores connected components smaller than the given voxel count. Default: `50`.
-  This is useful for filtering out isolated specks or segmentation noise before skeletonization begins.
-- `--label-objects` writes each object's skeleton voxels using its connected-component label instead of writing all skeleton voxels as `1`.
-  This is useful when the input volume contains multiple disconnected trees and you want to keep them distinguishable in the output. Default behavior is to write all skeleton voxels as `1`, without this flag.
-- `--verbose` prints progress and runtime reporting during processing.
+- `--root-method {max_fdt,topmost}`: choose each object's root voxel. Default: `max_fdt`.
+- `--threshold-scale FLOAT`: multiply the branch-significance threshold. Default: `1.0`.
+- `--dilation-factor FLOAT`: scale the FDT-based dilation radius. Default: `2.0`.
+- `--max-iterations INT`: cap outer skeleton-growth iterations per object. Default: `200`.
+- `--min-object-size INT`: ignore smaller connected components. Default: `50`.
+- `--label-objects`: write connected-component labels instead of binary `1` values.
+- `--verbose`: print progress and runtime summaries.
 
-Implementation notes:
+### Notes and Limits
 
-- The algorithm implements NIfTI-based curve skeletonization inspired by Jin et al. for tree-like 3D objects.
-- The current code path includes multi-object decomposition, FDT and LSF computation, geodesic distance, minimum-cost path extraction, local scale-adaptive dilation, and Milestone 7 reporting behavior.
-- Verbose MCP execution reports object counts, per-object iterations, branches added per iteration, branch counts, and runtime summaries.
-- The MCP mathematics and intended growth-loop behavior are preserved from the pre-refactor code path.
-- MCP-specific orchestration remains isolated in `skelhub/algorithms/mcp/multi_object.py`.
-- The framework core does not depend on MCP internals; it only consumes the standardized result object returned by the backend adapter.
+- MCP is inspired by Jin et al. for tree-like 3D objects.
+- The flow includes multi-object decomposition, FDT, LSF, geodesic distance, minimum-cost paths, and scale-adaptive dilation.
+- MCP-specific orchestration remains under `skelhub/algorithms/mcp/`.
+- The framework core consumes only the standardized backend result.
+
+### Citation
+
+```text
+D. Jin, K. S. Iyer, C. Chen, E. A. Hoffman, and P. K. Saha, "A robust and efficient curve skeletonization algorithm for tree-like objects using minimum cost paths," *Pattern Recognition Letters*, vol. 76, pp. 32-40, Jun. 2016, doi: 10.1016/j.patrec.2015.04.002.
+```
+
+## Lee94 Backend
+
+Use `lee94` for scikit-image's Lee et al. 1994 3D thinning implementation through the SkelHub interface.
+
+### CLI
+
+```bash
+skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz
+```
+
+With thresholding:
+
+```bash
+skelhub run --algorithm lee94 --input input.nii.gz --output out.nii.gz \
+    --binarize-threshold 0.5 \
+    --verbose
+```
+
+### Parameters
+
+- `--binarize-threshold FLOAT`: threshold normalized input intensities before skeletonization. Default: `0.5`.
+
+### Notes and Limits
+
+- The backend wraps `skimage.morphology.skeletonize(..., method="lee")`.
+- The adapter validates 3D input, thresholds it, and returns `SkeletonResult`.
+- The wrapped scikit-image implementation already handles its own zero padding.
+- Lee94 behavior is isolated under `skelhub/algorithms/lee94/`.
+
+### Citation
+
+```text
+T. C. Lee, R. L. Kashyap, and C. N. Chu, "Building Skeleton Models via 3-D Medial Surface Axis Thinning Algorithms," *CVGIP: Graphical Models and Image Processing*, vol. 56, no. 6, pp. 462-478, Nov. 1994, doi: 10.1006/cgip.1994.1042.
+```
+
+## L1 Skeleton Backend
+
+*Review pending:* this backend and its documentation need further review before being treated as a primary recommended path.
+
+Use `l1_skeleton` for a Python-native L1-medial skeleton path based on point-cloud contraction and branch rasterization.
+
+### CLI
+
+```bash
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz
+```
+
+With custom parameters:
+
+```bash
+skelhub run --algorithm l1_skeleton --input input.nii.gz --output out.nii.gz \
+    --l1-sample-count 512 \
+    --l1-initial-radius 2.0 \
+    --l1-max-radius 8.0 \
+    --l1-max-iterations 80 \
+    --verbose
+```
+
+### Parameters
+
+- `--l1-sample-count`: limit moving samples seeded from foreground voxels.
+- `--l1-initial-radius`, `--l1-radius-growth`, `--l1-max-radius`: control the local neighborhood schedule.
+- `--l1-max-iterations`, `--l1-stop-error`: control contraction convergence.
+- `--l1-repulsion-mu`, `--l1-repulsion-mu-min`: control conditional repulsion.
+- `--l1-random-seed`: make sampling deterministic.
+- `--l1-output-mode {branches,points}`: choose branch-curve rasterization or contracted-point output.
+- `--l1-use-density-weighting` / `--no-l1-use-density-weighting`: toggle inverse local-density weighting.
+- `--l1-use-recentering` / `--no-l1-use-recentering`: toggle branch-local ellipse re-centering.
+
+### Notes and Limits
+
+- Foreground is `data > 0`; output is same-shape binary `uint8`.
+- Foreground voxels are converted to point coordinates using voxel spacing when available.
+- The default output rasterizes final branch curves.
+- `--l1-output-mode points` keeps the earlier contracted-sample output path available.
+- The backend does not emit GraphML or attach a `GraphResult`.
+- No original C++ source is copied; the local C++/Qt project is used for traceability only.
+
+### Citation
+
+```text
+H. Huang *et al.*, "L1-medial skeleton of point cloud," *ACM Transactions on Graphics*, vol. 32, no. 4, pp. 1-8, Jul. 2013, doi: 10.1145/2461912.2461913.
+```
+
+## Palagyi-Kuba Backend
+
+*Review pending:* this backend and its documentation need further review before being treated as a primary recommended path.
+
+Use `palagyi_kuba` for a Python-native 12-subiteration 3D thinning backend with curve or surface modes.
+
+### CLI
+
+```bash
+skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz
+```
+
+With custom parameters:
+
+```bash
+skelhub run --algorithm palagyi_kuba --input input.nii.gz --output out.nii.gz \
+    --pk-mode surface \
+    --pk-binarize-threshold 0.5 \
+    --pk-max-cycles 20 \
+    --verbose
+```
+
+### Parameters
+
+- `--pk-mode {curve,surface}`: choose curve endpoint preservation or surface endpoint preservation.
+- `--pk-binarize-threshold FLOAT`: threshold non-binary input before thinning. Default: `0.5`.
+- `--pk-max-cycles INT`: optionally cap full 12-direction thinning cycles.
+
+### Notes and Limits
+
+- Axis convention: axis0 = U/D, axis1 = N/S, axis2 = W/E.
+- Subiteration order: `US, NE, DW, SE, UW, DN, SW, UN, DE, NW, UE, DS`.
+- Template tables are encoded from local Palagyi-Kuba reference figures.
+- Output is same-shape binary `uint8`.
+- The backend does not attach a graph result.
+
+### Citation
+
+```text
+K. Palagyi and A. Kuba, "A Parallel 3D 12-Subiteration Thinning Algorithm," *Graphical Models and Image Processing*, vol. 61, no. 4, pp. 199-221, Jul. 1999, doi: 10.1006/gmip.1999.0498.
+```
+
+## Flux Backend
+
+*Review pending:* this backend and its documentation need further review before being treated as a primary recommended path.
+
+Use `flux` for Python-native flux-driven medial curve extraction on already-binary volumes.
+
+### CLI
+
+```bash
+skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz
+```
+
+With custom parameters:
+
+```bash
+skelhub run --algorithm flux --input input.nii.gz --output out.nii.gz \
+    --flux-threshold 0.0 \
+    --flux-sigma 0.5 \
+    --flux-sigma-unit physical \
+    --verbose
+```
+
+### Parameters
+
+- `--flux-threshold FLOAT`: average-outward-flux endpoint preservation threshold. Default: `0.0`.
+- `--flux-sigma FLOAT`: Gaussian smoothing sigma for the signed-distance image. Default: `0.5`.
+- `--flux-sigma-unit {physical,voxels}`: interpret sigma in physical or voxel units. Default: `physical`.
+
+### Notes and Limits
+
+- Input must be exactly binary `{0, 1}`.
+- Non-binary volumes are rejected instead of thresholded.
+- The backend computes signed distance, smoothed gradients, 26-neighborhood average outward flux, and topology-preserving priority thinning.
+- Output is same-shape binary `uint8`.
+- The backend does not attach a graph result.
+- No VMTK source is copied; the backend is Python-native and documents the VMTK/EvoLib reference path.
+
+### Citation
+
+```text
+X. Mellado, I. Larrabide, M. Hernandez, and A. Frangi, "Flux driven medial curve extraction," *The Insight Journal*, Oct. 2010, doi: 10.54294/akkjqm.
+```
