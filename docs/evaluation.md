@@ -2,6 +2,8 @@
 
 SkelHub evaluation is designed to be algorithm-agnostic. It should consume `SkeletonResult` outputs or standardized prediction files rather than backend internals.
 
+For Python usage, see [API](API.md). For output fields, see [Structured Output](StructuredOutput.md).
+
 Current status:
 
 - Implemented: voxel-based v1 evaluation suite under `skelhub.evaluation`
@@ -70,18 +72,6 @@ Current limitations:
 - no direct `SkeletonResult`-first public path yet, though the current array-level evaluator leaves a clean extension seam for that future step
 
 ## Citations
-
-@inproceedings{youssef_evaluation_2015,
-	address = {Adelaide, Australia},
-	title = {Evaluation {Protocol} of {Skeletonization} {Applied} to {Grayscale} {Curvilinear} {Structures}},
-	isbn = {978-1-4673-6795-0},
-	url = {http://ieeexplore.ieee.org/document/7371256/},
-	doi = {10.1109/DICTA.2015.7371256},
-	urldate = {2026-04-14},
-	booktitle = {2015 {International} {Conference} on {Digital} {Image} {Computing}: {Techniques} and {Applications} ({DICTA})},
-	publisher = {IEEE},
-	author = {Youssef, Rabaa and Ricordeau, Anne and Sevestre-Ghalila, Sylvie and Benazza-Benyahya, Amel},
-	month = nov,
-	year = {2015},
-	pages = {1--6},
-}
+```
+R. Youssef, A. Ricordeau, S. Sevestre-Ghalila, and A. Benazza-Benyahya, “Evaluation Protocol of Skeletonization Applied to Grayscale Curvilinear Structures,” in 2015 International Conference on Digital Image Computing: Techniques and Applications (DICTA), Adelaide, Australia: IEEE, Nov. 2015, pp. 1–6. doi: 10.1109/DICTA.2015.7371256.
+```
