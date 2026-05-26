@@ -54,6 +54,11 @@ SkelHub's current GraphML export writes coordinates as:
 
 If coordinates are missing, the viewer fails clearly instead of guessing a layout.
 
+GraphML files with at least 1,000 nodes automatically use a dense rendering
+mode: nodes display as lightweight points and edges as lightweight lines so
+large graphs remain responsive while rotating, zooming, and panning. The
+viewer marks these files as `GraphML Dense` in the file status label.
+
 ### NIfTI
 
 NIfTI inputs must be:
@@ -74,6 +79,10 @@ The viewer can:
 - reset the camera
 - refresh GraphML appearance after slider changes
 - hide GraphML sliders when the active file is a NIfTI volume
+
+For standard GraphML rendering, Node and Edge control 3D sphere and tube
+sizes. In dense rendering mode, they control on-screen point size and line
+width without rebuilding graph geometry.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz` when the desktop VTK/PyVista backend exposes file drops.
 

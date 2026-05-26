@@ -119,8 +119,8 @@ from skelhub.api import launch_graph_viewer_from_path
 
 launch_graph_viewer_from_path(
     "pred.graphml",
-    edge_thickness=2.0,
-    node_size=6.0,
+    edge_thickness=1.0,
+    node_size=2.5,
 )
 ```
 
