@@ -1,4 +1,4 @@
-"""Framework API for running algorithms, evaluation, graphgen, and graph viewing."""
+"""Framework API for algorithms, evaluation, postprocessing, and graph viewing."""
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.core import EvaluationResult, SkeletonResult, VolumeData, get_backend
 from skelhub.evaluation import evaluate_skeleton_files
 from skelhub.io import read_nifti, write_nifti
+from skelhub.postprocessing.feature import (
+    FeatureExtractionResult,
+    extract_features_from_paths as _extract_features_from_paths,
+)
 from skelhub.postprocessing.graphgen import generate_graphml_from_nifti
 from skelhub.visualization import launch_graph_viewer
 
@@ -67,6 +71,26 @@ def generate_graphml_from_skeleton_path(
 ):
     """Generate a Voreen-style proto-graph GraphML file from a skeleton NIfTI."""
     return generate_graphml_from_nifti(input_path, output_path, log=log)
+
+
+def extract_features_from_paths(
+    foreground_path: str | Path,
+    skeleton_path: str | Path,
+    graph_path: str | Path,
+    edge_output_path: str | Path,
+    node_output_path: str | Path,
+    *,
+    log: Callable[[str], None] | None = None,
+) -> FeatureExtractionResult:
+    """Extract Voreen-style edge/node CSV features from vessel inputs."""
+    return _extract_features_from_paths(
+        foreground_path,
+        skeleton_path,
+        graph_path,
+        edge_output_path,
+        node_output_path,
+        log=log,
+    )
 
 
 def launch_graph_viewer_from_path(

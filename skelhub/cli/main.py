@@ -9,6 +9,7 @@ from typing import Optional
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.api import (
     evaluate_prediction_path,
+    extract_features_from_paths,
     generate_graphml_from_skeleton_path,
     launch_graph_viewer_from_path,
     run_algorithm_from_path,
@@ -278,6 +279,17 @@ def build_parser() -> argparse.ArgumentParser:
     graphgen_parser.add_argument("-o", "--output", required=True, help="Path to the output GraphML file.")
     graphgen_parser.add_argument("--verbose", action="store_true", help="Emit graph generation progress logs.")
 
+    feature_parser = subparsers.add_parser(
+        "feature",
+        help="Extract Voreen-style vessel branch features into edge and node CSV files.",
+    )
+    feature_parser.add_argument("--foreground", required=True, help="Path to the binary vessel foreground NIfTI.")
+    feature_parser.add_argument("--skeleton", required=True, help="Path to the binary vessel skeleton NIfTI.")
+    feature_parser.add_argument("--graph", required=True, help="Path to graphgen or Laplacian GraphML.")
+    feature_parser.add_argument("--edge-output", required=True, help="Path to the edge feature CSV output.")
+    feature_parser.add_argument("--node-output", required=True, help="Path to the node position CSV output.")
+    feature_parser.add_argument("--verbose", action="store_true", help="Emit feature extraction progress logs.")
+
     graphviz_parser = subparsers.add_parser(
         "graphviz",
         help="Open a 3D PyVista viewer for GraphML vessel graphs or binary NIfTI volumes.",
@@ -356,6 +368,25 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         except (FileNotFoundError, OSError, ValueError) as exc:
             parser.exit(status=2, message=f"skelhub graphgen: error: {exc}\n")
+
+    if args.command == "feature":
+        try:
+            result = extract_features_from_paths(
+                args.foreground,
+                args.skeleton,
+                args.graph,
+                args.edge_output,
+                args.node_output,
+                log=print if args.verbose else None,
+            )
+            if args.verbose:
+                print(
+                    f"feature extraction complete: edges={len(result.edges)}, "
+                    f"nodes={len(result.nodes)}, unit={result.physical_unit}"
+                )
+            return 0
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            parser.exit(status=2, message=f"skelhub feature: error: {exc}\n")
 
     if args.command == "graphviz":
         try:

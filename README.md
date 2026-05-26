@@ -17,7 +17,7 @@ The goal is simple: keep each algorithm backend isolated, while giving users one
 Current status:
 
 - Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
-- CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub graphviz`
+- CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`
 - Evaluation: voxel-based v1 metrics for paired 3D binary skeleton volumes
 - Visualization: PyVista-based viewer for GraphML graphs and binary NIfTI volumes
 
@@ -82,6 +82,7 @@ Use the focused docs below:
 
 - [Algorithms](docs/algorithms.md)
 - [Evaluation](docs/evaluation.md)
+- [Postprocessing](docs/postprocessing.md)
 - [Visualization](docs/visualization.md)
 - [Python API](docs/API.md)
 
@@ -110,7 +111,8 @@ SkelHub/
 │   ├── evaluation/
 │   ├── preprocessing/
 │   ├── postprocessing/
-│   │   └── graphgen/
+│   │   ├── graphgen/
+│   │   └── feature/
 │   ├── visualization/
 │   └── datasets/
 ├── tests/
@@ -123,6 +125,7 @@ Key locations:
 - `skelhub.algorithms` contains isolated backend adapters and implementations.
 - `skelhub.evaluation` contains the voxel-based evaluator.
 - `skelhub.postprocessing.graphgen` converts skeleton NIfTI volumes into GraphML.
+- `skelhub.postprocessing.feature` writes Voreen-style edge and node CSV features from vessel foreground, skeleton, and compatible GraphML inputs.
 - `skelhub.visualization` powers `skelhub graphviz`.
 
 ## Structured Output

@@ -13,6 +13,7 @@ For CLI examples, see:
 ```python
 from skelhub.api import (
     evaluate_prediction_path,
+    extract_features_from_paths,
     generate_graphml_from_skeleton_path,
     launch_graph_viewer_from_path,
     run_algorithm_from_path,
@@ -88,6 +89,28 @@ graph = generate_graphml_from_skeleton_path(
 
 print(len(graph.nodes), len(graph.edges))
 ```
+
+## Extract Vessel Features
+
+```python
+from skelhub.api import extract_features_from_paths
+
+features = extract_features_from_paths(
+    "vessels.nii.gz",
+    "skeleton.nii.gz",
+    "vessel.graphml",
+    "edge_features.csv",
+    "node_features.csv",
+)
+
+print(len(features.edges), features.physical_unit)
+```
+
+The GraphML input may be created by `skelhub graphgen` or by
+`skelhub run --algorithm laplacian --graph_output ...`. Edge CSV base
+measurements are in voxel units. Additional `*_image_<unit>` columns use the
+foreground NIfTI header voxel sizes and spatial unit.
+The node CSV exports voxel-space positions and graph incidence degree.
 
 ## Launch Visualization
 
