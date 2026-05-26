@@ -1,5 +1,32 @@
 # Development Log
 
+## 2026-05-26 AEST
+
+### Dual-space Voreen-style feature extraction
+
+1. Summary of what changed
+- Added `skelhub.postprocessing.feature` for branch and node feature export from binary vessel foreground, binary skeleton, and compatible GraphML.
+- Added `skelhub feature` plus the public `extract_features_from_paths(...)` API.
+- Added edge and node CSV output. Base edge measurements are voxel-space values; image-space length/radius columns are suffixed with the NIfTI header spatial unit. Node rows include voxel-space position and GraphML incidence degree.
+
+2. Architecture decisions made
+- Accepted GraphML from `skelhub graphgen` and Laplacian `--graph_output`; stored GraphML `centerline_voxels` are authoritative branch paths.
+- Kept node CSV positions in voxel coordinates and exported each node's graph incidence degree.
+- Calculated image-space distance and radius by axis-wise foreground-header voxel sizes, rather than the full affine. This keeps measurements tied to image spacing and reports units as `_mm`, `_um`, `_m`, or `_unknown`.
+- Ran foreground-to-edge assignment independently in voxel and image spaces so anisotropic spacing can change branch assignment and radius values.
+- Implemented Voreen-style nearest-edge assignment, connected-component anchoring, 6-neighbor filling of unresolved foreground, surface-distance radius samples, and per-edge local-radius means.
+
+3. Assumptions
+- Base edge columns `length`, `minRadius`, `avgRadius`, `maxRadius`, and `curveness` are intentionally voxel-space values.
+- `node1_degree` and `node2_degree` identify the degree of their named endpoint IDs, rather than Voreen's sorted endpoint-degree export.
+- Topology-only edges with no centerline samples retain length and curveness but write `NaN` radius values.
+- GraphML paths may differ from the supplied skeleton for Laplacian cleaned graph output; this is logged as a warning and does not block extraction.
+
+4. Tests run
+- `python -m py_compile skelhub/postprocessing/feature/*.py skelhub/postprocessing/__init__.py skelhub/api.py skelhub/__init__.py skelhub/cli/main.py tests/test_feature.py`
+- `python -m pytest tests/test_feature.py -q`
+- `python -m skelhub feature --help`
+
 ## 2026-05-23 AEST
 
 ### Documentation readability refresh

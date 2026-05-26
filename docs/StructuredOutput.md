@@ -54,6 +54,12 @@ It includes:
 
 For metric details, see [Evaluation](evaluation.md).
 
+## FeatureExtractionResult
+
+`extract_features_from_paths(...)` returns edge rows, node rows, the
+header-derived physical unit suffix, and non-fatal warnings such as a
+Laplacian graph path that differs from the supplied skeleton volume.
+
 ## Current Output Files
 
 - `skelhub run` writes a skeleton NIfTI volume.
@@ -61,3 +67,12 @@ For metric details, see [Evaluation](evaluation.md).
 - `skelhub run --algorithm laplacian --graph_original ...` can write the refined pre-cleaning GraphML.
 - `skelhub evaluate --json-output ...` writes a structured JSON evaluation report.
 - `skelhub graphgen` writes a GraphML proto-graph from a skeleton NIfTI.
+- `skelhub feature` writes separate edge and node CSV files from a binary vessel foreground, skeleton, and compatible GraphML graph.
+
+Feature edge CSV base columns (`length`, `minRadius`, `avgRadius`,
+`maxRadius`, and `curveness`) are measured in voxel coordinates. The added
+`*_image_<unit>` distance and radius columns use foreground-header voxel
+sizes, with unit suffixes such as `_mm`, `_um`, `_m`, or `_unknown`.
+The feature node CSV contains `id,position_x,position_y,position_z,degree`,
+where positions are voxel coordinates and degree is the GraphML incidence
+count.
