@@ -302,13 +302,13 @@ def build_parser() -> argparse.ArgumentParser:
     graphviz_parser.add_argument(
         "--edge_thickness",
         type=float,
-        default=2.0,
+        default=1.0,
         help="Rendered edge thickness in the 3D viewer.",
     )
     graphviz_parser.add_argument(
         "--node_size",
         type=float,
-        default=6.0,
+        default=2.5,
         help="Rendered node size in the 3D viewer.",
     )
 

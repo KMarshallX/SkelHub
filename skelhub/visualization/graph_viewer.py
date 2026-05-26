@@ -13,8 +13,10 @@ import numpy as np
 
 
 VisualizationFileKind = Literal["graphml", "nifti"]
+GraphRenderMode = Literal["detailed", "dense"]
 NODE_SIZE_RANGE = (0.5, 40.0)
 EDGE_THICKNESS_RANGE = (0.1, 10.0)
+DENSE_GRAPH_NODE_THRESHOLD = 1_000
 LARGE_NIFTI_VOXEL_WARNING_THRESHOLD = 250_000
 FILE_PANEL_X = 10
 FILE_PANEL_TOP_MARGIN = 12
@@ -47,8 +49,8 @@ class GraphVisualizationData:
 class GraphVisualizationOptions:
     """User-configurable graph appearance."""
 
-    edge_thickness: float = 2.0
-    node_size: float = 6.0
+    edge_thickness: float = 1.0
+    node_size: float = 2.5
     window_title: str = "SkelHub Graph Viewer"
 
 
@@ -127,6 +129,8 @@ class GraphViewerSession:
     preview_node_size: float | None = None
     preview_edge_thickness: float | None = None
     graph_actors: list[Any] = field(default_factory=list)
+    dense_node_actor: Any | None = None
+    dense_edge_actor: Any | None = None
     file_panel_actors: list[Any] = field(default_factory=list)
     command_button_actors: list[Any] = field(default_factory=list)
     slider_widgets: list[Any] = field(default_factory=list)
@@ -248,7 +252,10 @@ class GraphViewerSession:
         active = self.active_file
         if active is None:
             return "No file loaded"
-        return f"{self.active_index + 1}/{len(self.loaded_files)}  {_kind_label(active.kind)}  {active.path.name}"
+        kind_label = _kind_label(active.kind)
+        if active.kind == "graphml" and _graph_render_mode(active.data) == "dense":
+            kind_label = "[GraphML Dense]"
+        return f"{self.active_index + 1}/{len(self.loaded_files)}  {kind_label}  {active.path.name}"
 
     def compact_status_text(self, *, max_length: int = 34) -> str:
         text = self.status_text()
@@ -432,6 +439,10 @@ def _edge_polyline_array(edge_indices: np.ndarray) -> np.ndarray:
     return np.hstack((line_sizes, edge_indices)).ravel()
 
 
+def _graph_render_mode(graph_data: GraphVisualizationData) -> GraphRenderMode:
+    return "dense" if graph_data.node_count >= DENSE_GRAPH_NODE_THRESHOLD else "detailed"
+
+
 def build_graph_meshes(
     graph_data: GraphVisualizationData,
     options: GraphVisualizationOptions,
@@ -456,6 +467,121 @@ def build_graph_meshes(
         edge_mesh = line_data.tube(radius=float(options.edge_thickness), n_sides=12)
 
     return GraphVisualizationMeshes(nodes=node_mesh, edges=edge_mesh)
+
+
+def _build_instanced_node_actor(
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+    *,
+    pv_module: Any | None = None,
+) -> Any:
+    """Build one shared sphere glyph source instanced at every graph node."""
+    _validate_options(options)
+    pv = _import_pyvista() if pv_module is None else pv_module
+
+    try:
+        from vtkmodules.vtkRenderingCore import vtkActor, vtkGlyph3DMapper
+    except ImportError as exc:  # pragma: no cover - PyVista installations include VTK
+        raise GraphVisualizationError("VTK glyph rendering could not be initialized.") from exc
+
+    node_cloud = pv.PolyData(graph_data.node_positions)
+    node_sphere = pv.Sphere(radius=float(options.node_size))
+    mapper = vtkGlyph3DMapper()
+    mapper.SetInputData(node_cloud)
+    mapper.SetSourceData(node_sphere)
+    mapper.OrientOff()
+    mapper.ScalingOff()
+    mapper.ScalarVisibilityOff()
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(220 / 255, 20 / 255, 60 / 255)
+    actor.GetProperty().SetInterpolationToPhong()
+    return actor
+
+
+def _add_detailed_graph_scene(
+    plotter: Any,
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+    *,
+    pv_module: Any | None = None,
+) -> list[Any]:
+    """Add detailed graph edges and instanced nodes without rendering."""
+    _validate_options(options)
+    pv = _import_pyvista() if pv_module is None else pv_module
+    actors: list[Any] = []
+
+    if graph_data.edge_indices.size:
+        line_data = pv.PolyData(graph_data.node_positions)
+        line_data.lines = _edge_polyline_array(graph_data.edge_indices)
+        edge_mesh = line_data.tube(radius=float(options.edge_thickness), n_sides=12)
+        actors.append(
+            plotter.add_mesh(edge_mesh, color="forestgreen", smooth_shading=True, render=False)
+        )
+
+    node_actor = _build_instanced_node_actor(graph_data, options, pv_module=pv)
+    try:
+        plotter.add_actor(node_actor, render=False)
+    except TypeError:
+        plotter.add_actor(node_actor)
+    actors.append(node_actor)
+    return actors
+
+
+def _add_dense_graph_scene(
+    plotter: Any,
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+    *,
+    pv_module: Any | None = None,
+) -> tuple[list[Any], Any | None, Any]:
+    """Add lightweight point/line actors for large interactive graphs."""
+    _validate_options(options)
+    pv = _import_pyvista() if pv_module is None else pv_module
+    actors: list[Any] = []
+    edge_actor = None
+
+    if graph_data.edge_indices.size:
+        line_data = pv.PolyData()
+        line_data.points = graph_data.node_positions
+        line_data.lines = _edge_polyline_array(graph_data.edge_indices)
+        edge_actor = plotter.add_mesh(
+            line_data,
+            color="forestgreen",
+            line_width=float(options.edge_thickness),
+            render_lines_as_tubes=True,
+            render=False,
+        )
+        actors.append(edge_actor)
+
+    node_cloud = pv.PolyData(graph_data.node_positions)
+    node_actor = plotter.add_mesh(
+        node_cloud,
+        color="crimson",
+        style="points",
+        point_size=float(options.node_size),
+        render_points_as_spheres=True,
+        render=False,
+    )
+    actors.append(node_actor)
+    return actors, edge_actor, node_actor
+
+
+def _add_graph_scene(
+    plotter: Any,
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+    *,
+    pv_module: Any | None = None,
+) -> list[Any]:
+    """Add a detailed or automatically lightweight GraphML scene."""
+    if _graph_render_mode(graph_data) == "dense":
+        actors, _edge_actor, _node_actor = _add_dense_graph_scene(
+            plotter, graph_data, options, pv_module=pv_module
+        )
+        return actors
+    return _add_detailed_graph_scene(plotter, graph_data, options, pv_module=pv_module)
 
 
 def build_nifti_meshes(
@@ -489,11 +615,7 @@ def build_graph_plotter(
     plotter.add_axes()
 
     if graph_data is not None:
-        meshes = build_graph_meshes(graph_data, options, pv_module=pv)
-        if meshes.edges is not None:
-            plotter.add_mesh(meshes.edges, color="forestgreen", smooth_shading=True)
-        if meshes.nodes is not None:
-            plotter.add_mesh(meshes.nodes, color="crimson", smooth_shading=True)
+        _add_graph_scene(plotter, graph_data, options, pv_module=pv)
         plotter.reset_camera()
 
     return plotter
@@ -502,8 +624,8 @@ def build_graph_plotter(
 def create_graph_viewer_session(
     input_path: str | Path | None = None,
     *,
-    edge_thickness: float = 2.0,
-    node_size: float = 6.0,
+    edge_thickness: float = 1.0,
+    node_size: float = 2.5,
 ) -> GraphViewerSession:
     """Create viewer session state and optionally load an initial visualization file."""
     session = GraphViewerSession(
@@ -829,6 +951,8 @@ def _store_initial_camera_state(plotter: Any, session: GraphViewerSession) -> No
 
 def _remove_graph_actors(plotter: Any, session: GraphViewerSession) -> None:
     if not session.graph_actors:
+        session.dense_node_actor = None
+        session.dense_edge_actor = None
         return
     if hasattr(plotter, "remove_actor"):
         for actor in session.graph_actors:
@@ -838,6 +962,18 @@ def _remove_graph_actors(plotter: Any, session: GraphViewerSession) -> None:
                 except TypeError:
                     plotter.remove_actor(actor)
     session.graph_actors.clear()
+    session.dense_node_actor = None
+    session.dense_edge_actor = None
+
+
+def _update_dense_graph_appearance(session: GraphViewerSession) -> bool:
+    """Apply dense point/line widths without reconstructing rendered data."""
+    if session.dense_node_actor is None:
+        return False
+    session.dense_node_actor.GetProperty().SetPointSize(float(session.options.node_size))
+    if session.dense_edge_actor is not None:
+        session.dense_edge_actor.GetProperty().SetLineWidth(float(session.options.edge_thickness))
+    return True
 
 
 def render_active_graph(
@@ -860,13 +996,15 @@ def render_active_graph(
     if active_file.kind == "graphml":
         graph_data = session.active_graph_data
         if graph_data is not None:
-            meshes = build_graph_meshes(graph_data, session.options, pv_module=pv_module)
-            if meshes.edges is not None:
-                actor = plotter.add_mesh(meshes.edges, color="forestgreen", smooth_shading=True)
-                session.graph_actors.append(actor)
-            if meshes.nodes is not None:
-                actor = plotter.add_mesh(meshes.nodes, color="crimson", smooth_shading=True)
-                session.graph_actors.append(actor)
+            if _graph_render_mode(graph_data) == "dense":
+                actors, session.dense_edge_actor, session.dense_node_actor = _add_dense_graph_scene(
+                    plotter, graph_data, session.options, pv_module=pv_module
+                )
+                session.graph_actors.extend(actors)
+            else:
+                session.graph_actors.extend(
+                    _add_detailed_graph_scene(plotter, graph_data, session.options, pv_module=pv_module)
+                )
     else:
         nifti_data = session.active_nifti_data
         if nifti_data is not None:
@@ -887,6 +1025,15 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
     """Commit preview slider values when relevant and rebuild the active scene."""
     if session.active_kind != "nifti":
         session.apply_preview_options()
+        graph_data = session.active_graph_data
+        if (
+            graph_data is not None
+            and _graph_render_mode(graph_data) == "dense"
+            and _update_dense_graph_appearance(session)
+        ):
+            if hasattr(plotter, "render"):
+                plotter.render()
+            return
     render_active_graph(plotter, session, pv_module=pv_module, reset_camera=False)
 
 
@@ -1384,8 +1531,8 @@ def add_graph_viewer_controls(plotter: Any, session: GraphViewerSession, *, pv_m
 def launch_graph_viewer(
     input_path: str | Path | None = None,
     *,
-    edge_thickness: float = 2.0,
-    node_size: float = 6.0,
+    edge_thickness: float = 1.0,
+    node_size: float = 2.5,
 ) -> int:
     """Launch an interactive PyVista window for an optional GraphML or NIfTI file."""
     pv = _import_pyvista()

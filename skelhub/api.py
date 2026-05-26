@@ -96,8 +96,8 @@ def extract_features_from_paths(
 def launch_graph_viewer_from_path(
     graph_path: str | Path | None = None,
     *,
-    edge_thickness: float = 2.0,
-    node_size: float = 6.0,
+    edge_thickness: float = 1.0,
+    node_size: float = 2.5,
 ) -> int:
     """Launch the framework visualization flow on an optional GraphML or NIfTI path."""
     return launch_graph_viewer(
