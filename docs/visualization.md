@@ -67,10 +67,12 @@ NIfTI inputs must be:
 - binary
 - exactly `{0, 1}`
 
-Foreground voxels render as unit blocks in voxel-index coordinates. The
-interactive viewer instances one shared cube at all foreground positions so
-dense volumes retain block appearance without expanding repeated cube
-geometry in memory.
+Foreground voxels render as physical blocks in displayed world coordinates
+obtained from the NIfTI affine. The affine transforms both voxel centres and
+the shared cube geometry, preserving physical voxel scale, orientation, axis
+permutations, and flips. The interactive viewer instances that transformed
+cube at all foreground positions so dense volumes retain block appearance
+without expanding repeated cube geometry in memory.
 
 ## In-Viewer Controls
 
@@ -83,6 +85,7 @@ The panel starts hidden.
 
 The tools panel can:
 
+- enable or disable world-coordinate camera synchronization across loaded files
 - enable a movable crosshair cursor and edit its `X`, `Y`, and `Z` position
 - import more files
 - close the active file
@@ -108,12 +111,27 @@ enter a finite numeric value in an `X`, `Y`, or `Z` field and press `Enter`.
 is enabled and its own cursor position; closing the Tools panel hides its
 coordinate fields but leaves an enabled crosshair visible and movable.
 
-Cursor values use the active file's existing display coordinates: GraphML
-uses its rendered `X`/`Y`/`Z` coordinates, while NIfTI uses voxel-index
-coordinates. The cursor does not align or synchronize positions between
-files with different coordinate frames.
+Cursor values use the active file's displayed coordinates: GraphML uses its
+rendered `X`/`Y`/`Z` coordinates, while NIfTI uses affine-derived physical
+world coordinates. Cursor positions remain specific to each loaded file;
+compatible coordinates coincide only when files share a meaningful displayed
+world frame.
+
+`Sync Camera` starts enabled. When selecting another loaded GraphML or NIfTI
+file, the viewer restores the same absolute camera position, focal point,
+orientation, angle, and zoom in displayed world coordinates. This allows
+aligned NIfTI and GraphML scenes to be inspected in the same view; arbitrary
+GraphML coordinates or unregistered datasets may not align usefully, in
+which case camera synchronization can be turned off. With synchronization
+enabled, `Reset View` on the active file becomes the shared world-coordinate
+camera for later file switches.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz` when the desktop VTK/PyVista backend exposes file drops.
+
+When a GraphML file is active, the mouse wheel travels forward and backward
+along the current camera direction without stopping at the original focal
+point. This allows close inspection while moving through local graph
+features. NIfTI files keep the standard PyVista wheel navigation behavior.
 
 ## HPC and Conda Notes
 

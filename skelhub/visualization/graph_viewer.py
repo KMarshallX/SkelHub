@@ -27,17 +27,18 @@ TOOLS_PANEL_RIGHT_MARGIN = 18
 TOOLS_PANEL_TOP_MARGIN = 12
 TOOLS_BUTTON_WIDTH = 76
 TOOLS_PANEL_WIDTH = 292
-TOOLS_PANEL_HEIGHT = 436
+TOOLS_PANEL_HEIGHT = 472
 TOOLS_PANEL_GAP = 8
 TOOLS_PANEL_PADDING = 14
 COMMAND_BUTTON_GAP = 10
 COMMAND_BUTTON_HEIGHT = 26
-CURSOR_ROWS_HEIGHT = 144
+CURSOR_ROWS_HEIGHT = 180
 CURSOR_FIELD_LABEL_WIDTH = 28
 CURSOR_CROSSHAIR_RADIUS = 11
 SLIDER_STEP = 0.1
 SLIDER_STEP_BUTTON_SIZE = 26
 SLIDER_COLOR = "#9ea4aa"
+GRAPH_CAMERA_TRAVEL_FACTOR = 0.025
 
 
 class GraphVisualizationError(RuntimeError):
@@ -74,12 +75,15 @@ class GraphVisualizationMeshes:
 
 @dataclass(slots=True)
 class NiftiVisualizationData:
-    """Binary NIfTI foreground voxels prepared for block rendering."""
+    """Binary NIfTI foreground voxels prepared for physical-space rendering."""
 
     voxel_positions: np.ndarray
     voxel_count: int
     shape: tuple[int, int, int]
     source_path: str
+    display_positions: np.ndarray | None = None
+    affine: np.ndarray = field(default_factory=lambda: np.eye(4, dtype=float))
+    spatial_unit: str = "unknown"
 
 
 @dataclass(slots=True)
@@ -98,6 +102,8 @@ class CameraState:
     view_up: tuple[float, float, float]
     clipping_range: tuple[float, float] | None = None
     parallel_scale: float | None = None
+    view_angle: float | None = None
+    parallel_projection: bool | None = None
 
 
 @dataclass(slots=True)
@@ -161,6 +167,8 @@ class GraphViewerSession:
     cursor_edit_buffer: str = ""
     cursor_edit_invalid: bool = False
     cursor_edit_replace_pending: bool = False
+    camera_sync_enabled: bool = True
+    shared_camera_state: CameraState | None = None
     error_actor: Any | None = None
 
     def __post_init__(self) -> None:
@@ -416,8 +424,17 @@ def _format_unique_preview(values: np.ndarray) -> str:
     return preview
 
 
+def _transform_points(points: np.ndarray, affine: np.ndarray) -> np.ndarray:
+    """Transform an array of voxel-space points through a NIfTI affine."""
+    points = np.asarray(points, dtype=float)
+    if points.size == 0:
+        return np.empty((0, 3), dtype=float)
+    homogeneous = np.column_stack((points, np.ones(points.shape[0], dtype=float)))
+    return (np.asarray(affine, dtype=float) @ homogeneous.T).T[:, :3]
+
+
 def load_nifti_visualization_data(input_path: str | Path) -> NiftiVisualizationData:
-    """Load a binary NIfTI volume as foreground voxel positions for block rendering."""
+    """Load a binary NIfTI volume with voxel and world-space display positions."""
     nifti_path = Path(input_path)
     if not nifti_path.is_file():
         raise GraphVisualizationError(f"NIfTI input does not exist: {nifti_path}")
@@ -441,11 +458,16 @@ def load_nifti_visualization_data(input_path: str | Path) -> NiftiVisualizationD
         )
 
     voxel_positions = np.argwhere(data > 0).astype(float, copy=False)
+    affine = np.asarray(image.affine, dtype=float)
+    spatial_unit, _time_unit = image.header.get_xyzt_units()
     return NiftiVisualizationData(
         voxel_positions=voxel_positions,
         voxel_count=int(voxel_positions.shape[0]),
         shape=tuple(int(size) for size in data.shape),
         source_path=str(nifti_path),
+        display_positions=_transform_points(voxel_positions, affine),
+        affine=affine,
+        spatial_unit=spatial_unit or "unknown",
     )
 
 
@@ -623,15 +645,29 @@ def build_nifti_meshes(
     *,
     pv_module: Any | None = None,
 ) -> NiftiVisualizationMeshes:
-    """Build a PyVista block mesh from binary NIfTI foreground voxels."""
+    """Build a physical-space PyVista block mesh from binary NIfTI voxels."""
     pv = _import_pyvista() if pv_module is None else pv_module
     if nifti_data.voxel_count == 0:
         return NiftiVisualizationMeshes(blocks=None)
 
-    voxel_cloud = pv.PolyData(nifti_data.voxel_positions)
-    cube = pv.Cube(x_length=1.0, y_length=1.0, z_length=1.0)
+    voxel_cloud = pv.PolyData(_nifti_display_positions(nifti_data))
+    cube = _nifti_voxel_geometry(nifti_data, pv)
     block_mesh = voxel_cloud.glyph(geom=cube, orient=False, scale=False)
     return NiftiVisualizationMeshes(blocks=block_mesh)
+
+
+def _nifti_display_positions(nifti_data: NiftiVisualizationData) -> np.ndarray:
+    if nifti_data.display_positions is not None:
+        return nifti_data.display_positions
+    return _transform_points(nifti_data.voxel_positions, nifti_data.affine)
+
+
+def _nifti_voxel_geometry(nifti_data: NiftiVisualizationData, pv: Any) -> Any:
+    """Build one voxel block transformed by the affine linear component."""
+    cube = pv.Cube(x_length=1.0, y_length=1.0, z_length=1.0)
+    linear_transform = np.eye(4, dtype=float)
+    linear_transform[:3, :3] = np.asarray(nifti_data.affine, dtype=float)[:3, :3]
+    return cube.transform(linear_transform, inplace=False)
 
 
 def _build_instanced_nifti_actor(
@@ -639,7 +675,7 @@ def _build_instanced_nifti_actor(
     *,
     pv_module: Any | None = None,
 ) -> Any | None:
-    """Build one shared unit-cube source instanced at foreground voxels."""
+    """Build one physical-space voxel source instanced at foreground positions."""
     if nifti_data.voxel_count == 0:
         return None
     pv = _import_pyvista() if pv_module is None else pv_module
@@ -649,8 +685,8 @@ def _build_instanced_nifti_actor(
     except ImportError as exc:  # pragma: no cover - PyVista installations include VTK
         raise GraphVisualizationError("VTK NIfTI block rendering could not be initialized.") from exc
 
-    voxel_cloud = pv.PolyData(nifti_data.voxel_positions)
-    cube = pv.Cube(x_length=1.0, y_length=1.0, z_length=1.0)
+    voxel_cloud = pv.PolyData(_nifti_display_positions(nifti_data))
+    cube = _nifti_voxel_geometry(nifti_data, pv)
     mapper = vtkGlyph3DMapper()
     mapper.SetInputData(voxel_cloud)
     mapper.SetSourceData(cube)
@@ -939,16 +975,38 @@ def _set_error(plotter: Any, session: GraphViewerSession, message: str | None) -
 
 def _scene_cursor_center(active_file: LoadedVisualizationFile) -> tuple[float, float, float]:
     """Return the initial cursor position in the active file's scene coordinates."""
+    lower, upper = _scene_bounds(active_file)
+    return tuple(float(value) for value in (lower + upper) / 2.0)  # type: ignore[return-value]
+
+
+def _box_corners(lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
+    return np.asarray(
+        [
+            [x, y, z]
+            for x in (lower[0], upper[0])
+            for y in (lower[1], upper[1])
+            for z in (lower[2], upper[2])
+        ],
+        dtype=float,
+    )
+
+
+def _scene_bounds(active_file: LoadedVisualizationFile) -> tuple[np.ndarray, np.ndarray]:
+    """Return displayed bounds for cursor initialization and framing."""
     if active_file.kind == "graphml":
         positions = active_file.data.node_positions  # type: ignore[union-attr]
+        return positions.min(axis=0), positions.max(axis=0)
+
+    nifti_data = active_file.data
+    if nifti_data.voxel_count:  # type: ignore[union-attr]
+        voxel_positions = nifti_data.voxel_positions  # type: ignore[union-attr]
+        lower = voxel_positions.min(axis=0) - 0.5
+        upper = voxel_positions.max(axis=0) + 0.5
     else:
-        nifti_data = active_file.data
-        positions = nifti_data.voxel_positions  # type: ignore[union-attr]
-        if positions.shape[0] == 0:
-            return tuple((float(size) - 1.0) / 2.0 for size in nifti_data.shape)  # type: ignore[union-attr]
-    lower = positions.min(axis=0)
-    upper = positions.max(axis=0)
-    return tuple(float(value) for value in (lower + upper) / 2.0)  # type: ignore[return-value]
+        lower = np.full(3, -0.5, dtype=float)
+        upper = np.asarray(nifti_data.shape, dtype=float) - 0.5  # type: ignore[union-attr]
+    world_corners = _transform_points(_box_corners(lower, upper), nifti_data.affine)  # type: ignore[union-attr]
+    return world_corners.min(axis=0), world_corners.max(axis=0)
 
 
 def _ensure_cursor_position(session: GraphViewerSession) -> tuple[float, float, float] | None:
@@ -1064,6 +1122,18 @@ def toggle_cursor(plotter: Any, session: GraphViewerSession) -> None:
         plotter.render()
 
 
+def toggle_camera_sync(plotter: Any, session: GraphViewerSession) -> None:
+    """Enable or disable shared world-coordinate camera state."""
+    session.camera_sync_enabled = not session.camera_sync_enabled
+    if session.camera_sync_enabled:
+        _store_shared_camera_state(plotter, session)
+    else:
+        session.shared_camera_state = None
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+
+
 def _begin_cursor_edit(plotter: Any, session: GraphViewerSession, axis: CursorAxis) -> None:
     if not session.cursor_enabled:
         return
@@ -1123,6 +1193,14 @@ def _camera_scalar(camera: Any, property_name: str, getter_name: str) -> float |
     return None
 
 
+def _camera_bool(camera: Any, property_name: str, getter_name: str) -> bool | None:
+    if hasattr(camera, getter_name):
+        return bool(getattr(camera, getter_name)())
+    if hasattr(camera, property_name):
+        return bool(getattr(camera, property_name))
+    return None
+
+
 def _capture_camera_state(plotter: Any) -> CameraState | None:
     camera = getattr(plotter, "camera", None)
     if camera is None:
@@ -1136,12 +1214,16 @@ def _capture_camera_state(plotter: Any) -> CameraState | None:
 
     clipping_range = _camera_tuple(camera, "clipping_range", "GetClippingRange")
     parallel_scale = _camera_scalar(camera, "parallel_scale", "GetParallelScale")
+    view_angle = _camera_scalar(camera, "view_angle", "GetViewAngle")
+    parallel_projection = _camera_bool(camera, "parallel_projection", "GetParallelProjection")
     return CameraState(
         position=position,  # type: ignore[arg-type]
         focal_point=focal_point,  # type: ignore[arg-type]
         view_up=view_up,  # type: ignore[arg-type]
         clipping_range=clipping_range,  # type: ignore[arg-type]
         parallel_scale=parallel_scale,
+        view_angle=view_angle,
+        parallel_projection=parallel_projection,
     )
 
 
@@ -1163,6 +1245,15 @@ def _set_camera_scalar(camera: Any, property_name: str, setter_name: str, value:
         setattr(camera, property_name, value)
 
 
+def _set_camera_bool(camera: Any, property_name: str, setter_name: str, value: bool | None) -> None:
+    if value is None:
+        return
+    if hasattr(camera, setter_name):
+        getattr(camera, setter_name)(bool(value))
+    elif hasattr(camera, property_name):
+        setattr(camera, property_name, bool(value))
+
+
 def _restore_camera_state(plotter: Any, state: CameraState) -> bool:
     camera = getattr(plotter, "camera", None)
     if camera is None:
@@ -1173,6 +1264,8 @@ def _restore_camera_state(plotter: Any, state: CameraState) -> bool:
     _set_camera_tuple(camera, "up", "SetViewUp", state.view_up)
     _set_camera_tuple(camera, "clipping_range", "SetClippingRange", state.clipping_range)
     _set_camera_scalar(camera, "parallel_scale", "SetParallelScale", state.parallel_scale)
+    _set_camera_scalar(camera, "view_angle", "SetViewAngle", state.view_angle)
+    _set_camera_bool(camera, "parallel_projection", "SetParallelProjection", state.parallel_projection)
     return True
 
 
@@ -1181,6 +1274,55 @@ def _store_initial_camera_state(plotter: Any, session: GraphViewerSession) -> No
     if active_file is None or active_file.initial_camera_state is not None:
         return
     active_file.initial_camera_state = _capture_camera_state(plotter)
+
+
+def _reset_camera_clipping_range(plotter: Any) -> None:
+    if hasattr(plotter, "reset_camera_clipping_range"):
+        plotter.reset_camera_clipping_range()
+        return
+    renderer = getattr(plotter, "renderer", None)
+    if renderer is not None and hasattr(renderer, "ResetCameraClippingRange"):
+        renderer.ResetCameraClippingRange()
+
+
+def _store_shared_camera_state(plotter: Any, session: GraphViewerSession) -> None:
+    if not session.camera_sync_enabled or session.active_file is None:
+        return
+    state = _capture_camera_state(plotter)
+    if state is not None:
+        session.shared_camera_state = state
+
+
+def _travel_active_graph_camera(plotter: Any, session: GraphViewerSession, *, direction: float) -> bool:
+    """Move a GraphML camera along its view direction without a focal-point limit."""
+    if session.active_kind != "graphml":
+        return False
+
+    camera = getattr(plotter, "camera", None)
+    if camera is None:
+        return False
+    position = _camera_tuple(camera, "position", "GetPosition")
+    focal_point = _camera_tuple(camera, "focal_point", "GetFocalPoint")
+    if position is None or focal_point is None:
+        return False
+
+    view_vector = np.asarray(focal_point, dtype=float) - np.asarray(position, dtype=float)
+    distance = float(np.linalg.norm(view_vector))
+    if not np.isfinite(distance) or distance <= 0:
+        return False
+    view_direction = view_vector / distance
+    offset = float(direction) * GRAPH_CAMERA_TRAVEL_FACTOR * distance * view_direction
+    next_position = tuple(float(value) for value in np.asarray(position, dtype=float) + offset)
+    next_focal_point = tuple(float(value) for value in np.asarray(focal_point, dtype=float) + offset)
+
+    _set_camera_tuple(camera, "position", "SetPosition", next_position)
+    _set_camera_tuple(camera, "focal_point", "SetFocalPoint", next_focal_point)
+    _reset_camera_clipping_range(plotter)
+    if session.cursor_enabled:
+        render_cursor_crosshair(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+    return True
 
 
 def _remove_graph_actors(plotter: Any, session: GraphViewerSession) -> None:
@@ -1252,6 +1394,12 @@ def render_active_graph(
     if reset_camera:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session)
+        if session.camera_sync_enabled:
+            if session.shared_camera_state is None:
+                _store_shared_camera_state(plotter, session)
+            else:
+                if _restore_camera_state(plotter, session.shared_camera_state):
+                    _reset_camera_clipping_range(plotter)
     _set_status(plotter, session)
     render_tools_panel(plotter, session)
     if hasattr(plotter, "render"):
@@ -1284,6 +1432,8 @@ def reset_active_view(plotter: Any, session: GraphViewerSession) -> None:
     if not restored and hasattr(plotter, "reset_camera"):
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session)
+    if session.camera_sync_enabled:
+        _store_shared_camera_state(plotter, session)
     _set_status(plotter, session)
     render_cursor_crosshair(plotter, session)
     if hasattr(plotter, "render"):
@@ -1390,6 +1540,7 @@ def load_visualization_paths(
     allow_large_nifti: bool = False,
 ) -> list[LoadedVisualizationFile]:
     """Load supported visualization paths and render the first valid file in the batch."""
+    _store_shared_camera_state(plotter, session)
     loaded_files: list[LoadedVisualizationFile] = []
     first_loaded_index: int | None = None
     for path in _visualization_paths(paths):
@@ -1436,13 +1587,17 @@ def load_graph_paths(
 def close_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _store_shared_camera_state(plotter, session)
     session.close_active_file()
+    if session.active_file is None:
+        session.shared_camera_state = None
     render_active_graph(plotter, session, pv_module=pv_module)
 
 
 def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _store_shared_camera_state(plotter, session)
     session.activate_previous()
     render_active_graph(plotter, session, pv_module=pv_module)
 
@@ -1450,6 +1605,7 @@ def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_modul
 def switch_next_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _store_shared_camera_state(plotter, session)
     session.activate_next()
     render_active_graph(plotter, session, pv_module=pv_module)
 
@@ -1632,6 +1788,7 @@ def dispatch_ui_click(
         if hitbox.action == "switch-file" and hitbox.index is not None:
             _clear_cursor_edit(session)
             _end_cursor_drag(session)
+            _store_shared_camera_state(plotter, session)
             session.active_index = hitbox.index
             render_active_graph(plotter, session, pv_module=pv_module)
             return True
@@ -1649,6 +1806,9 @@ def dispatch_ui_click(
             return True
         if hitbox.action == "toggle-cursor":
             toggle_cursor(plotter, session)
+            return True
+        if hitbox.action == "toggle-camera-sync":
+            toggle_camera_sync(plotter, session)
             return True
         if hitbox.action.startswith("edit-cursor-"):
             _begin_cursor_edit(plotter, session, hitbox.action[-1])  # type: ignore[arg-type]
@@ -1737,6 +1897,16 @@ def install_ui_mouse_observers(
     def _on_key_press(caller: Any, _event: str) -> None:
         _handle_cursor_key_press(plotter, session, caller)
 
+    def _on_wheel_forward(_caller: Any, _event: str) -> None:
+        _set_event_handled("MouseWheelForwardEvent", False)
+        if _travel_active_graph_camera(plotter, session, direction=1.0):
+            _set_event_handled("MouseWheelForwardEvent", True)
+
+    def _on_wheel_backward(_caller: Any, _event: str) -> None:
+        _set_event_handled("MouseWheelBackwardEvent", False)
+        if _travel_active_graph_camera(plotter, session, direction=-1.0):
+            _set_event_handled("MouseWheelBackwardEvent", True)
+
     def _on_interaction(_caller: Any, _event: str) -> None:
         if session.cursor_enabled and not session.cursor_dragging:
             render_cursor_crosshair(plotter, session)
@@ -1756,6 +1926,8 @@ def install_ui_mouse_observers(
         if hasattr(native_interactor, "AddObserver") and hasattr(native_interactor, "GetCommand"):
             _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
             _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+            _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
+            _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
         else:
             interactor.add_observer("MouseMoveEvent", _on_mouse_move)
             interactor.add_observer("LeftButtonPressEvent", _on_left_click)
@@ -1767,6 +1939,8 @@ def install_ui_mouse_observers(
         interactor.AddObserver("ConfigureEvent", _on_resize)
         _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
         _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+        _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
+        _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
         interactor.AddObserver("LeftButtonReleaseEvent", _on_left_release)
         interactor.AddObserver("KeyPressEvent", _on_key_press)
         interactor.AddObserver("InteractionEvent", _on_interaction)
@@ -1854,13 +2028,26 @@ def render_tools_button(plotter: Any, session: GraphViewerSession) -> None:
 
 
 def render_cursor_controls(plotter: Any, session: GraphViewerSession) -> None:
-    """Draw the cursor toggle and numeric coordinate input rows."""
+    """Draw camera synchronization and cursor controls."""
     if not session.tools_panel_visible:
         return
     panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
     inner_x = panel_x + TOOLS_PANEL_PADDING
     inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING
-    button_y = panel_top - TOOLS_PANEL_PADDING - COMMAND_BUTTON_HEIGHT
+    sync_button_y = panel_top - TOOLS_PANEL_PADDING - COMMAND_BUTTON_HEIGHT
+    sync_button_background = (0.10, 0.45, 0.31) if session.camera_sync_enabled else (0.19, 0.26, 0.34)
+    _add_ui_button(
+        plotter,
+        session.command_button_actors,
+        session.command_hitboxes,
+        label="Sync Camera",
+        action="toggle-camera-sync",
+        x=inner_x,
+        y=sync_button_y,
+        width=inner_width,
+        background=sync_button_background,
+    )
+    button_y = sync_button_y - COMMAND_BUTTON_HEIGHT - COMMAND_BUTTON_GAP
     has_active_file = session.active_file is not None
     active = session.cursor_enabled and has_active_file
     cursor_button_background = (0.10, 0.45, 0.31) if active else (
