@@ -12,6 +12,7 @@ from skelhub.core import GraphResult, SkeletonResult, VolumeData
 
 from .config import LaplacianConfig
 from .graphml import write_laplacian_graphml
+from .progress import LaplacianProgress
 from .rasterize import rasterize_graph_26conn
 from .skeleton import skeletonize_graph
 
@@ -57,6 +58,18 @@ class LaplacianBackend:
         warnings = []
         binary = data > 0
         input_voxels = int(np.count_nonzero(binary))
+        stages = ["prepare input"]
+        if input_voxels:
+            stages.extend(("construct dense graph", "contract graph", "refine graph", "clean graph", "rasterize graph"))
+            if config.graph_output:
+                stages.append("write cleaned graph")
+            if config.graph_original:
+                stages.append("write refined graph")
+        stages.append("assemble result")
+        progress = LaplacianProgress(log=log, stages=tuple(stages), started=started) if log else None
+        if progress:
+            progress.start("prepare input")
+            progress.finish(f"foreground_voxels={input_voxels}")
 
         if input_voxels == 0:
             warnings.append("Input volume contained no foreground voxels.")
@@ -73,8 +86,6 @@ class LaplacianBackend:
                 "final_cycle_area": 0.0,
             }
         else:
-            if log:
-                log("Running VascGraph Laplacian graph contraction...")
             graph, original_graph, graph_metadata = skeletonize_graph(
                 binary,
                 speed_param=config.speed_param,
@@ -87,24 +98,34 @@ class LaplacianBackend:
                 n_free_iteration=config.n_free_iteration,
                 area_param=config.area_param,
                 poly_param=config.poly_param,
+                progress=progress,
             )
+            if progress:
+                progress.start("rasterize graph")
             skeleton = rasterize_graph_26conn(original_graph, binary.shape)
+            if progress:
+                progress.finish(f"foreground_voxels={int(np.count_nonzero(skeleton))}")
 
         graph_output_path = None
         if config.graph_output and graph is not None:
+            if progress:
+                progress.start("write cleaned graph")
             write_laplacian_graphml(graph, config.graph_output, volume.affine, binary.shape)
             graph_output_path = str(config.graph_output)
-            if log:
-                log(f"Cleaned Laplacian graph written to {graph_output_path}")
+            if progress:
+                progress.finish(f"output={graph_output_path}")
 
         graph_original_path = None
         if config.graph_original and original_graph is not None:
+            if progress:
+                progress.start("write refined graph")
             write_laplacian_graphml(original_graph, config.graph_original, volume.affine, binary.shape)
             graph_original_path = str(config.graph_original)
-            if log:
-                log(f"Original refined Laplacian graph written to {graph_original_path}")
+            if progress:
+                progress.finish(f"output={graph_original_path}")
 
-        elapsed = time.perf_counter() - started
+        if progress:
+            progress.start("assemble result")
         output_voxels = int(np.count_nonzero(skeleton))
         if input_voxels and output_voxels == 0:
             warnings.append("Laplacian graph rasterization produced no skeleton voxels.")
@@ -128,6 +149,10 @@ class LaplacianBackend:
             "graph_output": graph_output_path,
             "graph_original": graph_original_path,
         }
+        elapsed = time.perf_counter() - started
+        if progress:
+            progress.finish(f"output_voxels={output_voxels}, runtime={elapsed:.2f}s")
+            elapsed = time.perf_counter() - started
 
         return SkeletonResult(
             algorithm_name=self.name,

@@ -51,6 +51,7 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 - `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`.
 - `--graph_original PATH`: write the refined graph before `post_node_cleaning()`.
 - `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, `--poly_param`: expose the VascGraph demo skeleton settings.
+- `--verbose`: show the current pipeline stage, a stage-completion progress bar, elapsed/estimated remaining time, and contraction iteration convergence updates.
 
 ### Notes and Limits
 
