@@ -2,6 +2,22 @@
 
 ## 2026-05-27 AEST
 
+### Laplacian verbose progress reporting
+
+1. Summary of what changed
+- Added verbose Laplacian pipeline reporting with current-stage labels, a stage-completion progress bar, elapsed time, and estimated remaining-time countdown.
+- Added live graph-contraction iteration reports including node count, cycle area, and convergence target.
+- Kept reporting behind the existing `--verbose`/`log` route so quiet execution and shared backend contracts remain unchanged.
+
+2. Tests run
+- `python -m py_compile skelhub/algorithms/laplacian/progress.py skelhub/algorithms/laplacian/backend.py skelhub/algorithms/laplacian/skeleton.py skelhub/algorithms/laplacian/contract_graph.py tests/test_laplacian_progress.py`
+- `python -m pytest tests/test_laplacian_progress.py -q` (`2 passed`)
+- `python -m pytest -q` (`15 passed`)
+- `python -m skelhub run --algorithm laplacian --input tests/fixtures/straight_tube.nii.gz --output /tmp/skelhub_laplacian_progress.nii.gz --verbose`
+- `git diff --check`
+
+## 2026-05-27 AEST
+
 ### World-coordinate NIfTI rendering and synchronized camera
 
 1. Summary of what changed

@@ -7,6 +7,7 @@ import numpy as np
 import scipy as sp
 
 from .base_graph import BaseGraph
+from .progress import LaplacianProgress
 from .tools import cycle_area_all, is_skeleton_nodes, numpy_fill
 
 
@@ -129,7 +130,7 @@ class ContractGraph(BaseGraph):
         for index, node in enumerate(self.Nodes):
             self.Graph.nodes[int(node)]["pos"] = new_pos[index]
 
-    def _contract_graph(self) -> None:
+    def _contract_graph(self, progress: LaplacianProgress | None = None) -> None:
         self.Iteration = 1
         check = True
         last_area = float(getattr(self.Graph, "Area", 0.0))
@@ -144,6 +145,11 @@ class ContractGraph(BaseGraph):
             if self.Iteration >= self.NFreeIteration:
                 check, last_area = self._check_iter()
                 self.Graph.Area = last_area
+            if progress:
+                progress.detail(
+                    f"iteration={self.Iteration}, nodes={self.Graph.number_of_nodes()}, "
+                    f"cycle_area={last_area:.3f}, target<={self.AreaThreshold:.3f}"
+                )
             self.Iteration += 1
 
             if self.Iteration > 500:
@@ -161,6 +167,7 @@ class ContractGraph(BaseGraph):
         ClusteringResolution: float = 1.0,
         StopParam: float = 0.01,
         Alleviate_param: float = 10.0,
+        progress: LaplacianProgress | None = None,
     ) -> None:
         self.DistParam = DistParam
         self.MedParam = MedParam
@@ -170,7 +177,7 @@ class ContractGraph(BaseGraph):
         self.ClusteringResolution = ClusteringResolution
         self.StopParam = StopParam
         self.AlleviateParam = Alleviate_param
-        self._contract_graph()
+        self._contract_graph(progress=progress)
 
     def GetOutput(self):
         return self.Graph
