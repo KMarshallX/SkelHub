@@ -2,6 +2,54 @@
 
 ## 2026-05-27 AEST
 
+### World-coordinate NIfTI rendering and synchronized camera
+
+1. Summary of what changed
+- Rendered NIfTI foreground blocks in physical/world coordinates from the image affine, so compatible NIfTI and GraphML `X/Y/Z` data occupy the same displayed frame.
+- Changed the Tools-panel `Sync Camera` toggle, enabled by default, to preserve the exact displayed-world camera when switching among GraphML and NIfTI files.
+- Kept source voxel indices in NIfTI visualization data while displaying and editing NIfTI cursor `X/Y/Z` values in world coordinates.
+
+2. Architecture decisions made
+- Applied the full affine to NIfTI rendering: voxel centres use affine-transformed locations and the shared glyph cube uses the affine linear component to preserve scale, rotation, permutation, and flip.
+- Replaced the pending relative-bounds camera pose with the existing complete `CameraState`, including projection and parallel-scale properties.
+- Used affine-transformed voxel-cell corner bounds for NIfTI cursor initialization and empty-volume handling, while retaining per-file cursor positions.
+
+3. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py tests/test_graph_camera_travel.py tests/test_graph_camera_sync.py`
+- `python -m pytest -q` (`13 passed`)
+- `python -m skelhub graphviz --help`
+- `git diff --check`
+- Off-screen PyVista smoke check on the ex-vivo NIfTI/GraphML pair, confirming affine-transformed graph `voxel_pos` values match stored `X/Y/Z` and synchronized file switching retains the same world camera.
+
+4. Limitations and remaining risks
+- Synchronized views assume that loaded GraphML `X/Y/Z` coordinates and NIfTI affines describe the same world frame; unregistered files may require disabling `Sync Camera`.
+- Desktop review remains needed to confirm the expanded Tools-panel layout, physical overlay appearance, and camera navigation feel on representative scenes.
+
+## 2026-05-27 AEST
+
+### Unlimited GraphML camera travel
+
+1. Summary of what changed
+- Replaced focal-point-limited wheel zoom for active GraphML scenes with forward/backward travel along the current camera direction.
+- Kept standard PyVista wheel navigation unchanged for NIfTI inputs and empty viewer sessions.
+- Preserved stored initial camera state so `Reset View` restores the original GraphML framing after travelling through the scene.
+
+2. Architecture decisions made
+- Implemented the behavior in the existing cancellable VTK observer path, translating camera position and focal point together by `2.5%` of their distance for each wheel event.
+- Kept the behavior private to the interactive visualization module, without changing CLI arguments or public APIs.
+
+3. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py`
+- `python -m pytest tests/test_graph_camera_travel.py -q`
+- `python -m skelhub graphviz --help`
+- `git diff --check`
+- Off-screen PyVista GraphML smoke check covering custom forward camera travel and reset-to-initial view.
+
+4. Remaining risks
+- The exact mouse-wheel travel feel should still be checked in a desktop viewer on a representative large GraphML graph.
+
+## 2026-05-27 AEST
+
 ### Movable Tools-panel cursor
 
 1. Summary of what changed
