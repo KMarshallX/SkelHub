@@ -1,5 +1,69 @@
 # Development Log
 
+## 2026-05-27 AEST
+
+### Movable Tools-panel cursor
+
+1. Summary of what changed
+- Added a Tools-panel `Enable Cursor` toggle and editable `X`, `Y`, and `Z` coordinate rows for a per-file viewport crosshair, including restored enable state when returning to a loaded file.
+- Added camera-plane left-drag movement and retained the enabled crosshair when the Tools panel is hidden.
+- Preserved existing scene coordinate behavior: GraphML coordinates remain rendered `X/Y/Z`, while NIfTI cursor values remain voxel-index coordinates.
+
+2. Architecture decisions made
+- Implemented the crosshair and numeric fields through the existing PyVista/VTK overlay and observer approach, without adding dependencies or changing public viewer/CLI interfaces.
+- Kept cursor positions per loaded file rather than attempting synchronization between GraphML world coordinates and NIfTI voxel-index coordinates.
+
+3. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py skelhub/api.py`
+- `python -m skelhub graphviz --help`
+- `git diff --check`
+- Off-screen PyVista cursor interaction smoke check covering Tools-panel rows, activation initialization, hidden-panel persistence, numeric commit/cancel/invalid entry, camera-plane dragging, per-file GraphML/NIfTI cursor restoration, no-file activation blocking, and continued NIfTI appearance-control hiding.
+
+## 2026-05-27 AEST
+
+### Instanced NIfTI block rendering
+
+1. Summary of what changed
+- Optimized interactive NIfTI display in `skelhub graphviz` by using one VTK unit-cube glyph source instanced at each foreground voxel.
+- Kept NIfTI validation, `[NIfTI]` status labeling, import warning behavior, unit-block appearance, and the exported `build_nifti_meshes(...)` helper unchanged.
+
+2. Architecture decisions made
+- Applied instanced rendering to all non-empty interactive NIfTI scenes because it preserves the existing visible block contract without needing an arbitrary dense-volume cutoff.
+- Kept the optimization private to scene actor construction, parallel to the existing optimized GraphML scene paths.
+
+3. Performance basis and tests run
+- Representative input `test_outputs/exvivo/Skel_S64520_m0_SLA_colliculi_cropped_smaller_vessels_binary_th_0.1_masked_cleaned_cc_10.nii.gz` contains `62,478` foreground voxels.
+- Baseline expanded block mesh produced `499,824` points and `374,868` cells using approximately `32.42 MB` of mesh storage; the instanced point-cloud plus shared-cube setup used approximately `2.43 MB` of input geometry storage in the inspection run.
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py skelhub/api.py`
+- `python -m skelhub graphviz --help`
+- Focused behavior smoke check covering unchanged NIfTI loading/foreground extraction, empty-volume handling, instanced mapper source/input geometry, block colors/edge visibility, compatibility of `build_nifti_meshes(...)`, and active-scene actor creation.
+- Off-screen representative-volume render smoke check; in this run expanded mesh setup took approximately `0.0562 s`, while instanced actor setup took approximately `0.0038 s`.
+
+## 2026-05-27 AEST
+
+### Graph viewer Tools side panel
+
+1. Summary of what changed
+- Moved the `skelhub graphviz` command controls and GraphML appearance sliders into a pure-PyVista right-side `Tools` panel that starts hidden and toggles from a persistent top-right button.
+- Confirmed the `Tools` toggle is rendered at viewer initialization and remains visible when its panel is opened or closed.
+- Repositioned right-side controls on VTK `ConfigureEvent` so a desktop startup resize or later window resize cannot leave the `Tools` button beyond the visible right edge.
+- Initializes/maps the PyVista desktop window in non-blocking mode, redraws the right-side controls using its actual startup dimensions, then starts normal interaction; this covers backends that do not emit `ConfigureEvent` during initial creation.
+- Kept the top-left loaded-file dropdown unchanged and preserved the existing `Import`, `Close`, previous/next, `Refresh`, and `Reset View` behaviors.
+- Added Node Size and Edge Thickness `-` / `+` controls that adjust pending values in `0.1` increments while preserving refresh-to-apply rendering.
+
+2. Architecture decisions made
+- Kept the viewer dependency-free beyond the existing PyVista/VTK stack by rendering the side panel as in-canvas overlay actors and hitboxes.
+- Continued to hide GraphML appearance controls for active NIfTI files while leaving panel session commands available.
+- Recreated only slider widgets after step-button clicks so their visible values track pending settings without rebuilding graph geometry.
+
+3. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py skelhub/visualization/__init__.py skelhub/cli/main.py skelhub/api.py`
+- `python -m skelhub graphviz --help`
+- Focused fake-plotter interaction smoke check covering Tools visibility toggling, unchanged file hitboxes, panel actions, slider step/clamping behavior, deferred appearance application, and NIfTI appearance-control hiding.
+- Focused resize-observer smoke check confirming a smaller post-startup render-window size redraws the persistent `Tools` toggle inside the new right edge.
+- Focused desktop-initialization smoke check confirming the first non-blocking show establishes a smaller native window size before `Tools` is redrawn and normal interaction begins.
+- Off-screen PyVista smoke check loading `test_data/simple_graph/sample.graphml`, opening the Tools panel, stepping Node Size, refreshing the graph, rendering, and closing the plotter.
+
 ## 2026-05-26 AEST
 
 ### Dual-space Voreen-style feature extraction

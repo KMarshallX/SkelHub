@@ -14,6 +14,7 @@ import numpy as np
 
 VisualizationFileKind = Literal["graphml", "nifti"]
 GraphRenderMode = Literal["detailed", "dense"]
+CursorAxis = Literal["x", "y", "z"]
 NODE_SIZE_RANGE = (0.5, 40.0)
 EDGE_THICKNESS_RANGE = (0.1, 10.0)
 DENSE_GRAPH_NODE_THRESHOLD = 1_000
@@ -22,11 +23,20 @@ FILE_PANEL_X = 10
 FILE_PANEL_TOP_MARGIN = 12
 FILE_PANEL_WIDTH = 300
 FILE_PANEL_ROW_HEIGHT = 22
-COMMAND_BUTTON_BOTTOM_MARGIN = 18
-COMMAND_BUTTON_RIGHT_MARGIN = 28
-COMMAND_BUTTON_GAP = 12
+TOOLS_PANEL_RIGHT_MARGIN = 18
+TOOLS_PANEL_TOP_MARGIN = 12
+TOOLS_BUTTON_WIDTH = 76
+TOOLS_PANEL_WIDTH = 292
+TOOLS_PANEL_HEIGHT = 436
+TOOLS_PANEL_GAP = 8
+TOOLS_PANEL_PADDING = 14
+COMMAND_BUTTON_GAP = 10
 COMMAND_BUTTON_HEIGHT = 26
-COMMAND_TEXT_Y_OFFSET = 6
+CURSOR_ROWS_HEIGHT = 144
+CURSOR_FIELD_LABEL_WIDTH = 28
+CURSOR_CROSSHAIR_RADIUS = 11
+SLIDER_STEP = 0.1
+SLIDER_STEP_BUTTON_SIZE = 26
 SLIDER_COLOR = "#9ea4aa"
 
 
@@ -98,6 +108,8 @@ class LoadedVisualizationFile:
     kind: VisualizationFileKind
     data: GraphVisualizationData | NiftiVisualizationData
     initial_camera_state: CameraState | None = None
+    cursor_position: tuple[float, float, float] | None = None
+    cursor_enabled: bool = False
 
 
 LoadedGraphFile = LoadedVisualizationFile
@@ -132,12 +144,23 @@ class GraphViewerSession:
     dense_node_actor: Any | None = None
     dense_edge_actor: Any | None = None
     file_panel_actors: list[Any] = field(default_factory=list)
+    tools_button_actors: list[Any] = field(default_factory=list)
+    tools_panel_actors: list[Any] = field(default_factory=list)
     command_button_actors: list[Any] = field(default_factory=list)
+    cursor_actors: list[Any] = field(default_factory=list)
     slider_widgets: list[Any] = field(default_factory=list)
     file_hitboxes: list[UIHitbox] = field(default_factory=list)
+    tools_hitboxes: list[UIHitbox] = field(default_factory=list)
     command_hitboxes: list[UIHitbox] = field(default_factory=list)
     sliders_visible: bool = False
     file_list_open: bool = False
+    tools_panel_visible: bool = False
+    cursor_dragging: bool = False
+    cursor_drag_display_depth: float | None = None
+    cursor_edit_axis: CursorAxis | None = None
+    cursor_edit_buffer: str = ""
+    cursor_edit_invalid: bool = False
+    cursor_edit_replace_pending: bool = False
     error_actor: Any | None = None
 
     def __post_init__(self) -> None:
@@ -173,6 +196,17 @@ class GraphViewerSession:
     def active_kind(self) -> VisualizationFileKind | None:
         active = self.active_file
         return active.kind if active is not None else None
+
+    @property
+    def cursor_enabled(self) -> bool:
+        active = self.active_file
+        return bool(active is not None and active.cursor_enabled)
+
+    @cursor_enabled.setter
+    def cursor_enabled(self, enabled: bool) -> None:
+        active = self.active_file
+        if active is not None:
+            active.cursor_enabled = bool(enabled)
 
     def load_graph(self, input_path: str | Path) -> LoadedGraphFile:
         return self.load_visualization(input_path)
@@ -600,6 +634,38 @@ def build_nifti_meshes(
     return NiftiVisualizationMeshes(blocks=block_mesh)
 
 
+def _build_instanced_nifti_actor(
+    nifti_data: NiftiVisualizationData,
+    *,
+    pv_module: Any | None = None,
+) -> Any | None:
+    """Build one shared unit-cube source instanced at foreground voxels."""
+    if nifti_data.voxel_count == 0:
+        return None
+    pv = _import_pyvista() if pv_module is None else pv_module
+
+    try:
+        from vtkmodules.vtkRenderingCore import vtkActor, vtkGlyph3DMapper
+    except ImportError as exc:  # pragma: no cover - PyVista installations include VTK
+        raise GraphVisualizationError("VTK NIfTI block rendering could not be initialized.") from exc
+
+    voxel_cloud = pv.PolyData(nifti_data.voxel_positions)
+    cube = pv.Cube(x_length=1.0, y_length=1.0, z_length=1.0)
+    mapper = vtkGlyph3DMapper()
+    mapper.SetInputData(voxel_cloud)
+    mapper.SetSourceData(cube)
+    mapper.OrientOff()
+    mapper.ScalingOff()
+    mapper.ScalarVisibilityOff()
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(76 / 255, 120 / 255, 168 / 255)
+    actor.GetProperty().SetEdgeVisibility(True)
+    actor.GetProperty().SetEdgeColor(31 / 255, 41 / 255, 51 / 255)
+    return actor
+
+
 def build_graph_plotter(
     graph_data: GraphVisualizationData | None,
     options: GraphVisualizationOptions,
@@ -871,6 +937,174 @@ def _set_error(plotter: Any, session: GraphViewerSession, message: str | None) -
     )
 
 
+def _scene_cursor_center(active_file: LoadedVisualizationFile) -> tuple[float, float, float]:
+    """Return the initial cursor position in the active file's scene coordinates."""
+    if active_file.kind == "graphml":
+        positions = active_file.data.node_positions  # type: ignore[union-attr]
+    else:
+        nifti_data = active_file.data
+        positions = nifti_data.voxel_positions  # type: ignore[union-attr]
+        if positions.shape[0] == 0:
+            return tuple((float(size) - 1.0) / 2.0 for size in nifti_data.shape)  # type: ignore[union-attr]
+    lower = positions.min(axis=0)
+    upper = positions.max(axis=0)
+    return tuple(float(value) for value in (lower + upper) / 2.0)  # type: ignore[return-value]
+
+
+def _ensure_cursor_position(session: GraphViewerSession) -> tuple[float, float, float] | None:
+    active_file = session.active_file
+    if active_file is None:
+        return None
+    if active_file.cursor_position is None:
+        active_file.cursor_position = _scene_cursor_center(active_file)
+    return active_file.cursor_position
+
+
+def _clear_cursor_edit(session: GraphViewerSession) -> None:
+    session.cursor_edit_axis = None
+    session.cursor_edit_buffer = ""
+    session.cursor_edit_invalid = False
+    session.cursor_edit_replace_pending = False
+
+
+def _format_cursor_coordinate(value: float) -> str:
+    return f"{float(value):.6g}"
+
+
+def _set_cursor_position(session: GraphViewerSession, position: Sequence[float]) -> bool:
+    active_file = session.active_file
+    if active_file is None:
+        return False
+    values = tuple(float(value) for value in position)
+    if len(values) != 3 or not np.isfinite(values).all():
+        return False
+    active_file.cursor_position = values  # type: ignore[assignment]
+    return True
+
+
+def _cursor_display_point(plotter: Any, position: Sequence[float]) -> tuple[float, float, float] | None:
+    renderer = getattr(plotter, "renderer", None)
+    if renderer is None or not all(
+        hasattr(renderer, method_name) for method_name in ("SetWorldPoint", "WorldToDisplay", "GetDisplayPoint")
+    ):
+        return None
+    renderer.SetWorldPoint(float(position[0]), float(position[1]), float(position[2]), 1.0)
+    renderer.WorldToDisplay()
+    display_point = renderer.GetDisplayPoint()
+    if display_point is None or len(display_point) < 3 or not np.isfinite(display_point[:3]).all():
+        return None
+    return tuple(float(value) for value in display_point[:3])  # type: ignore[return-value]
+
+
+def _cursor_world_point(plotter: Any, x_pos: int, y_pos: int, depth: float) -> tuple[float, float, float] | None:
+    renderer = getattr(plotter, "renderer", None)
+    if renderer is None or not all(
+        hasattr(renderer, method_name) for method_name in ("SetDisplayPoint", "DisplayToWorld", "GetWorldPoint")
+    ):
+        return None
+    renderer.SetDisplayPoint(float(x_pos), float(y_pos), float(depth))
+    renderer.DisplayToWorld()
+    world_point = renderer.GetWorldPoint()
+    if world_point is None or len(world_point) < 4 or float(world_point[3]) == 0.0:
+        return None
+    position = tuple(float(world_point[index]) / float(world_point[3]) for index in range(3))
+    return position if np.isfinite(position).all() else None
+
+
+def render_cursor_crosshair(plotter: Any, session: GraphViewerSession) -> None:
+    """Project and draw the active file's 3D cursor as a viewport crosshair."""
+    _remove_actor_list(plotter, session.cursor_actors)
+    if not session.cursor_enabled:
+        return
+    position = _ensure_cursor_position(session)
+    if position is None:
+        session.cursor_enabled = False
+        return
+    display_point = _cursor_display_point(plotter, position)
+    if display_point is None:
+        return
+    center_x, center_y = (int(round(display_point[0])), int(round(display_point[1])))
+    radius = CURSOR_CROSSHAIR_RADIUS
+    session.cursor_actors.extend(
+        (
+            _add_overlay_rect(
+                plotter,
+                x=center_x - radius,
+                y=center_y - 1,
+                width=2 * radius + 1,
+                height=2,
+                color=(0.93, 0.33, 0.08),
+                opacity=0.98,
+            ),
+            _add_overlay_rect(
+                plotter,
+                x=center_x - 1,
+                y=center_y - radius,
+                width=2,
+                height=2 * radius + 1,
+                color=(0.93, 0.33, 0.08),
+                opacity=0.98,
+            ),
+        )
+    )
+
+
+def toggle_cursor(plotter: Any, session: GraphViewerSession) -> None:
+    """Enable or disable the per-file scene cursor."""
+    if session.active_file is None:
+        return
+    session.cursor_enabled = not session.cursor_enabled
+    session.cursor_dragging = False
+    session.cursor_drag_display_depth = None
+    _clear_cursor_edit(session)
+    if session.cursor_enabled:
+        _ensure_cursor_position(session)
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+
+
+def _begin_cursor_edit(plotter: Any, session: GraphViewerSession, axis: CursorAxis) -> None:
+    if not session.cursor_enabled:
+        return
+    position = _ensure_cursor_position(session)
+    if position is None:
+        return
+    index = ("x", "y", "z").index(axis)
+    session.cursor_edit_axis = axis
+    session.cursor_edit_buffer = _format_cursor_coordinate(position[index])
+    session.cursor_edit_invalid = False
+    session.cursor_edit_replace_pending = True
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+
+
+def _commit_cursor_edit(plotter: Any, session: GraphViewerSession) -> bool:
+    axis = session.cursor_edit_axis
+    position = _ensure_cursor_position(session)
+    if axis is None or position is None:
+        return False
+    try:
+        value = float(session.cursor_edit_buffer)
+    except ValueError:
+        value = float("nan")
+    if not np.isfinite(value):
+        session.cursor_edit_invalid = True
+        render_tools_panel(plotter, session)
+        if hasattr(plotter, "render"):
+            plotter.render()
+        return False
+    next_position = list(position)
+    next_position[("x", "y", "z").index(axis)] = value
+    _set_cursor_position(session, next_position)
+    _clear_cursor_edit(session)
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+    return True
+
+
 def _camera_tuple(camera: Any, property_name: str, getter_name: str) -> tuple[float, ...] | None:
     if hasattr(camera, getter_name):
         value = getattr(camera, getter_name)()
@@ -988,7 +1222,7 @@ def render_active_graph(
     active_file = session.active_file
     if active_file is None:
         _set_status(plotter, session)
-        render_graph_sliders(plotter, session)
+        render_tools_panel(plotter, session)
         if hasattr(plotter, "render"):
             plotter.render()
         return
@@ -1008,15 +1242,18 @@ def render_active_graph(
     else:
         nifti_data = session.active_nifti_data
         if nifti_data is not None:
-            meshes = build_nifti_meshes(nifti_data, pv_module=pv_module)
-            if meshes.blocks is not None:
-                actor = plotter.add_mesh(meshes.blocks, color="#4c78a8", show_edges=True, edge_color="#1f2933")
+            actor = _build_instanced_nifti_actor(nifti_data, pv_module=pv_module)
+            if actor is not None:
+                try:
+                    plotter.add_actor(actor, render=False)
+                except TypeError:
+                    plotter.add_actor(actor)
                 session.graph_actors.append(actor)
     if reset_camera:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session)
     _set_status(plotter, session)
-    render_graph_sliders(plotter, session)
+    render_tools_panel(plotter, session)
     if hasattr(plotter, "render"):
         plotter.render()
 
@@ -1048,6 +1285,7 @@ def reset_active_view(plotter: Any, session: GraphViewerSession) -> None:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session)
     _set_status(plotter, session)
+    render_cursor_crosshair(plotter, session)
     if hasattr(plotter, "render"):
         plotter.render()
 
@@ -1196,16 +1434,22 @@ def load_graph_paths(
 
 
 def close_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
+    _clear_cursor_edit(session)
+    _end_cursor_drag(session)
     session.close_active_file()
     render_active_graph(plotter, session, pv_module=pv_module)
 
 
 def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
+    _clear_cursor_edit(session)
+    _end_cursor_drag(session)
     session.activate_previous()
     render_active_graph(plotter, session, pv_module=pv_module)
 
 
 def switch_next_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
+    _clear_cursor_edit(session)
+    _end_cursor_drag(session)
     session.activate_next()
     render_active_graph(plotter, session, pv_module=pv_module)
 
@@ -1275,7 +1519,7 @@ def install_drop_observer(
 
 
 def _all_hitboxes(session: GraphViewerSession) -> list[UIHitbox]:
-    return session.file_hitboxes + session.command_hitboxes
+    return session.file_hitboxes + session.tools_hitboxes + session.command_hitboxes
 
 
 def _event_position(caller: Any) -> tuple[int, int] | None:
@@ -1298,6 +1542,81 @@ def update_file_list_hover(plotter: Any, session: GraphViewerSession, x_pos: int
     return True
 
 
+def _inside_tools_panel(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
+    if not session.tools_panel_visible:
+        return False
+    panel_x, panel_top, panel_bottom = _tools_panel_geometry(plotter)
+    return panel_x <= x_pos <= panel_x + TOOLS_PANEL_WIDTH and panel_bottom <= y_pos <= panel_top
+
+
+def _begin_cursor_drag(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
+    if not session.cursor_enabled or session.active_file is None:
+        return False
+    if _inside_tools_panel(plotter, session, x_pos, y_pos):
+        return False
+    position = _ensure_cursor_position(session)
+    if position is None:
+        return False
+    display_point = _cursor_display_point(plotter, position)
+    if display_point is None:
+        return False
+    _clear_cursor_edit(session)
+    session.cursor_dragging = True
+    session.cursor_drag_display_depth = display_point[2]
+    return _update_cursor_drag(plotter, session, x_pos, y_pos)
+
+
+def _update_cursor_drag(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
+    if not session.cursor_dragging or session.cursor_drag_display_depth is None:
+        return False
+    position = _cursor_world_point(plotter, x_pos, y_pos, session.cursor_drag_display_depth)
+    if position is None or not _set_cursor_position(session, position):
+        return False
+    if session.tools_panel_visible:
+        render_tools_panel(plotter, session)
+    else:
+        render_cursor_crosshair(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+    return True
+
+
+def _end_cursor_drag(session: GraphViewerSession) -> None:
+    session.cursor_dragging = False
+    session.cursor_drag_display_depth = None
+
+
+def _event_key(caller: Any) -> tuple[str, str]:
+    key_sym = str(caller.GetKeySym()) if hasattr(caller, "GetKeySym") else ""
+    key_code = str(caller.GetKeyCode()) if hasattr(caller, "GetKeyCode") else ""
+    return key_sym, key_code
+
+
+def _handle_cursor_key_press(plotter: Any, session: GraphViewerSession, caller: Any) -> bool:
+    if session.cursor_edit_axis is None:
+        return False
+    key_sym, key_code = _event_key(caller)
+    if key_sym in ("Return", "KP_Enter") or key_code in ("\r", "\n"):
+        _commit_cursor_edit(plotter, session)
+        return True
+    if key_sym == "Escape":
+        _clear_cursor_edit(session)
+    elif key_sym in ("BackSpace", "Delete"):
+        session.cursor_edit_buffer = "" if session.cursor_edit_replace_pending else session.cursor_edit_buffer[:-1]
+        session.cursor_edit_invalid = False
+        session.cursor_edit_replace_pending = False
+    elif key_code in "0123456789.+-eE":
+        session.cursor_edit_buffer = key_code if session.cursor_edit_replace_pending else session.cursor_edit_buffer + key_code
+        session.cursor_edit_invalid = False
+        session.cursor_edit_replace_pending = False
+    else:
+        return False
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+    return True
+
+
 def dispatch_ui_click(
     plotter: Any,
     session: GraphViewerSession,
@@ -1311,12 +1630,28 @@ def dispatch_ui_click(
         if not hitbox.contains(x_pos, y_pos):
             continue
         if hitbox.action == "switch-file" and hitbox.index is not None:
+            _clear_cursor_edit(session)
+            _end_cursor_drag(session)
             session.active_index = hitbox.index
             render_active_graph(plotter, session, pv_module=pv_module)
             return True
         if hitbox.action == "open-file-list":
             session.file_list_open = True
             render_file_panel(plotter, session)
+            return True
+        if hitbox.action == "toggle-tools":
+            session.tools_panel_visible = not session.tools_panel_visible
+            if not session.tools_panel_visible:
+                _clear_cursor_edit(session)
+            render_tools_panel(plotter, session)
+            if hasattr(plotter, "render"):
+                plotter.render()
+            return True
+        if hitbox.action == "toggle-cursor":
+            toggle_cursor(plotter, session)
+            return True
+        if hitbox.action.startswith("edit-cursor-"):
+            _begin_cursor_edit(plotter, session, hitbox.action[-1])  # type: ignore[arg-type]
             return True
         if hitbox.action == "import":
             import_graph_from_dialog(plotter, session, pv_module=pv_module)
@@ -1336,6 +1671,18 @@ def dispatch_ui_click(
         if hitbox.action == "reset-view":
             reset_active_view(plotter, session)
             return True
+        if hitbox.action == "node-decrease":
+            adjust_graph_preview(plotter, session, option="node", delta=-SLIDER_STEP)
+            return True
+        if hitbox.action == "node-increase":
+            adjust_graph_preview(plotter, session, option="node", delta=SLIDER_STEP)
+            return True
+        if hitbox.action == "edge-decrease":
+            adjust_graph_preview(plotter, session, option="edge", delta=-SLIDER_STEP)
+            return True
+        if hitbox.action == "edge-increase":
+            adjust_graph_preview(plotter, session, option="edge", delta=SLIDER_STEP)
+            return True
     return False
 
 
@@ -1345,85 +1692,297 @@ def install_ui_mouse_observers(
     *,
     pv_module: Any | None = None,
 ) -> bool:
-    """Install hover and click observers for custom overlay controls."""
+    """Install mouse and resize observers for custom overlay controls."""
     interactor = getattr(plotter, "iren", None)
     if interactor is None:
         return False
+    native_interactor = getattr(interactor, "interactor", interactor)
+    cancellable_observers: dict[str, int] = {}
+
+    def _set_event_handled(event_name: str, handled: bool) -> None:
+        observer_id = cancellable_observers.get(event_name)
+        if observer_id is None or not hasattr(native_interactor, "GetCommand"):
+            return
+        command = native_interactor.GetCommand(observer_id)
+        if command is not None and hasattr(command, "SetAbortFlag"):
+            command.SetAbortFlag(1 if handled else 0)
+
+    def _on_resize(_caller: Any, _event: str) -> None:
+        render_tools_panel(plotter, session)
+        if hasattr(plotter, "render"):
+            plotter.render()
 
     def _on_mouse_move(caller: Any, _event: str) -> None:
+        _set_event_handled("MouseMoveEvent", False)
         position = _event_position(caller)
         if position is not None:
+            if _update_cursor_drag(plotter, session, *position):
+                _set_event_handled("MouseMoveEvent", True)
+                return
             update_file_list_hover(plotter, session, *position)
 
     def _on_left_click(caller: Any, _event: str) -> None:
+        _set_event_handled("LeftButtonPressEvent", False)
         position = _event_position(caller)
         if position is not None:
-            dispatch_ui_click(plotter, session, *position, pv_module=pv_module)
+            if dispatch_ui_click(plotter, session, *position, pv_module=pv_module):
+                _set_event_handled("LeftButtonPressEvent", True)
+                return
+            if _begin_cursor_drag(plotter, session, *position):
+                _set_event_handled("LeftButtonPressEvent", True)
+
+    def _on_left_release(_caller: Any, _event: str) -> None:
+        _end_cursor_drag(session)
+
+    def _on_key_press(caller: Any, _event: str) -> None:
+        _handle_cursor_key_press(plotter, session, caller)
+
+    def _on_interaction(_caller: Any, _event: str) -> None:
+        if session.cursor_enabled and not session.cursor_dragging:
+            render_cursor_crosshair(plotter, session)
+            if hasattr(plotter, "render"):
+                plotter.render()
+
+    def _add_cancellable_observer(event_name: str, callback: Any) -> None:
+        try:
+            observer_id = native_interactor.AddObserver(event_name, callback, 1.0)
+        except TypeError:
+            observer_id = native_interactor.AddObserver(event_name, callback)
+        if observer_id is not None:
+            cancellable_observers[event_name] = int(observer_id)
 
     if hasattr(interactor, "add_observer"):
-        interactor.add_observer("MouseMoveEvent", _on_mouse_move)
-        interactor.add_observer("LeftButtonPressEvent", _on_left_click)
+        interactor.add_observer("ConfigureEvent", _on_resize)
+        if hasattr(native_interactor, "AddObserver") and hasattr(native_interactor, "GetCommand"):
+            _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
+            _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+        else:
+            interactor.add_observer("MouseMoveEvent", _on_mouse_move)
+            interactor.add_observer("LeftButtonPressEvent", _on_left_click)
+        interactor.add_observer("LeftButtonReleaseEvent", _on_left_release)
+        interactor.add_observer("KeyPressEvent", _on_key_press)
+        interactor.add_observer("InteractionEvent", _on_interaction)
         return True
     if hasattr(interactor, "AddObserver"):
-        interactor.AddObserver("MouseMoveEvent", _on_mouse_move)
-        interactor.AddObserver("LeftButtonPressEvent", _on_left_click)
+        interactor.AddObserver("ConfigureEvent", _on_resize)
+        _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
+        _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+        interactor.AddObserver("LeftButtonReleaseEvent", _on_left_release)
+        interactor.AddObserver("KeyPressEvent", _on_key_press)
+        interactor.AddObserver("InteractionEvent", _on_interaction)
         return True
     return False
 
 
-def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
-    """Draw compact custom command buttons in a right-aligned lower row."""
-    _remove_actor_list(plotter, session.command_button_actors)
-    session.command_hitboxes.clear()
-    buttons = (
-        ("Import", "import", 68, (0.19, 0.26, 0.34)),
-        ("Close", "close", 68, (0.20, 0.24, 0.30)),
-        ("<", "previous", 40, (0.15, 0.22, 0.31)),
-        (">", "next", 40, (0.15, 0.22, 0.31)),
-        ("Refresh", "refresh", 78, (0.70, 0.08, 0.09)),
-        ("Reset View", "reset-view", 98, (0.05, 0.28, 0.68)),
+def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
+    """Return panel x, top edge, and bottom edge in display coordinates."""
+    window_width, height = _plotter_window_size(plotter)
+    panel_x = max(TOOLS_PANEL_RIGHT_MARGIN, window_width - TOOLS_PANEL_RIGHT_MARGIN - TOOLS_PANEL_WIDTH)
+    button_y = height - TOOLS_PANEL_TOP_MARGIN - COMMAND_BUTTON_HEIGHT
+    panel_top = button_y - TOOLS_PANEL_GAP
+    return panel_x, panel_top, panel_top - TOOLS_PANEL_HEIGHT
+
+
+def _add_ui_button(
+    plotter: Any,
+    actors: list[Any],
+    hitboxes: list[UIHitbox],
+    *,
+    label: str,
+    action: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int = COMMAND_BUTTON_HEIGHT,
+    background: tuple[float, float, float] = (0.19, 0.26, 0.34),
+    font_size: int = 8,
+) -> None:
+    actors.append(
+        _add_overlay_rect(
+            plotter,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            color=background,
+            opacity=0.92,
+        )
     )
-    window_width, _height = _plotter_window_size(plotter)
-    total_width = sum(width for _label, _action, width, _background in buttons)
-    total_width += COMMAND_BUTTON_GAP * (len(buttons) - 1)
-    x_pos = max(COMMAND_BUTTON_RIGHT_MARGIN, window_width - COMMAND_BUTTON_RIGHT_MARGIN - total_width)
-    y_pos = COMMAND_BUTTON_BOTTOM_MARGIN
-    for label, action, width, background in buttons:
-        text_width = max(len(label) * 7, 8)
-        text_x = x_pos + max((width - text_width) // 2, 2)
-        text_y = y_pos + COMMAND_TEXT_Y_OFFSET
+    text_width = max(len(label) * 7, 8)
+    text_x = x + max((width - text_width) // 2, 2)
+    text_y = y + max((height - 14) // 2, 2)
+    actors.append(
+        _add_overlay_text(
+            plotter,
+            label,
+            x=text_x,
+            y=text_y,
+            font_size=font_size,
+            color="white",
+        )
+    )
+    hitboxes.append(
+        UIHitbox(
+            name=f"button-{action}",
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            action=action,
+        )
+    )
+
+
+def render_tools_button(plotter: Any, session: GraphViewerSession) -> None:
+    """Draw the always-visible top-right Tools panel toggle."""
+    _remove_actor_list(plotter, session.tools_button_actors)
+    session.tools_hitboxes.clear()
+    window_width, height = _plotter_window_size(plotter)
+    x_pos = max(TOOLS_PANEL_RIGHT_MARGIN, window_width - TOOLS_PANEL_RIGHT_MARGIN - TOOLS_BUTTON_WIDTH)
+    y_pos = height - TOOLS_PANEL_TOP_MARGIN - COMMAND_BUTTON_HEIGHT
+    _add_ui_button(
+        plotter,
+        session.tools_button_actors,
+        session.tools_hitboxes,
+        label="Tools",
+        action="toggle-tools",
+        x=x_pos,
+        y=y_pos,
+        width=TOOLS_BUTTON_WIDTH,
+        background=(0.12, 0.16, 0.21) if not session.tools_panel_visible else (0.24, 0.34, 0.43),
+    )
+
+
+def render_cursor_controls(plotter: Any, session: GraphViewerSession) -> None:
+    """Draw the cursor toggle and numeric coordinate input rows."""
+    if not session.tools_panel_visible:
+        return
+    panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
+    inner_x = panel_x + TOOLS_PANEL_PADDING
+    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING
+    button_y = panel_top - TOOLS_PANEL_PADDING - COMMAND_BUTTON_HEIGHT
+    has_active_file = session.active_file is not None
+    active = session.cursor_enabled and has_active_file
+    cursor_button_background = (0.10, 0.45, 0.31) if active else (
+        (0.19, 0.26, 0.34) if has_active_file else (0.29, 0.31, 0.34)
+    )
+    _add_ui_button(
+        plotter,
+        session.command_button_actors,
+        session.command_hitboxes,
+        label="Enable Cursor",
+        action="toggle-cursor",
+        x=inner_x,
+        y=button_y,
+        width=inner_width,
+        background=cursor_button_background,
+    )
+
+    position = session.active_file.cursor_position if session.active_file is not None else None
+    field_x = inner_x + CURSOR_FIELD_LABEL_WIDTH
+    field_width = inner_width - CURSOR_FIELD_LABEL_WIDTH
+    for row_index, axis in enumerate(("x", "y", "z")):
+        y_pos = button_y - (row_index + 1) * (COMMAND_BUTTON_HEIGHT + COMMAND_BUTTON_GAP)
+        session.command_button_actors.append(
+            _add_overlay_text(plotter, f"{axis.upper()}:", x=inner_x, y=y_pos + 6, font_size=9, color="#d7dde5")
+        )
+        focused = session.cursor_edit_axis == axis
+        background = (0.42, 0.10, 0.12) if focused and session.cursor_edit_invalid else (
+            (0.24, 0.34, 0.43) if focused else (0.15, 0.20, 0.26)
+        )
         session.command_button_actors.append(
             _add_overlay_rect(
                 plotter,
-                x=x_pos,
+                x=field_x,
                 y=y_pos,
-                width=width,
+                width=field_width,
                 height=COMMAND_BUTTON_HEIGHT,
                 color=background,
-                opacity=0.92,
+                opacity=0.94,
             )
         )
+        if focused:
+            value_text = session.cursor_edit_buffer
+        elif position is not None:
+            value_text = _format_cursor_coordinate(position[row_index])
+        else:
+            value_text = "--"
         session.command_button_actors.append(
-            _add_overlay_text(
-                plotter,
-                label,
-                x=text_x,
-                y=text_y,
-                font_size=8 if len(label) > 1 else 11,
-                color="white",
-            )
+            _add_overlay_text(plotter, value_text, x=field_x + 8, y=y_pos + 6, font_size=9, color="white")
         )
         session.command_hitboxes.append(
             UIHitbox(
-                name=f"button-{action}",
-                x=x_pos,
+                name=f"cursor-{axis}",
+                x=field_x,
                 y=y_pos,
-                width=width,
+                width=field_width,
                 height=COMMAND_BUTTON_HEIGHT,
-                action=action,
+                action=f"edit-cursor-{axis}",
             )
         )
-        x_pos += width + COMMAND_BUTTON_GAP
+
+
+def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
+    """Draw command controls as three rows in the visible Tools panel."""
+    _remove_actor_list(plotter, session.command_button_actors)
+    session.command_hitboxes.clear()
+    if not session.tools_panel_visible:
+        return
+
+    panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
+    button_width = (TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - COMMAND_BUTTON_GAP) // 2
+    rows = (
+        (("Import", "import", (0.19, 0.26, 0.34)), ("Close", "close", (0.20, 0.24, 0.30))),
+        (("< (Prev)", "previous", (0.15, 0.22, 0.31)), ("> (Next)", "next", (0.15, 0.22, 0.31))),
+        (("Refresh", "refresh", (0.70, 0.08, 0.09)), ("Reset View", "reset-view", (0.05, 0.28, 0.68))),
+    )
+    for row_index, row in enumerate(rows):
+        y_pos = panel_top - TOOLS_PANEL_PADDING - COMMAND_BUTTON_HEIGHT - CURSOR_ROWS_HEIGHT - row_index * (
+            COMMAND_BUTTON_HEIGHT + COMMAND_BUTTON_GAP
+        )
+        for column, (label, action, background) in enumerate(row):
+            x_pos = panel_x + TOOLS_PANEL_PADDING + column * (button_width + COMMAND_BUTTON_GAP)
+            _add_ui_button(
+                plotter,
+                session.command_button_actors,
+                session.command_hitboxes,
+                label=label,
+                action=action,
+                x=x_pos,
+                y=y_pos,
+                width=button_width,
+                background=background,
+            )
+
+
+def _render_slider_step_buttons(plotter: Any, session: GraphViewerSession) -> None:
+    """Draw minus/plus controls surrounding GraphML appearance sliders."""
+    if not session.tools_panel_visible or session.active_kind == "nifti":
+        return
+    panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
+    slider_rows = (
+        ("node-decrease", "node-increase", panel_top - CURSOR_ROWS_HEIGHT - 167),
+        ("edge-decrease", "edge-increase", panel_top - CURSOR_ROWS_HEIGHT - 229),
+    )
+    for decrease_action, increase_action, centre_y in slider_rows:
+        button_y = centre_y - SLIDER_STEP_BUTTON_SIZE // 2
+        for label, action, x_pos in (
+            ("-", decrease_action, panel_x + TOOLS_PANEL_PADDING),
+            ("+", increase_action, panel_x + TOOLS_PANEL_WIDTH - TOOLS_PANEL_PADDING - SLIDER_STEP_BUTTON_SIZE),
+        ):
+            _add_ui_button(
+                plotter,
+                session.command_button_actors,
+                session.command_hitboxes,
+                label=label,
+                action=action,
+                x=x_pos,
+                y=button_y,
+                width=SLIDER_STEP_BUTTON_SIZE,
+                height=SLIDER_STEP_BUTTON_SIZE,
+                background=(0.15, 0.22, 0.31),
+                font_size=11,
+            )
 
 
 def _style_slider_widget(widget: Any) -> None:
@@ -1474,23 +2033,30 @@ def _remove_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
 
 
 def render_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
-    """Show GraphML appearance sliders unless the active file is NIfTI."""
-    should_show = session.active_kind != "nifti"
+    """Show GraphML appearance sliders only while the Tools panel is visible."""
+    should_show = session.tools_panel_visible and session.active_kind != "nifti"
     if not should_show:
         _remove_graph_sliders(plotter, session)
         return
     if session.sliders_visible:
         return
 
+    panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
+    width, height = _plotter_window_size(plotter)
+    slider_left = (panel_x + TOOLS_PANEL_PADDING + SLIDER_STEP_BUTTON_SIZE + 10) / width
+    slider_right = (panel_x + TOOLS_PANEL_WIDTH - TOOLS_PANEL_PADDING - SLIDER_STEP_BUTTON_SIZE - 10) / width
+    node_y = (panel_top - CURSOR_ROWS_HEIGHT - 167) / height
+    edge_y = (panel_top - CURSOR_ROWS_HEIGHT - 229) / height
+
     node_slider = plotter.add_slider_widget(
         lambda value: session.set_preview_node_size(value),
         NODE_SIZE_RANGE,
         value=session.preview_node_size,
-        title="Node",
-        pointa=(0.76, 0.93),
-        pointb=(0.96, 0.93),
+        title="Node Size",
+        pointa=(slider_left, node_y),
+        pointb=(slider_right, node_y),
         color=SLIDER_COLOR,
-        title_color="#40464d",
+        title_color="#d7dde5",
         style="modern",
         title_height=0.018,
         fmt="%.2g",
@@ -1503,11 +2069,11 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
         lambda value: session.set_preview_edge_thickness(value),
         EDGE_THICKNESS_RANGE,
         value=session.preview_edge_thickness,
-        title="Edge",
-        pointa=(0.76, 0.83),
-        pointb=(0.96, 0.83),
+        title="Edge Thickness",
+        pointa=(slider_left, edge_y),
+        pointb=(slider_right, edge_y),
         color=SLIDER_COLOR,
-        title_color="#40464d",
+        title_color="#d7dde5",
         style="modern",
         title_height=0.018,
         fmt="%.2g",
@@ -1520,12 +2086,80 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
     session.sliders_visible = True
 
 
+def _clamp_preview_step(value: float, delta: float, bounds: tuple[float, float]) -> float:
+    return float(round(min(max(value + delta, bounds[0]), bounds[1]), 10))
+
+
+def adjust_graph_preview(
+    plotter: Any,
+    session: GraphViewerSession,
+    *,
+    option: Literal["node", "edge"],
+    delta: float,
+) -> None:
+    """Adjust one pending appearance value without refreshing graph geometry."""
+    if option == "node":
+        next_value = _clamp_preview_step(float(session.preview_node_size), delta, NODE_SIZE_RANGE)
+        session.set_preview_node_size(next_value)
+    else:
+        next_value = _clamp_preview_step(float(session.preview_edge_thickness), delta, EDGE_THICKNESS_RANGE)
+        session.set_preview_edge_thickness(next_value)
+    _remove_graph_sliders(plotter, session)
+    render_graph_sliders(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+
+
+def render_tools_panel(plotter: Any, session: GraphViewerSession) -> None:
+    """Render or hide the right-side tool panel and its current controls."""
+    if session.cursor_enabled:
+        _ensure_cursor_position(session)
+    _remove_actor_list(plotter, session.tools_panel_actors)
+    render_tools_button(plotter, session)
+    if not session.tools_panel_visible:
+        _clear_cursor_edit(session)
+        render_command_buttons(plotter, session)
+        _remove_graph_sliders(plotter, session)
+        render_cursor_crosshair(plotter, session)
+        return
+
+    panel_x, panel_top, panel_bottom = _tools_panel_geometry(plotter)
+    session.tools_panel_actors.append(
+        _add_overlay_rect(
+            plotter,
+            x=panel_x,
+            y=panel_bottom,
+            width=TOOLS_PANEL_WIDTH,
+            height=TOOLS_PANEL_HEIGHT,
+            color=(0.12, 0.16, 0.21),
+            opacity=0.90,
+        )
+    )
+    render_command_buttons(plotter, session)
+    render_cursor_controls(plotter, session)
+    _render_slider_step_buttons(plotter, session)
+    _remove_graph_sliders(plotter, session)
+    render_graph_sliders(plotter, session)
+    render_cursor_crosshair(plotter, session)
+
+
 def add_graph_viewer_controls(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     """Add pure-PyVista controls for file/session management and appearance preview."""
     render_file_panel(plotter, session)
-    render_command_buttons(plotter, session)
-    render_graph_sliders(plotter, session)
+    render_tools_panel(plotter, session)
     install_ui_mouse_observers(plotter, session, pv_module=pv_module)
+
+
+def _show_interactive_plotter(plotter: Any, session: GraphViewerSession) -> None:
+    """Map the desktop window before placing right-aligned overlay controls."""
+    plotter.show(interactive_update=True, auto_close=False)
+    interactor = getattr(plotter, "iren", None)
+    if interactor is not None and hasattr(interactor, "process_events"):
+        interactor.process_events()
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+    plotter.show()
 
 
 def launch_graph_viewer(
@@ -1541,5 +2175,5 @@ def launch_graph_viewer(
     render_active_graph(plotter, session, pv_module=pv)
     add_graph_viewer_controls(plotter, session, pv_module=pv)
     install_drop_observer(plotter, session, pv_module=pv)
-    plotter.show()
+    _show_interactive_plotter(plotter, session)
     return 0
