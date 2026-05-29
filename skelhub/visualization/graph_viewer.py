@@ -41,7 +41,10 @@ SLIDER_COLOR = "#9ea4aa"
 GRAPH_MODE_BUTTON_Y_OFFSET = 146
 NODE_SLIDER_Y_OFFSET = 184
 EDGE_SLIDER_Y_OFFSET = 246
-GRAPH_CAMERA_TRAVEL_FACTOR = 0.025
+CAMERA_ZOOM_FRACTION = 0.12
+CAMERA_MIN_DISTANCE_FRACTION = 0.02
+CAMERA_MIN_DISTANCE = 1e-6
+CAMERA_ORBIT_RADIANS_PER_PIXEL = 0.005
 
 
 class GraphVisualizationError(RuntimeError):
@@ -167,6 +170,8 @@ class GraphViewerSession:
     tools_panel_visible: bool = False
     cursor_dragging: bool = False
     cursor_drag_display_depth: float | None = None
+    camera_orbit_dragging: bool = False
+    camera_orbit_last_position: tuple[int, int] | None = None
     cursor_edit_axis: CursorAxis | None = None
     cursor_edit_buffer: str = ""
     cursor_edit_invalid: bool = False
@@ -1133,6 +1138,8 @@ def toggle_cursor(plotter: Any, session: GraphViewerSession) -> None:
     session.cursor_enabled = not session.cursor_enabled
     session.cursor_dragging = False
     session.cursor_drag_display_depth = None
+    session.camera_orbit_dragging = False
+    session.camera_orbit_last_position = None
     _clear_cursor_edit(session)
     if session.cursor_enabled:
         _ensure_cursor_position(session)
@@ -1312,35 +1319,73 @@ def _store_shared_camera_state(plotter: Any, session: GraphViewerSession) -> Non
         session.shared_camera_state = state
 
 
-def _travel_active_graph_camera(plotter: Any, session: GraphViewerSession, *, direction: float) -> bool:
-    """Move a GraphML camera along its view direction without a focal-point limit."""
-    if session.active_kind != "graphml":
-        return False
+def _normalized(vector: np.ndarray) -> np.ndarray | None:
+    norm = float(np.linalg.norm(vector))
+    if not np.isfinite(norm) or norm <= 0:
+        return None
+    return vector / norm
 
-    camera = getattr(plotter, "camera", None)
-    if camera is None:
-        return False
-    position = _camera_tuple(camera, "position", "GetPosition")
-    focal_point = _camera_tuple(camera, "focal_point", "GetFocalPoint")
-    if position is None or focal_point is None:
-        return False
 
-    view_vector = np.asarray(focal_point, dtype=float) - np.asarray(position, dtype=float)
-    distance = float(np.linalg.norm(view_vector))
-    if not np.isfinite(distance) or distance <= 0:
-        return False
-    view_direction = view_vector / distance
-    offset = float(direction) * GRAPH_CAMERA_TRAVEL_FACTOR * distance * view_direction
-    next_position = tuple(float(value) for value in np.asarray(position, dtype=float) + offset)
-    next_focal_point = tuple(float(value) for value in np.asarray(focal_point, dtype=float) + offset)
+def _rotate_vector(vector: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
+    axis_unit = _normalized(axis)
+    if axis_unit is None or not np.isfinite(angle):
+        return vector
+    cos_angle = float(np.cos(angle))
+    sin_angle = float(np.sin(angle))
+    return (
+        vector * cos_angle
+        + np.cross(axis_unit, vector) * sin_angle
+        + axis_unit * float(np.dot(axis_unit, vector)) * (1.0 - cos_angle)
+    )
 
-    _set_camera_tuple(camera, "position", "SetPosition", next_position)
-    _set_camera_tuple(camera, "focal_point", "SetFocalPoint", next_focal_point)
+
+def _active_scene_center_and_radius(session: GraphViewerSession) -> tuple[np.ndarray, float] | None:
+    active_file = session.active_file
+    if active_file is None:
+        return None
+    lower, upper = _scene_bounds(active_file)
+    center = (lower + upper) / 2.0
+    radius = float(np.linalg.norm(upper - lower) / 2.0)
+    if not np.isfinite(radius) or radius <= 0:
+        radius = CAMERA_MIN_DISTANCE
+    return center, radius
+
+
+def _refresh_after_camera_navigation(plotter: Any, session: GraphViewerSession) -> None:
     _reset_camera_clipping_range(plotter)
     if session.cursor_enabled:
         render_cursor_crosshair(plotter, session)
     if hasattr(plotter, "render"):
         plotter.render()
+
+
+def _zoom_active_camera(plotter: Any, session: GraphViewerSession, *, direction: float) -> bool:
+    """Move the camera toward or away from the active object's displayed bounds center."""
+    scene = _active_scene_center_and_radius(session)
+    if scene is None:
+        return False
+    center, radius = scene
+
+    camera = getattr(plotter, "camera", None)
+    if camera is None:
+        return False
+    position = _camera_tuple(camera, "position", "GetPosition")
+    if position is None:
+        return False
+
+    offset = np.asarray(position, dtype=float) - center
+    distance = float(np.linalg.norm(offset))
+    if not np.isfinite(distance) or distance <= 0:
+        return False
+    min_distance = max(radius * CAMERA_MIN_DISTANCE_FRACTION, CAMERA_MIN_DISTANCE)
+    zoom_delta = CAMERA_ZOOM_FRACTION * distance
+    next_distance = distance - float(direction) * zoom_delta
+    if next_distance < min_distance:
+        next_distance = min_distance
+    next_position = center + (offset / distance) * next_distance
+
+    _set_camera_tuple(camera, "position", "SetPosition", tuple(float(value) for value in next_position))
+    _refresh_after_camera_navigation(plotter, session)
     return True
 
 
@@ -1606,6 +1651,7 @@ def load_graph_paths(
 def close_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _end_camera_orbit_drag(session)
     _store_shared_camera_state(plotter, session)
     session.close_active_file()
     if session.active_file is None:
@@ -1616,6 +1662,7 @@ def close_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: 
 def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _end_camera_orbit_drag(session)
     _store_shared_camera_state(plotter, session)
     session.activate_previous()
     render_active_graph(plotter, session, pv_module=pv_module)
@@ -1624,6 +1671,7 @@ def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_modul
 def switch_next_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     _clear_cursor_edit(session)
     _end_cursor_drag(session)
+    _end_camera_orbit_drag(session)
     _store_shared_camera_state(plotter, session)
     session.activate_next()
     render_active_graph(plotter, session, pv_module=pv_module)
@@ -1761,6 +1809,78 @@ def _end_cursor_drag(session: GraphViewerSession) -> None:
     session.cursor_drag_display_depth = None
 
 
+def _begin_camera_orbit_drag(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
+    if session.active_file is None:
+        return False
+    if _inside_tools_panel(plotter, session, x_pos, y_pos):
+        return False
+    if _active_scene_center_and_radius(session) is None:
+        return False
+    if getattr(plotter, "camera", None) is None:
+        return False
+    session.camera_orbit_dragging = True
+    session.camera_orbit_last_position = (x_pos, y_pos)
+    return True
+
+
+def _update_camera_orbit_drag(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
+    if not session.camera_orbit_dragging or session.camera_orbit_last_position is None:
+        return False
+    last_x, last_y = session.camera_orbit_last_position
+    session.camera_orbit_last_position = (x_pos, y_pos)
+    dx = x_pos - last_x
+    dy = y_pos - last_y
+    if dx == 0 and dy == 0:
+        return True
+
+    scene = _active_scene_center_and_radius(session)
+    camera = getattr(plotter, "camera", None)
+    if scene is None or camera is None:
+        return False
+    center, _radius = scene
+    position = _camera_tuple(camera, "position", "GetPosition")
+    view_up = _camera_tuple(camera, "up", "GetViewUp")
+    if position is None or view_up is None:
+        return False
+
+    offset = np.asarray(position, dtype=float) - center
+    distance = float(np.linalg.norm(offset))
+    if not np.isfinite(distance) or distance <= 0:
+        return False
+    up = _normalized(np.asarray(view_up, dtype=float))
+    if up is None:
+        return False
+    view_direction = _normalized(-offset)
+    if view_direction is None:
+        return False
+    right = _normalized(np.cross(view_direction, up))
+    if right is None:
+        return False
+
+    yaw = -float(dx) * CAMERA_ORBIT_RADIANS_PER_PIXEL
+    pitch = -float(dy) * CAMERA_ORBIT_RADIANS_PER_PIXEL
+    next_offset = _rotate_vector(offset, up, yaw)
+    next_up = _rotate_vector(up, right, pitch)
+    next_offset = _rotate_vector(next_offset, right, pitch)
+    next_up = _normalized(next_up)
+    if next_up is None:
+        return False
+    next_offset_unit = _normalized(next_offset)
+    if next_offset_unit is None:
+        return False
+    next_position = center + next_offset_unit * distance
+
+    _set_camera_tuple(camera, "position", "SetPosition", tuple(float(value) for value in next_position))
+    _set_camera_tuple(camera, "up", "SetViewUp", tuple(float(value) for value in next_up))
+    _refresh_after_camera_navigation(plotter, session)
+    return True
+
+
+def _end_camera_orbit_drag(session: GraphViewerSession) -> None:
+    session.camera_orbit_dragging = False
+    session.camera_orbit_last_position = None
+
+
 def _event_key(caller: Any) -> tuple[str, str]:
     key_sym = str(caller.GetKeySym()) if hasattr(caller, "GetKeySym") else ""
     key_code = str(caller.GetKeyCode()) if hasattr(caller, "GetKeyCode") else ""
@@ -1807,6 +1927,7 @@ def dispatch_ui_click(
         if hitbox.action == "switch-file" and hitbox.index is not None:
             _clear_cursor_edit(session)
             _end_cursor_drag(session)
+            _end_camera_orbit_drag(session)
             _store_shared_camera_state(plotter, session)
             session.active_index = hitbox.index
             render_active_graph(plotter, session, pv_module=pv_module)
@@ -1906,6 +2027,9 @@ def install_ui_mouse_observers(
             if _update_cursor_drag(plotter, session, *position):
                 _set_event_handled("MouseMoveEvent", True)
                 return
+            if _update_camera_orbit_drag(plotter, session, *position):
+                _set_event_handled("MouseMoveEvent", True)
+                return
             update_file_list_hover(plotter, session, *position)
 
     def _on_left_click(caller: Any, _event: str) -> None:
@@ -1917,25 +2041,29 @@ def install_ui_mouse_observers(
                 return
             if _begin_cursor_drag(plotter, session, *position):
                 _set_event_handled("LeftButtonPressEvent", True)
+                return
+            if _begin_camera_orbit_drag(plotter, session, *position):
+                _set_event_handled("LeftButtonPressEvent", True)
 
     def _on_left_release(_caller: Any, _event: str) -> None:
         _end_cursor_drag(session)
+        _end_camera_orbit_drag(session)
 
     def _on_key_press(caller: Any, _event: str) -> None:
         _handle_cursor_key_press(plotter, session, caller)
 
     def _on_wheel_forward(_caller: Any, _event: str) -> None:
         _set_event_handled("MouseWheelForwardEvent", False)
-        if _travel_active_graph_camera(plotter, session, direction=1.0):
+        if _zoom_active_camera(plotter, session, direction=1.0):
             _set_event_handled("MouseWheelForwardEvent", True)
 
     def _on_wheel_backward(_caller: Any, _event: str) -> None:
         _set_event_handled("MouseWheelBackwardEvent", False)
-        if _travel_active_graph_camera(plotter, session, direction=-1.0):
+        if _zoom_active_camera(plotter, session, direction=-1.0):
             _set_event_handled("MouseWheelBackwardEvent", True)
 
     def _on_interaction(_caller: Any, _event: str) -> None:
-        if session.cursor_enabled and not session.cursor_dragging:
+        if session.cursor_enabled and not session.cursor_dragging and not session.camera_orbit_dragging:
             render_cursor_crosshair(plotter, session)
             if hasattr(plotter, "render"):
                 plotter.render()
