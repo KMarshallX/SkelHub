@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skelhub"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unified skeletonization framework with MCP as the first backend."
 readme = "README.md"
 requires-python = ">=3.11"

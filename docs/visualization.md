@@ -131,10 +131,13 @@ camera for later file switches.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz` when the desktop VTK/PyVista backend exposes file drops.
 
-When a GraphML file is active, the mouse wheel travels forward and backward
-along the current camera direction without stopping at the original focal
-point. This allows close inspection while moving through local graph
-features. NIfTI files keep the standard PyVista wheel navigation behavior.
+For GraphML and NIfTI files, the mouse wheel moves the camera toward or away
+from the active object's displayed center instead of changing scene
+magnification. The wheel step scales with the current camera-object distance:
+far views move faster, and close views move slower. Left-click dragging in the
+viewport orbits the camera around the active object center without translating
+the rendered scene. When the cursor tool is enabled, left-click dragging keeps
+moving the cursor.
 
 ## HPC and Conda Notes
 
