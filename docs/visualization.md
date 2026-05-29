@@ -86,39 +86,38 @@ The panel starts hidden.
 The tools panel can:
 
 - enable or disable world-coordinate camera synchronization across loaded files
-- enable a movable crosshair cursor and edit its `X`, `Y`, and `Z` position
+- enable GraphML Interactive mode and inspect selected node `X`/`Y`/`Z`, node id, and node degree
 - import more files
 - close the active file
 - move between loaded files
 - reset the camera
 - switch active GraphML files between Detailed and Simplified rendering
-- refresh GraphML appearance after slider changes
-- adjust Node Size and Edge Thickness with sliders or adjacent `-` / `+`
-  buttons in `0.1` steps
+- fit the active preview to the window without changing camera angle
+- adjust Node Size and Edge Thickness with sliders
+- scroll when the window is too short to show every panel control
 
 For standard GraphML rendering, Node and Edge control 3D sphere and tube
 sizes. In dense rendering mode, they control on-screen point size and line
 width without rebuilding graph geometry. The `Detailed` and `Simplified`
 buttons sit directly above the GraphML appearance sliders and remember one
-mode choice per loaded GraphML file. Slider and `-` / `+` edits are preview
-values until `Refresh` is pressed. When the active file is a NIfTI volume,
-the panel keeps its file/session buttons but hides the GraphML appearance
-rows.
+mode choice per loaded GraphML file. Slider edits commit when the slider is
+released. `Fit preview` adjusts the camera distance to fit the active object
+in the window while preserving the current camera angle. When the active file
+is a NIfTI volume, the panel keeps its file/session buttons but hides the
+GraphML appearance rows.
 
-The cursor becomes available after a file is loaded. Enabling it initializes
-one saved position for that file at the center of its rendered scene and
-draws a crosshair in the viewport. Left-click and drag in the viewport to
-move the cursor in the camera-facing plane through its current position, or
-enter a finite numeric value in an `X`, `Y`, or `Z` field and press `Enter`.
-`Escape` cancels a field edit. Each loaded file remembers whether its cursor
-is enabled and its own cursor position; closing the Tools panel hides its
-coordinate fields but leaves an enabled crosshair visible and movable.
+When the right-side panel cannot visually contain every control, a scrollbar
+appears on the panel's right edge. Drag the scrollbar thumb, or use the mouse
+wheel while the pointer is inside the panel, to scroll the panel content.
 
-Cursor values use the active file's displayed coordinates: GraphML uses its
-rendered `X`/`Y`/`Z` coordinates, while NIfTI uses affine-derived physical
-world coordinates. Cursor positions remain specific to each loaded file;
-compatible coordinates coincide only when files share a meaningful displayed
-world frame.
+Interactive mode becomes available when the active file is GraphML. Enabling
+it allows rendered nodes to be clicked; the selected node is highlighted in
+`#03FFD9`, and the side panel displays its rendered `X`/`Y`/`Z` coordinates
+GraphML node id, and node degree. The `X`, `Y`, `Z`, and `Node dgr` rows are
+read-only. The `Node id` row accepts a GraphML node id and jumps to that node
+when `Enter` is pressed; `Escape` cancels an edit. While Interactive mode is
+enabled and a node is selected, the left and right arrow keys move to the
+previous or next GraphML node in file order.
 
 `Sync Camera` starts enabled. When selecting another loaded GraphML or NIfTI
 file, the viewer restores the same absolute camera position, focal point,
@@ -136,8 +135,8 @@ from the active object's displayed center instead of changing scene
 magnification. The wheel step scales with the current camera-object distance:
 far views move faster, and close views move slower. Left-click dragging in the
 viewport orbits the camera around the active object center without translating
-the rendered scene. When the cursor tool is enabled, left-click dragging keeps
-moving the cursor.
+the rendered scene. When Interactive mode is enabled, left-clicking a GraphML
+node selects it instead.
 
 ## HPC and Conda Notes
 
