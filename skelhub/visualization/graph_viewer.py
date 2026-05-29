@@ -38,6 +38,9 @@ CURSOR_CROSSHAIR_RADIUS = 11
 SLIDER_STEP = 0.1
 SLIDER_STEP_BUTTON_SIZE = 26
 SLIDER_COLOR = "#9ea4aa"
+GRAPH_MODE_BUTTON_Y_OFFSET = 146
+NODE_SLIDER_Y_OFFSET = 184
+EDGE_SLIDER_Y_OFFSET = 246
 GRAPH_CAMERA_TRAVEL_FACTOR = 0.025
 
 
@@ -113,6 +116,7 @@ class LoadedVisualizationFile:
     path: Path
     kind: VisualizationFileKind
     data: GraphVisualizationData | NiftiVisualizationData
+    graph_render_mode_override: GraphRenderMode | None = None
     initial_camera_state: CameraState | None = None
     cursor_position: tuple[float, float, float] | None = None
     cursor_enabled: bool = False
@@ -290,12 +294,27 @@ class GraphViewerSession:
         self.options.edge_thickness = float(self.preview_edge_thickness)
         _validate_options(self.options)
 
+    def graph_render_mode(self, loaded_file: LoadedVisualizationFile | None = None) -> GraphRenderMode | None:
+        active = self.active_file if loaded_file is None else loaded_file
+        if active is None or active.kind != "graphml":
+            return None
+        if active.graph_render_mode_override is not None:
+            return active.graph_render_mode_override
+        return _graph_render_mode(active.data)  # type: ignore[arg-type]
+
+    def set_active_graph_render_mode(self, render_mode: GraphRenderMode) -> bool:
+        active = self.active_file
+        if active is None or active.kind != "graphml":
+            return False
+        active.graph_render_mode_override = render_mode
+        return True
+
     def status_text(self) -> str:
         active = self.active_file
         if active is None:
             return "No file loaded"
         kind_label = _kind_label(active.kind)
-        if active.kind == "graphml" and _graph_render_mode(active.data) == "dense":
+        if active.kind == "graphml" and self.graph_render_mode(active) == "dense":
             kind_label = "[GraphML Dense]"
         return f"{self.active_index + 1}/{len(self.loaded_files)}  {kind_label}  {active.path.name}"
 
@@ -1372,7 +1391,7 @@ def render_active_graph(
     if active_file.kind == "graphml":
         graph_data = session.active_graph_data
         if graph_data is not None:
-            if _graph_render_mode(graph_data) == "dense":
+            if session.graph_render_mode(active_file) == "dense":
                 actors, session.dense_edge_actor, session.dense_node_actor = _add_dense_graph_scene(
                     plotter, graph_data, session.options, pv_module=pv_module
                 )
@@ -1413,7 +1432,7 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
         graph_data = session.active_graph_data
         if (
             graph_data is not None
-            and _graph_render_mode(graph_data) == "dense"
+            and session.graph_render_mode() == "dense"
             and _update_dense_graph_appearance(session)
         ):
             if hasattr(plotter, "render"):
@@ -1831,6 +1850,14 @@ def dispatch_ui_click(
         if hitbox.action == "reset-view":
             reset_active_view(plotter, session)
             return True
+        if hitbox.action == "render-detailed":
+            if session.set_active_graph_render_mode("detailed"):
+                render_active_graph(plotter, session, pv_module=pv_module, reset_camera=False)
+            return True
+        if hitbox.action == "render-simplified":
+            if session.set_active_graph_render_mode("dense"):
+                render_active_graph(plotter, session, pv_module=pv_module, reset_camera=False)
+            return True
         if hitbox.action == "node-decrease":
             adjust_graph_preview(plotter, session, option="node", delta=-SLIDER_STEP)
             return True
@@ -1982,19 +2009,21 @@ def _add_ui_button(
             opacity=0.92,
         )
     )
-    text_width = max(len(label) * 7, 8)
-    text_x = x + max((width - text_width) // 2, 2)
-    text_y = y + max((height - 14) // 2, 2)
-    actors.append(
-        _add_overlay_text(
-            plotter,
-            label,
-            x=text_x,
-            y=text_y,
-            font_size=font_size,
-            color="white",
-        )
+    text_actor = _add_overlay_text(
+        plotter,
+        label,
+        x=x + width // 2,
+        y=y + height // 2,
+        font_size=font_size,
+        color="white",
     )
+    text_property = _text_actor_property(text_actor)
+    if text_property is not None:
+        if hasattr(text_property, "SetJustificationToCentered"):
+            text_property.SetJustificationToCentered()
+        if hasattr(text_property, "SetVerticalJustificationToCentered"):
+            text_property.SetVerticalJustificationToCentered()
+    actors.append(text_actor)
     hitboxes.append(
         UIHitbox(
             name=f"button-{action}",
@@ -2142,14 +2171,45 @@ def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
             )
 
 
+def render_graph_mode_buttons(plotter: Any, session: GraphViewerSession) -> None:
+    """Draw Detailed/Simplified GraphML render mode controls above the sliders."""
+    if not session.tools_panel_visible or session.active_kind != "graphml":
+        return
+
+    panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
+    button_width = (TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - COMMAND_BUTTON_GAP) // 2
+    button_y = panel_top - CURSOR_ROWS_HEIGHT - GRAPH_MODE_BUTTON_Y_OFFSET
+    active_mode = session.graph_render_mode()
+    active_background = (0.10, 0.45, 0.31)
+    inactive_background = (0.19, 0.26, 0.34)
+    for column, (label, action, render_mode) in enumerate(
+        (
+            ("Detailed", "render-detailed", "detailed"),
+            ("Simplified", "render-simplified", "dense"),
+        )
+    ):
+        x_pos = panel_x + TOOLS_PANEL_PADDING + column * (button_width + COMMAND_BUTTON_GAP)
+        _add_ui_button(
+            plotter,
+            session.command_button_actors,
+            session.command_hitboxes,
+            label=label,
+            action=action,
+            x=x_pos,
+            y=button_y,
+            width=button_width,
+            background=active_background if active_mode == render_mode else inactive_background,
+        )
+
+
 def _render_slider_step_buttons(plotter: Any, session: GraphViewerSession) -> None:
     """Draw minus/plus controls surrounding GraphML appearance sliders."""
     if not session.tools_panel_visible or session.active_kind == "nifti":
         return
     panel_x, panel_top, _panel_bottom = _tools_panel_geometry(plotter)
     slider_rows = (
-        ("node-decrease", "node-increase", panel_top - CURSOR_ROWS_HEIGHT - 167),
-        ("edge-decrease", "edge-increase", panel_top - CURSOR_ROWS_HEIGHT - 229),
+        ("node-decrease", "node-increase", panel_top - CURSOR_ROWS_HEIGHT - NODE_SLIDER_Y_OFFSET),
+        ("edge-decrease", "edge-increase", panel_top - CURSOR_ROWS_HEIGHT - EDGE_SLIDER_Y_OFFSET),
     )
     for decrease_action, increase_action, centre_y in slider_rows:
         button_y = centre_y - SLIDER_STEP_BUTTON_SIZE // 2
@@ -2232,8 +2292,8 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
     width, height = _plotter_window_size(plotter)
     slider_left = (panel_x + TOOLS_PANEL_PADDING + SLIDER_STEP_BUTTON_SIZE + 10) / width
     slider_right = (panel_x + TOOLS_PANEL_WIDTH - TOOLS_PANEL_PADDING - SLIDER_STEP_BUTTON_SIZE - 10) / width
-    node_y = (panel_top - CURSOR_ROWS_HEIGHT - 167) / height
-    edge_y = (panel_top - CURSOR_ROWS_HEIGHT - 229) / height
+    node_y = (panel_top - CURSOR_ROWS_HEIGHT - NODE_SLIDER_Y_OFFSET) / height
+    edge_y = (panel_top - CURSOR_ROWS_HEIGHT - EDGE_SLIDER_Y_OFFSET) / height
 
     node_slider = plotter.add_slider_widget(
         lambda value: session.set_preview_node_size(value),
@@ -2324,6 +2384,7 @@ def render_tools_panel(plotter: Any, session: GraphViewerSession) -> None:
     )
     render_command_buttons(plotter, session)
     render_cursor_controls(plotter, session)
+    render_graph_mode_buttons(plotter, session)
     _render_slider_step_buttons(plotter, session)
     _remove_graph_sliders(plotter, session)
     render_graph_sliders(plotter, session)

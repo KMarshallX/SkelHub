@@ -91,16 +91,19 @@ The tools panel can:
 - close the active file
 - move between loaded files
 - reset the camera
+- switch active GraphML files between Detailed and Simplified rendering
 - refresh GraphML appearance after slider changes
 - adjust Node Size and Edge Thickness with sliders or adjacent `-` / `+`
   buttons in `0.1` steps
 
 For standard GraphML rendering, Node and Edge control 3D sphere and tube
 sizes. In dense rendering mode, they control on-screen point size and line
-width without rebuilding graph geometry. Slider and `-` / `+` edits are
-preview values until `Refresh` is pressed. When the active file is a NIfTI
-volume, the panel keeps its file/session buttons but hides the GraphML
-appearance rows.
+width without rebuilding graph geometry. The `Detailed` and `Simplified`
+buttons sit directly above the GraphML appearance sliders and remember one
+mode choice per loaded GraphML file. Slider and `-` / `+` edits are preview
+values until `Refresh` is pressed. When the active file is a NIfTI volume,
+the panel keeps its file/session buttons but hides the GraphML appearance
+rows.
 
 The cursor becomes available after a file is loaded. Enabling it initializes
 one saved position for that file at the center of its rendered scene and
