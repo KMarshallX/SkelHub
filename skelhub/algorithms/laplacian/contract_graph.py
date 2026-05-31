@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import networkx as nx
 import numpy as np
 import scipy as sp
@@ -9,6 +11,9 @@ import scipy as sp
 from .base_graph import BaseGraph
 from .progress import LaplacianProgress
 from .tools import cycle_area_all, is_skeleton_nodes, numpy_fill
+
+
+MAX_CONTRACTION_ITERATIONS = 750
 
 
 class ContractGraph(BaseGraph):
@@ -132,6 +137,7 @@ class ContractGraph(BaseGraph):
 
     def _contract_graph(self, progress: LaplacianProgress | None = None) -> None:
         self.Iteration = 1
+        self.max_iterations_reached = False
         check = True
         last_area = float(getattr(self.Graph, "Area", 0.0))
         while check:
@@ -152,8 +158,14 @@ class ContractGraph(BaseGraph):
                 )
             self.Iteration += 1
 
-            if self.Iteration > 500:
-                raise RuntimeError("Laplacian contraction exceeded 500 iterations.")
+            if self.Iteration > MAX_CONTRACTION_ITERATIONS:
+                self.max_iterations_reached = True
+                warnings.warn(
+                    "Laplacian contraction reached 750 iterations; using the latest contracted graph.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                break
 
         self.final_cycle_area = last_area
 

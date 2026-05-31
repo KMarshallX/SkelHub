@@ -51,15 +51,17 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 - `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`.
 - `--graph_original PATH`: write the refined graph before `post_node_cleaning()`.
 - `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, `--poly_param`: expose the VascGraph demo skeleton settings.
-- `--verbose`: show the current pipeline stage, a stage-completion progress bar, elapsed/estimated remaining time, and contraction iteration convergence updates.
+- `--verbose`: show connected-component processing progress, elapsed time, and estimated remaining time.
 
 ### Notes and Limits
 
 - The backend is graph-native internally.
 - SkelHub still returns a standard binary skeleton NIfTI.
+- Foreground input is decomposed into 26-connected components before Laplacian contraction; each component is processed independently and merged into the final outputs.
 - The standard NIfTI output is rasterized from `graph_original`.
 - Degree-2 chains use quadratic Bezier interpolation before 26-connected voxel path filling.
-- `--graph_output` writes the cleaned graph; `--graph_original` writes the graph used for rasterization.
+- If one component reaches the Laplacian contraction iteration cap, SkelHub warns and continues with that component's latest contracted graph.
+- `--graph_output` writes one aggregate cleaned graph; `--graph_original` writes one aggregate refined graph used for rasterization.
 - Only the required VascGraph skeleton path is ported. Unrelated VascGraph I/O, visualization, directed graph, Pajek/SWC, and patch-stitching features are not included.
 
 ### Citation

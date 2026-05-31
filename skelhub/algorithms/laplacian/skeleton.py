@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .contract_graph import ContractGraph
+from .contract_graph import MAX_CONTRACTION_ITERATIONS, ContractGraph
 from .generate_graph import GenerateGraph
 from .progress import LaplacianProgress
 from .refine_graph import RefineGraph
@@ -77,5 +77,8 @@ def skeletonize_graph(
         "cleaned_nodes": int(cleaned_graph.number_of_nodes()),
         "cleaned_edges": int(cleaned_graph.number_of_edges()),
         "final_cycle_area": float(getattr(contract, "final_cycle_area", 0.0)),
+        "contraction_iterations": int(contract.Iteration - 1),
+        "max_contraction_iterations": int(MAX_CONTRACTION_ITERATIONS),
+        "max_iterations_reached": bool(getattr(contract, "max_iterations_reached", False)),
     }
     return cleaned_graph, refined_graph, metadata

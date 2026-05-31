@@ -41,6 +41,10 @@ def write_laplacian_graphml(graph, output_path: str | Path, affine: np.ndarray, 
         vertex["voxel_pos"] = _json_value(voxel_pos)
         if "r" in graph.nodes[node]:
             vertex["r"] = float(graph.nodes[node]["r"])
+        if "component_index" in graph.nodes[node]:
+            vertex["component_index"] = int(graph.nodes[node]["component_index"])
+        if "component_label" in graph.nodes[node]:
+            vertex["component_label"] = int(graph.nodes[node]["component_label"])
 
     edges = [(node_to_index[u], node_to_index[v]) for u, v in graph.GetEdges()]
     if edges:
@@ -52,6 +56,13 @@ def write_laplacian_graphml(graph, output_path: str | Path, affine: np.ndarray, 
             edge["target_laplacian_id"] = int(v)
             edge["centerline_voxels"] = _json_value(voxels)
             edge["num_centerline_voxels"] = int(len(voxels))
+            edge_attrs = graph.edges[u, v]
+            if "component_index" in edge_attrs:
+                edge["component_index"] = int(edge_attrs["component_index"])
+            if "component_label" in edge_attrs:
+                edge["component_label"] = int(edge_attrs["component_label"])
+            if "component_edge_index" in edge_attrs:
+                edge["component_edge_index"] = int(edge_attrs["component_edge_index"])
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
