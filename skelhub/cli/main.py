@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional
+import sys
+from typing import Optional, Sequence
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.api import (
@@ -19,21 +20,24 @@ from skelhub.core import list_backends
 from skelhub.evaluation import format_evaluation_report, write_evaluation_json
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the top-level CLI parser."""
-    parser = argparse.ArgumentParser(prog="skelhub", description="Unified skeletonization framework CLI.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    run_parser = subparsers.add_parser("run", help="Run a skeletonization backend.")
+def _add_run_common_arguments(run_parser: argparse.ArgumentParser) -> None:
+    """Add arguments shared by every skeletonization backend."""
     run_parser.add_argument("--algorithm", required=True, choices=list_backends(), help="Backend to execute.")
     run_parser.add_argument("-i", "--input", required=True, help="Path to the input NIfTI volume.")
     run_parser.add_argument("-o", "--output", required=True, help="Path to the output skeleton NIfTI.")
+    run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
+
+
+def _add_lee94_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--binarize-threshold",
         type=float,
         default=0.5,
-        help="Threshold used by backends that require binary foreground conversion, such as lee94.",
+        help="Threshold used by the Lee94 backend to convert non-binary inputs to foreground.",
     )
+
+
+def _add_mcp_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--root-method",
         choices=("max_fdt", "topmost"),
@@ -47,7 +51,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="MCP dilation factor applied to FDT radii.",
     )
-    run_parser.add_argument("--max-iterations", type=int, default=200, help="MCP per-object iteration cap.")
+    run_parser.add_argument(
+        "--max-iterations",
+        "--max-iteration",
+        dest="max_iterations",
+        type=int,
+        default=200,
+        help="MCP per-object iteration cap.",
+    )
     run_parser.add_argument(
         "--min-object-size",
         type=int,
@@ -59,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write object labels instead of binary skeleton voxels.",
     )
+
+
+def _add_laplacian_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--graph_output",
         "--graph-output",
@@ -116,6 +130,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Laplacian maximum polygon size considered during refinement.",
     )
+
+
+def _add_l1_skeleton_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--l1-sample-count",
         dest="l1_sample_count",
@@ -200,6 +217,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Enable L1 per-branch ellipse re-centering before rasterization.",
     )
+
+
+def _add_palagyi_kuba_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--pk-mode",
         dest="pk_mode",
@@ -221,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Palagyi-Kuba full 12-subiteration cycle cap.",
     )
+
+
+def _add_flux_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--flux-threshold",
         dest="flux_threshold",
@@ -242,7 +265,50 @@ def build_parser() -> argparse.ArgumentParser:
         default="physical",
         help="Interpret --flux-sigma in NIfTI physical units or voxel units.",
     )
-    run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
+
+
+_RUN_ARGUMENT_HELPERS = {
+    "flux": _add_flux_run_arguments,
+    "l1_skeleton": _add_l1_skeleton_run_arguments,
+    "laplacian": _add_laplacian_run_arguments,
+    "lee94": _add_lee94_run_arguments,
+    "mcp": _add_mcp_run_arguments,
+    "palagyi_kuba": _add_palagyi_kuba_run_arguments,
+}
+
+
+def _add_run_backend_arguments(run_parser: argparse.ArgumentParser, algorithm: str | None) -> None:
+    if algorithm is None:
+        return
+    helper = _RUN_ARGUMENT_HELPERS.get(algorithm)
+    if helper is not None:
+        helper(run_parser)
+
+
+def _selected_run_algorithm(argv: Sequence[str] | None) -> str | None:
+    """Return the requested run algorithm before argparse handles --help."""
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if not tokens or tokens[0] != "run":
+        return None
+
+    for index, token in enumerate(tokens[1:], start=1):
+        if token == "--":
+            return None
+        if token == "--algorithm":
+            return tokens[index + 1] if index + 1 < len(tokens) else None
+        if token.startswith("--algorithm="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
+    """Build the top-level CLI parser."""
+    parser = argparse.ArgumentParser(prog="skelhub", description="Unified skeletonization framework CLI.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Run a skeletonization backend.")
+    _add_run_common_arguments(run_parser)
+    _add_run_backend_arguments(run_parser, run_algorithm)
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")
     eval_parser.add_argument("--pred", required=True, help="Predicted skeleton NIfTI path.")
@@ -317,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """CLI entry point."""
-    parser = build_parser()
+    parser = build_parser(run_algorithm=_selected_run_algorithm(argv))
     args = parser.parse_args(argv)
 
     if args.command == "run":
