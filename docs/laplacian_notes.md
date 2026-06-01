@@ -142,6 +142,9 @@ function skeletonize_component(component_mask, config):
 - The standard output skeleton volume is rasterized from the refined pre-cleaning graph, recorded in metadata as `rasterized_output_source: graph_original`.
 - Current node cleaning only removes degree-2 nodes and reconnects their neighbors; it does not perform general short-spur or false-branch pruning.
 
+## Update Log
+- 06/01/2026 10:17 PM - make the initial graph strictly 6-connected.
+
 ## Modified Per-Component Skeletonization
 
 ```text

@@ -68,17 +68,6 @@ class GenerateGraph:
             self.Graph.nodes[int(index)]["pos"] = pos
         self.Graph.add_edges_from(connections)
 
-        positions = np.asarray(self.Graph.GetNodesPos(), dtype=float)
-        nodes = np.asarray(self.Graph.GetNodes(), dtype=int)
-        nodes_to_modify = [node for node in self.Graph.GetNodes() if len(self.Graph.GetNeighbors(node)) <= 2]
-        new_edges = []
-        for node in nodes_to_modify:
-            pos = np.asarray(self.Graph.nodes[node]["pos"], dtype=float)
-            distances = np.linalg.norm(positions - pos[None, :], axis=1)
-            edge_nodes = nodes[distances <= np.sqrt(2.0)]
-            new_edges.extend([[node, int(other)] for other in edge_nodes if int(other) != node])
-        self.Graph.add_edges_from(new_edges)
-
         if self.label_ext:
             max_pos = np.asarray(label.shape) - 1
             for node in self.Graph.GetNodes():
