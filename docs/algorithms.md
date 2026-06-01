@@ -39,7 +39,7 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
     --degree_threshold 5.0 \
     --sampling 1 \
     --clustering_r 1 \
-    --stop_param 0.001 \
+    --stop_param 0.0015 \
     --n_free_iteration 0 \
     --area_param 50.0 \
     --poly_param 10 \
@@ -48,19 +48,30 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 
 ### Parameters
 
-- `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`.
-- `--graph_original PATH`: write the refined graph before `post_node_cleaning()`.
-- `--speed_param`, `--dist_param`, `--med_param`, `--degree_threshold`, `--sampling`, `--clustering_r`, `--stop_param`, `--n_free_iteration`, `--area_param`, `--poly_param`: expose the VascGraph demo skeleton settings.
-- `--verbose`: show the current pipeline stage, a stage-completion progress bar, elapsed/estimated remaining time, and contraction iteration convergence updates.
+- `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`. Default: `None`. Supplying a path creates an aggregate GraphML for all processed components; omitting it skips this export.
+- `--graph_original PATH`: write the refined graph before `post_node_cleaning()`. Default: `None`. Supplying a path creates the aggregate GraphML used for rasterizing the standard NIfTI output; omitting it skips this export.
+- `--speed_param FLOAT`: contraction anchoring weight for each node's current position. Default: `0.05`. Larger values resist movement and can make contraction more conservative or slower; smaller values allow stronger movement toward the graph constraints and can collapse geometry more aggressively.
+- `--dist_param FLOAT`: weight for distance-normalized neighbor smoothing in the Laplacian system. Default: `0.5`. Larger values increase neighbor-position smoothing and straightening; smaller values reduce this smoothing influence.
+- `--med_param FLOAT`: weight for medial/radius-guided neighbor attraction. Default: `0.5`. Larger values make local radius information more influential during contraction; smaller values make contraction depend less on the distance-transform radius field.
+- `--degree_threshold FLOAT`: angle tolerance used to mark already-skeletal nodes. Default: `5.0`. Larger values classify more near-collinear nodes as skeletal, preserving more local structure during topology updates; smaller values are stricter and allow more nodes to keep contracting and clustering.
+- `--sampling FLOAT`: sampling factor for the initial dense graph. Default: `1.0`. Larger values downsample the input before graph construction, reducing nodes and runtime but making the graph coarser; smaller values upsample, increasing detail, memory use, and runtime.
+- `--clustering_r FLOAT`: spatial radius used when contracted moving nodes are clustered into topology updates. Default: `1.0`. Larger values merge nearby nodes more readily and simplify topology faster; smaller values keep more nodes separate and can preserve detail at higher cost.
+- `--stop_param FLOAT`: convergence scale applied to the initial cumulative small-cycle polygon area. Default: `0.0015`. Larger values loosen the convergence target and usually reduce contraction iterations; smaller values require lower residual cycle area and can increase quality pressure, runtime, and hard-limit hits.
+- `--n_free_iteration INT`: number of initial contraction iterations before convergence checks may stop the loop. Default: `0`. Larger values force more contraction iterations even if the stop criterion is already met; smaller values allow earlier stopping.
+- `--area_param FLOAT`: area threshold for post-contraction small-polygon refinement. Default: `50.0`. Larger values refine/collapse more polygon artifacts; smaller values refine only smaller cycles and preserve more local graph structure.
+- `--poly_param INT`: upper cycle-size limit for post-contraction polygon refinement. Default: `10`. Larger values include longer cycles in refinement; smaller values restrict refinement to shorter cycles.
+- `--verbose`: show connected-component processing progress, elapsed time, and estimated remaining time. Default: disabled. Enabling it prints progress logs but does not change algorithm output.
+- Per-component's max contraction iteration is empirically hardcoded to be `750`. If the max cap is hit, a warning will be thrown and the contraction will stop and return the contracted results.
 
 ### Notes and Limits
 
 - The backend is graph-native internally.
 - SkelHub still returns a standard binary skeleton NIfTI.
+- Foreground input is decomposed into 26-connected components before Laplacian contraction; each component is processed independently and merged into the final outputs.
 - The standard NIfTI output is rasterized from `graph_original`.
 - Degree-2 chains use quadratic Bezier interpolation before 26-connected voxel path filling.
-- `--graph_output` writes the cleaned graph; `--graph_original` writes the graph used for rasterization.
-- Only the required VascGraph skeleton path is ported. Unrelated VascGraph I/O, visualization, directed graph, Pajek/SWC, and patch-stitching features are not included.
+- If one component reaches the Laplacian contraction iteration cap, SkelHub warns and continues with that component's latest contracted graph.
+- `--graph_output` writes one aggregate cleaned graph; `--graph_original` writes one aggregate refined graph used for rasterization.
 
 ### Citation
 

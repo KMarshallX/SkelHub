@@ -15,7 +15,7 @@ class LaplacianConfig:
     degree_threshold: float = 5.0
     sampling: float = 1.0
     clustering_r: float = 1.0
-    stop_param: float = 0.001
+    stop_param: float = 0.0015
     n_free_iteration: int = 0
     area_param: float = 50.0
     poly_param: int = 10

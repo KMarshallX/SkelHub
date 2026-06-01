@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import networkx as nx
+import warnings
+
 import numpy as np
 import scipy as sp
 
 from .base_graph import BaseGraph
 from .progress import LaplacianProgress
-from .tools import cycle_area_all, is_skeleton_nodes, numpy_fill
+from .tools import cumulative_small_cycle_area, is_skeleton_nodes, numpy_fill
+
+
+MAX_CONTRACTION_ITERATIONS = 750
 
 
 class ContractGraph(BaseGraph):
@@ -57,13 +61,7 @@ class ContractGraph(BaseGraph):
         self.SkeletalNodes = self.Nodes[self.SkeletalMask]
 
     def _check_iter(self):
-        cycles = nx.cycle_basis(self.Graph)
-        area = 0.0
-        for length in range(3, 10):
-            polygons = [cycle for cycle in cycles if len(cycle) == length]
-            if polygons:
-                pos = np.asarray([[self.Graph.nodes[node]["pos"] for node in polygon] for polygon in polygons])
-                area += float(np.sum(cycle_area_all(pos)))
+        area = cumulative_small_cycle_area(self.Graph)
         return area > self.AreaThreshold, area
 
     def _dist_matrix(self):
@@ -132,6 +130,7 @@ class ContractGraph(BaseGraph):
 
     def _contract_graph(self, progress: LaplacianProgress | None = None) -> None:
         self.Iteration = 1
+        self.max_iterations_reached = False
         check = True
         last_area = float(getattr(self.Graph, "Area", 0.0))
         while check:
@@ -152,8 +151,14 @@ class ContractGraph(BaseGraph):
                 )
             self.Iteration += 1
 
-            if self.Iteration > 500:
-                raise RuntimeError("Laplacian contraction exceeded 500 iterations.")
+            if self.Iteration > MAX_CONTRACTION_ITERATIONS:
+                self.max_iterations_reached = True
+                warnings.warn(
+                    "Laplacian contraction reached 750 iterations; using the latest contracted graph.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                break
 
         self.final_cycle_area = last_area
 
@@ -165,7 +170,7 @@ class ContractGraph(BaseGraph):
         DegreeThreshold: float | None = None,
         NFreeIteration: int = 1,
         ClusteringResolution: float = 1.0,
-        StopParam: float = 0.01,
+        StopParam: float = 0.0015,
         Alleviate_param: float = 10.0,
         progress: LaplacianProgress | None = None,
     ) -> None:

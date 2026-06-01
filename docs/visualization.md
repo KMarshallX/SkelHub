@@ -54,10 +54,8 @@ SkelHub's current GraphML export writes coordinates as:
 
 If coordinates are missing, the viewer fails clearly instead of guessing a layout.
 
-GraphML files with at least 1,000 nodes automatically use a dense rendering
-mode: nodes display as lightweight points and edges as lightweight lines so
-large graphs remain responsive while rotating, zooming, and panning. The
-viewer marks these files as `GraphML Dense` in the file status label.
+GraphML files render as lightweight points and lines so loaded vessel graphs
+remain responsive while rotating, zooming, and panning.
 
 ### NIfTI
 
@@ -91,20 +89,16 @@ The tools panel can:
 - close the active file
 - move between loaded files
 - reset the camera
-- switch active GraphML files between Detailed and Simplified rendering
 - fit the active preview to the window without changing camera angle
 - adjust Node Size and Edge Thickness with sliders
 - scroll when the window is too short to show every panel control
 
-For standard GraphML rendering, Node and Edge control 3D sphere and tube
-sizes. In dense rendering mode, they control on-screen point size and line
-width without rebuilding graph geometry. The `Detailed` and `Simplified`
-buttons sit directly above the GraphML appearance sliders and remember one
-mode choice per loaded GraphML file. Slider edits commit when the slider is
-released. `Fit preview` adjusts the camera distance to fit the active object
-in the window while preserving the current camera angle. When the active file
-is a NIfTI volume, the panel keeps its file/session buttons but hides the
-GraphML appearance rows.
+For GraphML rendering, Node and Edge control on-screen point size and line
+width without rebuilding graph geometry. Slider edits commit when the slider
+is released. `Fit preview` adjusts the camera distance to fit the active
+object in the window while preserving the current camera angle. When the
+active file is a NIfTI volume, the panel keeps its file/session buttons but
+hides the GraphML appearance rows.
 
 When the right-side panel cannot visually contain every control, a scrollbar
 appears on the panel's right edge. Drag the scrollbar thumb, or use the mouse
