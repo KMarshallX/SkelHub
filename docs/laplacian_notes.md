@@ -141,3 +141,133 @@ function skeletonize_component(component_mask, config):
 - The cleaned graph is used for `--graph_output` and `SkeletonResult.graph`.
 - The standard output skeleton volume is rasterized from the refined pre-cleaning graph, recorded in metadata as `rasterized_output_source: graph_original`.
 - Current node cleaning only removes degree-2 nodes and reconnects their neighbors; it does not perform general short-spur or false-branch pruning.
+
+## Modified Per-Component Skeletonization
+
+```text
+function skeletonize_component_topology_safe(component_mask, config):
+    binary = component_mask > 0
+
+    # 0. Precompute maps.
+    D = distance_transform_edt(binary)
+    labels = connected_components(binary, connectivity=config.connectivity)
+    input_topology = compute_topology(binary)
+
+    # 1. Build initial dense voxel graph with provenance.
+    generator = GenerateGraph(binary)
+    generator.UpdateGridGraph(Sampling=config.sampling)
+    initial_graph = generator.GetOutput()
+
+    initial_graph = attach_node_attributes(
+        initial_graph,
+        binary=binary,
+        D=D,
+        labels=labels,
+        origin_voxels=True,
+    )
+
+    validate_graph(
+        initial_graph,
+        binary=binary,
+        labels=labels,
+        topology_ref=input_topology,
+        require_nodes_inside=True,
+        require_edges_foreground_supported=True,
+    )
+
+    # 2. Run constrained Laplacian contraction.
+    contract = ContractGraphTopologySafe(initial_graph)
+    contract.Update(
+        DistParam=config.dist_param,
+        MedParam=config.med_param,
+        SpeedParam=config.speed_param,
+        DegreeThreshold=config.degree_threshold,
+
+        # modified controls
+        ClusteringResolution=config.clustering_r,
+        StopParam=config.stop_param,
+        NFreeIteration=config.n_free_iteration,
+
+        # new constraints
+        ForegroundMask=binary,
+        DistanceMap=D,
+        ComponentLabels=labels,
+        ProjectionMode="foreground_medial",
+        AnchorMode="distance_endpoint_branch",
+        TopologySafeClustering=True,
+        EdgeSupportCheck=True,
+        PreserveBeta0=True,
+        PreserveBeta1=config.preserve_beta1,
+    )
+
+    contracted_graph = contract.GetOutput()
+
+    validate_graph(
+        contracted_graph,
+        binary=binary,
+        labels=labels,
+        topology_ref=input_topology,
+        require_nodes_inside=True,
+        require_edges_foreground_supported=True,
+    )
+
+    # 3. Optional topology-safe refinement.
+    if config.enable_refine:
+        refine = RefineGraphTopologySafe(contracted_graph)
+        refine.Update(
+            AreaParam=config.area_param,
+            PolyParam=config.poly_param,
+            ForegroundMask=binary,
+            DistanceMap=D,
+            PreserveBeta0=True,
+            PreserveBeta1=config.preserve_beta1,
+            RejectBackgroundCrossing=True,
+        )
+        refined_graph = refine.GetOutput()
+    else:
+        refined_graph = contracted_graph
+
+    refined_graph = fix_graph_conservative(
+        refined_graph,
+        binary=binary,
+        labels=labels,
+        preserve_topology=True,
+    )
+
+    validate_graph(
+        refined_graph,
+        binary=binary,
+        labels=labels,
+        topology_ref=input_topology,
+        require_nodes_inside=True,
+        require_edges_foreground_supported=True,
+    )
+
+    # 4. Clean degree-2 nodes but preserve polylines.
+    cleaned_graph = post_node_cleaning_topology_safe(
+        refined_graph,
+        binary=binary,
+        preserve_polyline_geometry=True,
+        preserve_topology=True,
+    )
+
+    validate_graph(
+        cleaned_graph,
+        binary=binary,
+        labels=labels,
+        topology_ref=input_topology,
+        require_nodes_inside=True,
+        require_edges_foreground_supported=True,
+    )
+
+    metadata = collect_metadata(
+        input_topology=input_topology,
+        initial_graph=initial_graph,
+        contracted_graph=contracted_graph,
+        refined_graph=refined_graph,
+        cleaned_graph=cleaned_graph,
+        validation_reports=True,
+    )
+
+    return cleaned_graph, refined_graph, metadata
+```
