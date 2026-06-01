@@ -48,6 +48,18 @@ def cycle_area_all(corners) -> np.ndarray | int:
     return np.linalg.norm(cross, axis=1) / 2.0
 
 
+def cumulative_small_cycle_area(graph, *, min_length: int = 3, max_length: int = 9) -> float:
+    """Return the cumulative area of graph cycle polygons within the length range."""
+    cycles = nx.cycle_basis(graph)
+    area = 0.0
+    for length in range(min_length, max_length + 1):
+        polygons = [cycle for cycle in cycles if len(cycle) == length]
+        if polygons:
+            pos = np.asarray([[graph.nodes[node]["pos"] for node in polygon] for polygon in polygons])
+            area += float(np.sum(cycle_area_all(pos)))
+    return area
+
+
 def _check_node(pos: np.ndarray, neighbor_pos: np.ndarray, threshold: float = 0.0) -> bool:
     if len(neighbor_pos) < 2:
         return False

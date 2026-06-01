@@ -42,7 +42,7 @@ class LaplacianBackend:
             degree_threshold=getattr(args, "degree_threshold", 5.0),
             sampling=getattr(args, "sampling", 1.0),
             clustering_r=getattr(args, "clustering_r", 1.0),
-            stop_param=getattr(args, "stop_param", 0.001),
+            stop_param=getattr(args, "stop_param", 0.0015),
             n_free_iteration=getattr(args, "n_free_iteration", 0),
             area_param=getattr(args, "area_param", 50.0),
             poly_param=getattr(args, "poly_param", 10),

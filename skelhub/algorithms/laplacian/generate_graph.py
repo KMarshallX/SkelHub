@@ -6,7 +6,7 @@ import numpy as np
 import scipy.ndimage as ndi
 
 from .graph import GeometricGraph
-from .tools import distance_map_3d, fix_graph
+from .tools import cumulative_small_cycle_area, distance_map_3d, fix_graph
 
 
 class GenerateGraph:
@@ -17,7 +17,7 @@ class GenerateGraph:
         self.label_ext = label_ext
         self.Shape = self.Label.shape
         self.Length = int(np.prod(self.Shape))
-        self.Area = int(np.count_nonzero(self.Label))
+        self.Area = 0.0
         self.DistMap = distance_map
 
     def _calculate_dist_map(self) -> None:
@@ -97,5 +97,6 @@ class GenerateGraph:
         self._calculate_dist_map()
         self._assign_dist_map_to_graph()
         self.Graph = fix_graph(self.Graph)
+        self.Area = cumulative_small_cycle_area(self.Graph)
         self.Graph.Area = self.Area
         return self.Graph

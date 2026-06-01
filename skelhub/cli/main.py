@@ -109,7 +109,7 @@ def _add_laplacian_run_arguments(run_parser: argparse.ArgumentParser) -> None:
     run_parser.add_argument(
         "--stop_param",
         type=float,
-        default=0.001,
+        default=0.0015,
         help="Laplacian convergence area scale.",
     )
     run_parser.add_argument(
