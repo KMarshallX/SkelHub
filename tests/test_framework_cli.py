@@ -121,7 +121,7 @@ def test_wrong_backend_option_is_rejected(capsys: pytest.CaptureFixture[str]) ->
                 "degree_threshold": 5.0,
                 "sampling": 1.0,
                 "clustering_r": 1.0,
-                "stop_param": 0.001,
+                "stop_param": 0.0015,
                 "n_free_iteration": 0,
                 "area_param": 50.0,
                 "poly_param": 10,
@@ -156,4 +156,3 @@ def test_minimal_run_parse_preserves_backend_defaults(algorithm: str, expected: 
     assert args.verbose is False
     for name, value in expected.items():
         assert getattr(args, name) == value
-

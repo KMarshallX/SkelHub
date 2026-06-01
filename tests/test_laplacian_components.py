@@ -7,7 +7,9 @@ from igraph import Graph
 from skelhub.algorithms.laplacian.backend import LaplacianBackend
 from skelhub.algorithms.laplacian.config import LaplacianConfig
 from skelhub.algorithms.laplacian.contract_graph import ContractGraph, MAX_CONTRACTION_ITERATIONS
+from skelhub.algorithms.laplacian.generate_graph import GenerateGraph
 from skelhub.algorithms.laplacian.graph import GeometricGraph
+from skelhub.algorithms.laplacian.tools import cumulative_small_cycle_area
 from skelhub.core import VolumeData
 
 
@@ -119,3 +121,15 @@ def test_laplacian_contraction_limit_warns_and_keeps_latest_graph():
     assert contract.max_iterations_reached is True
     assert contract.Iteration - 1 == MAX_CONTRACTION_ITERATIONS
     assert contract.final_cycle_area == 2.0
+
+
+def test_laplacian_initial_graph_area_uses_small_cycle_area():
+    mask = np.zeros((2, 2, 2), dtype=np.uint8)
+    mask[:, :, 0] = 1
+
+    generate = GenerateGraph(mask)
+    generate.UpdateGridGraph(Sampling=1.0)
+    graph = generate.GetOutput()
+
+    assert graph.Area == pytest.approx(cumulative_small_cycle_area(graph))
+    assert graph.Area != np.count_nonzero(mask)
