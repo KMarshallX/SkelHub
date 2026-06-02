@@ -143,7 +143,16 @@ function skeletonize_component(component_mask, config):
 - Current node cleaning only removes degree-2 nodes and reconnects their neighbors; it does not perform general short-spur or false-branch pruning.
 
 ## Update Log
+
 - 06/01/2026 10:17 PM - make the initial graph strictly 6-connected.
+- 06/01/2026 11:21 PM - still escaping nodes and edges
+  Main causes:
+  - The initial graph starts on foreground, but contraction is not mask-constrained. Initial nodes are foreground voxels, but **ContractGraph._apply_contraction()** replaces each node position with a continuous least-squares solution in contract_graph.py (line 82). There is no constraint like “new position must remain inside foreground” or “project back to nearest foreground voxel”. So nodes can drift into nearby background, especially near thin vessels, boundaries, bends, or sparse/diagonal structures.
+  - Topology clustering uses centroids, also unconstrained. After each contraction step, **_update_topology()** clusters moving nodes and replaces clusters with centroid nodes. A centroid of foreground-supported nodes can lie in background, particularly across a curved vessel wall or across a small gap. That happens in base_graph.py (line 20).
+  - Refinement moves nodes geometrically, not by foreground membership. **RefineGraph** collapses small polygon artifacts by moving cycle nodes toward polygon centers, then clusters them again. This also does not check the binary mask. See refine_graph.py (line 18).
+  - Escaping edges are mostly caused by escaping endpoints, plus straight-line edge export. GraphML edge **centerline_voxels** are generated at export time by drawing a rounded straight line between endpoint positions in graphml.py (line 45), using **_edge_voxels()** from rasterize.py (line 12). This line is clipped to volume bounds, but not constrained to foreground.
+- 06/01/2026 11:54 PM - Add constraint to contraction process. **ContractGraph** now accepts an optional **foreground_mask**, builds a **cKDTree** over foreground voxel coordinates, and projects every LSQR-computed **new_pos** to the nearest foreground voxel before assigning it back to the graph. The Laplacian skeleton path now passes the component binary mask into **ContractGraph**.
+- 06/02/2026 12:36 PM - Add constraint to topology surgery and refinement output. (Reverted)
 
 ## Modified Per-Component Skeletonization
 
