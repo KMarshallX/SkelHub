@@ -83,6 +83,7 @@ The panel starts hidden.
 
 The tools panel can:
 
+- switch between `Single View` and `Double View` layout modes
 - enable or disable world-coordinate camera synchronization across loaded files
 - enable GraphML Interactive mode and inspect selected node `X`/`Y`/`Z`, node id, and node degree
 - import more files
@@ -93,16 +94,30 @@ The tools panel can:
 - adjust Node Size and Edge Thickness with sliders
 - scroll when the window is too short to show every panel control
 
+`Single View` is the default and preserves the existing one-file workflow.
+`Double View` splits the scene into `View A` and `View B`. `View A` starts
+with the current active file, while `View B` starts empty. In double-view
+mode, the top-left loaded-file dropdown is hidden and files are assigned from
+the Tools panel `View A` / `View B` dropdowns, which can choose either `Empty`
+or any loaded file. Clicking inside a viewport makes that viewport active,
+and the Tools panel edits only that active viewport. `Import` loads a file
+into the global loaded-file list and assigns it to the active viewport;
+`Close` clears only the active viewport assignment in double-view mode.
+
 For GraphML rendering, Node and Edge control on-screen point size and line
 width without rebuilding graph geometry. Slider edits commit when the slider
-is released. `Fit preview` adjusts the camera distance to fit the active
-object in the window while preserving the current camera angle. When the
-active file is a NIfTI volume, the panel keeps its file/session buttons but
-hides the GraphML appearance rows.
+is released. In double-view mode, appearance settings are per-view: changing
+Node Size or Edge Thickness in `View A` does not change `View B`. `Fit preview`
+adjusts the camera distance to fit the active object in the active viewport
+while preserving the current camera angle. When the active file is a NIfTI
+volume, the `Apperance` section remains visible but its sliders are greyed
+out and disabled.
 
 When the right-side panel cannot visually contain every control, a scrollbar
 appears on the panel's right edge. Drag the scrollbar thumb, or use the mouse
 wheel while the pointer is inside the panel, to scroll the panel content.
+Wheel events inside the panel are consumed by the panel and do not zoom the
+viewport.
 
 Interactive mode becomes available when the active file is GraphML. Enabling
 it allows rendered nodes to be clicked; the selected node is highlighted in
@@ -113,6 +128,12 @@ when `Enter` is pressed; `Escape` cancels an edit. While Interactive mode is
 enabled and a node is selected, the left and right arrow keys move to the
 previous or next GraphML node in file order.
 
+In double-view mode, Interactive mode is per-view. Selecting a node in
+`View B` makes `View B` active, highlights only the selected node in `View B`,
+and updates the Tools panel with `View B` node details. Returning to `View A`
+restores `View A`'s last selected node details. Arrow-key navigation moves
+through nodes only in the active view.
+
 `Sync Camera` starts enabled. When selecting another loaded GraphML or NIfTI
 file, the viewer restores the same absolute camera position, focal point,
 orientation, angle, and zoom in displayed world coordinates. This allows
@@ -120,7 +141,9 @@ aligned NIfTI and GraphML scenes to be inspected in the same view; arbitrary
 GraphML coordinates or unregistered datasets may not align usefully, in
 which case camera synchronization can be turned off. With synchronization
 enabled, `Reset View` on the active file becomes the shared world-coordinate
-camera for later file switches.
+camera for later file switches. Switching to `Double View` forces `Sync Camera`
+on. With synchronization enabled, camera orbit, wheel travel, reset, and fit
+operations in the active viewport are copied to the other populated viewport.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz` when the desktop VTK/PyVista backend exposes file drops.
 
