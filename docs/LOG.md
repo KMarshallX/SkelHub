@@ -1,5 +1,61 @@
 # Development Log
 
+## 2026-06-03 11:30 AEST
+
+### Fix overlay-view UI issues: file panel, slider overlap, header truncation
+
+1. Summary of what changed
+- **File panel hidden in overlay mode:** `render_file_panel` now exits early when `layout_mode in ("double", "overlay")` (was only `"double"`), removing the top-left dropdown.
+- **Opacity slider overlap:** `_tools_panel_layout` shifts the `interactive_header` cursor down by `APPEARANCE_SLIDER_SPACING * 2` (168 px) in overlay mode, making room for the Base Opacity and Overlay Opacity sliders between the Appearance and Interactive sections.
+- **Header filename-only truncation:** `_render_overlay_header` now only truncates the base and overlay filenames (keeping "Overlay View | Base: ... | Overlay: ..." prefix intact), matching the double-view header behavior.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+## 2026-06-03 11:00 AEST
+
+### Fix three overlay-view limitations
+
+1. Summary of what changed
+- **Per-layer appearance (Limitation 1):** `ViewState` now has `base_options`, `overlay_options`, and per-layer preview values.  Slider commit path (`_commit_graph_preview_value`) and slider read path (`_appearance_slider_value`) branch on `view.overlay_target` in overlay mode, so the Target dropdown actually changes which layer's node/edge sizes are adjusted.  `_render_overlay_layers` uses `view.base_options`/`view.overlay_options` per layer.  `_add_overlay_graph` accepts an explicit `options` parameter.
+- **In-place opacity (Limitation 2):** `ViewState` stores actor refs (`overlay_base_nifti_actor`, `overlay_overlay_nifti_actor`, `overlay_overlay_graph_actors`).  Opacity slider commits call `actor.GetProperty().SetOpacity()` directly without scene rebuild when a stored actor exists.
+- **Overlay Interactive section (Limitation 3):** Added `interactive_overlay_target` to session.  In overlay mode, `render_interactive_controls` shows a Target dropdown between the Interactive toggle and Node-id row when both layers are GraphML.  `_selected_graph_data`, `_nearest_graph_node_index`, and `select_graph_node_at_display_position` all route through `interactive_overlay_target` to pick the correct layer's graph data.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+3. Remaining known limitations removed from LOG.
+
+## 2026-06-03 10:00 AEST
+
+### Overlay View layout mode (initial implementation)
+
+1. Summary of what changed
+- Added "Overlay View" as a third layout mode alongside Single and Double.
+- **Data model**: `ViewState` gained `base_file_index`, `overlay_file_index`, `base_opacity` (default 0.8), `overlay_opacity` (default 0.5), and `overlay_target`.  Session gained `overlay_menu_open`, `assign_base_file`, `assign_overlay_file`, `base_file_for_view`, `overlay_file_for_view`, and `_validate_overlay_alignment`.
+- **Layout dropdown**: "Overlay View" option added (index 2).  `set_layout_mode` handles overlay initialization.
+- **View Layout section**: dynamic per mode — Single shows "View", Double shows "View A"/"View B", Overlay shows "Base"/"Overlay" file dropdowns.
+- **Overlay rendering** (`_render_overlay_layers`): single viewport, both layers.  NIfTI base → blue blocks; GraphML overlay → red nodes + green edges; NIfTI overlay → orange blocks (#F27A4E, reduced opacity); dual GraphML → base default + overlay with blue edges (#4EC6F2) and orange nodes.
+- **Header**: single "Overlay View | Base: ... | Overlay: ..." bar.
+- **Appearance**: overlay mode adds Base Opacity / Overlay Opacity sliders (0.0–1.0) and a Target dropdown when both layers are GraphML.
+- **Camera**: Sync Camera greyed out and no-op in overlay mode (single viewport, inherently synced).
+- **Alignment**: NIfTI-NIfTI checks shape equality; GraphML-GraphML checks >= 97 % bounding-box overlap.  Warning dialog shown on mismatch.
+
+2. New constants
+- `OPACITY_RANGE`, `DEFAULT_BASE_OPACITY`, `DEFAULT_OVERLAY_OPACITY`, `OVERLAY_NIFTI_COLOR`, `OVERLAY_GRAPH_NODE_COLOR`, `OVERLAY_GRAPH_EDGE_COLOR`
+
+3. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+4. Known limitations
+- Node Size / Edge Thickness sliders in overlay mode are shared across both graph layers; per-layer appearance (driven by Target dropdown) is not yet wired into the slider commit path.
+- Opacity changes trigger a full scene rebuild rather than an in-place property update.
+- The Interactive section's overlay Target dropdown is defined in spec but not yet implemented.
+- If both base and overlay files are loaded, the first-load assignment heuristic (base first, then overlay) may need explicit assignment via the dropdowns.
+
 ## 2026-06-02 19:30 AEST
 
 ### Header: pixel-based text truncation; immediate border update on click

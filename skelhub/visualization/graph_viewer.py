@@ -14,7 +14,14 @@ import numpy as np
 
 
 VisualizationFileKind = Literal["graphml", "nifti"]
-ViewLayoutMode = Literal["single", "double"]
+ViewLayoutMode = Literal["single", "double", "overlay"]
+OverlayTarget = Literal["base", "overlay"]
+OPACITY_RANGE = (0.0, 1.0)
+DEFAULT_BASE_OPACITY = 0.8
+DEFAULT_OVERLAY_OPACITY = 0.5
+OVERLAY_NIFTI_COLOR = (0.949, 0.486, 0.306)  # #F27A4E orange
+OVERLAY_GRAPH_NODE_COLOR = (0.949, 0.486, 0.306)  # #F27A4E orange
+OVERLAY_GRAPH_EDGE_COLOR = (0.306, 0.776, 0.949)  # #4EC6F2 blue
 ViewID = Literal["a", "b"]
 NODE_SIZE_RANGE = (0.5, 40.0)
 EDGE_THICKNESS_RANGE = (0.1, 10.0)
@@ -146,15 +153,30 @@ class ViewState:
 
     view_id: ViewID
     file_index: int | None = None
+    base_file_index: int | None = None
+    overlay_file_index: int | None = None
+    base_opacity: float = DEFAULT_BASE_OPACITY
+    overlay_opacity: float = DEFAULT_OVERLAY_OPACITY
+    overlay_target: OverlayTarget = "base"
     options: GraphVisualizationOptions = field(default_factory=GraphVisualizationOptions)
+    base_options: GraphVisualizationOptions = field(default_factory=GraphVisualizationOptions)
+    overlay_options: GraphVisualizationOptions = field(default_factory=GraphVisualizationOptions)
     preview_node_size: float | None = None
     preview_edge_thickness: float | None = None
+    base_preview_node_size: float | None = None
+    base_preview_edge_thickness: float | None = None
+    overlay_preview_node_size: float | None = None
+    overlay_preview_edge_thickness: float | None = None
     graph_actors: list[Any] = field(default_factory=list)
     graph_node_actor: Any | None = None
     graph_edge_actor: Any | None = None
     selected_node_actors: list[Any] = field(default_factory=list)
     interactive_enabled: bool = False
     selected_node_index: int | None = None
+    selected_layer: OverlayTarget | None = None
+    overlay_base_nifti_actor: Any | None = None
+    overlay_overlay_nifti_actor: Any | None = None
+    overlay_overlay_graph_actors: list[Any] = field(default_factory=list)
     camera_orbit_dragging: bool = False
     camera_orbit_last_position: tuple[int, int] | None = None
     file_list_open: bool = False
@@ -162,10 +184,20 @@ class ViewState:
 
     def __post_init__(self) -> None:
         _validate_options(self.options)
+        _validate_options(self.base_options)
+        _validate_options(self.overlay_options)
         if self.preview_node_size is None:
             self.preview_node_size = self.options.node_size
         if self.preview_edge_thickness is None:
             self.preview_edge_thickness = self.options.edge_thickness
+        if self.base_preview_node_size is None:
+            self.base_preview_node_size = self.base_options.node_size
+        if self.base_preview_edge_thickness is None:
+            self.base_preview_edge_thickness = self.base_options.edge_thickness
+        if self.overlay_preview_node_size is None:
+            self.overlay_preview_node_size = self.overlay_options.node_size
+        if self.overlay_preview_edge_thickness is None:
+            self.overlay_preview_edge_thickness = self.overlay_options.edge_thickness
 
     def set_preview_node_size(self, value: float) -> None:
         self.preview_node_size = float(value)
@@ -173,10 +205,41 @@ class ViewState:
     def set_preview_edge_thickness(self, value: float) -> None:
         self.preview_edge_thickness = float(value)
 
+    def overlay_preview_node_size_for_target(self) -> float:
+        if self.overlay_target == "base":
+            return float(self.base_preview_node_size)
+        return float(self.overlay_preview_node_size)
+
+    def overlay_preview_edge_thickness_for_target(self) -> float:
+        if self.overlay_target == "base":
+            return float(self.base_preview_edge_thickness)
+        return float(self.overlay_preview_edge_thickness)
+
+    def set_overlay_preview_node_size_for_target(self, value: float) -> None:
+        if self.overlay_target == "base":
+            self.base_preview_node_size = float(value)
+        else:
+            self.overlay_preview_node_size = float(value)
+
+    def set_overlay_preview_edge_thickness_for_target(self, value: float) -> None:
+        if self.overlay_target == "base":
+            self.base_preview_edge_thickness = float(value)
+        else:
+            self.overlay_preview_edge_thickness = float(value)
+
+    def overlay_options_for_target(self) -> GraphVisualizationOptions:
+        return self.base_options if self.overlay_target == "base" else self.overlay_options
+
     def apply_preview_options(self) -> None:
         self.options.node_size = float(self.preview_node_size)
         self.options.edge_thickness = float(self.preview_edge_thickness)
         _validate_options(self.options)
+        self.base_options.node_size = float(self.base_preview_node_size)
+        self.base_options.edge_thickness = float(self.base_preview_edge_thickness)
+        _validate_options(self.base_options)
+        self.overlay_options.node_size = float(self.overlay_preview_node_size)
+        self.overlay_options.edge_thickness = float(self.overlay_preview_edge_thickness)
+        _validate_options(self.overlay_options)
 
 
 @dataclass(slots=True)
@@ -219,7 +282,7 @@ class GraphViewerSession:
     tools_scroll_offset: float = 0.0
     tools_scroll_dragging: bool = False
     tools_scroll_drag_last_y: int | None = None
-    appearance_slider_dragging: Literal["node", "edge"] | None = None
+    appearance_slider_dragging: Literal["node", "edge", "base_opacity", "overlay_opacity"] | None = None
     node_id_editing: bool = False
     node_id_edit_buffer: str = ""
     node_id_edit_invalid: bool = False
@@ -229,6 +292,8 @@ class GraphViewerSession:
     error_actor: Any | None = None
     layout_menu_open: bool = False
     view_menu_open: ViewID | None = None
+    overlay_menu_open: str | None = None  # "base" or "overlay"
+    interactive_overlay_target: OverlayTarget = "base"
     overlay_renderer: Any | None = None
 
     def __post_init__(self) -> None:
@@ -330,6 +395,17 @@ class GraphViewerSession:
             return None
         return self.loaded_files[view.file_index]
 
+    def _safe_file(self, index: int | None) -> LoadedVisualizationFile | None:
+        if index is None or index < 0 or index >= len(self.loaded_files):
+            return None
+        return self.loaded_files[index]
+
+    def base_file_for_view(self, view_id: ViewID | None = None) -> LoadedVisualizationFile | None:
+        return self._safe_file(self.view_state(view_id).base_file_index)
+
+    def overlay_file_for_view(self, view_id: ViewID | None = None) -> LoadedVisualizationFile | None:
+        return self._safe_file(self.view_state(view_id).overlay_file_index)
+
     @property
     def active_graph_data(self) -> GraphVisualizationData | None:
         active = self.active_file
@@ -380,12 +456,52 @@ class GraphViewerSession:
 
         loaded_file = LoadedVisualizationFile(path=graph_path, kind=kind, data=data)
         self.loaded_files.append(loaded_file)
-        self.assign_view_file(self.active_view_id, len(self.loaded_files) - 1)
+        if self.layout_mode == "overlay":
+            view = self.active_view
+            if view.base_file_index is None:
+                view.base_file_index = len(self.loaded_files) - 1
+            elif view.overlay_file_index is None:
+                view.overlay_file_index = len(self.loaded_files) - 1
+            else:
+                view.base_file_index = view.overlay_file_index
+                view.overlay_file_index = len(self.loaded_files) - 1
+        else:
+            self.assign_view_file(self.active_view_id, len(self.loaded_files) - 1)
         return loaded_file
 
     def assign_view_file(self, view_id: ViewID, index: int | None) -> None:
         view = self.view_state(view_id)
         view.file_index = index if index is None or 0 <= index < len(self.loaded_files) else None
+
+    def assign_base_file(self, view_id: ViewID, index: int | None) -> None:
+        view = self.view_state(view_id)
+        view.base_file_index = index if index is None or 0 <= index < len(self.loaded_files) else None
+
+    def assign_overlay_file(self, view_id: ViewID, index: int | None) -> None:
+        view = self.view_state(view_id)
+        view.overlay_file_index = index if index is None or 0 <= index < len(self.loaded_files) else None
+
+    def _validate_overlay_alignment(self) -> str | None:
+        """Return an error message if overlay layers are misaligned, or None if OK."""
+        view = self.active_view
+        base = self._safe_file(view.base_file_index)
+        overlay = self._safe_file(view.overlay_file_index)
+        if base is None or overlay is None:
+            return None
+
+        if base.kind == "nifti" and overlay.kind == "nifti":
+            base_shape = base.data.shape  # type: ignore[union-attr]
+            overlay_shape = overlay.data.shape  # type: ignore[union-attr]
+            if base_shape != overlay_shape:
+                return "Base & Overlay NIfTI files have mismatched shapes."
+
+        elif base.kind == "graphml" and overlay.kind == "graphml":
+            base_pos = base.data.node_positions  # type: ignore[union-attr]
+            overlay_pos = overlay.data.node_positions  # type: ignore[union-attr]
+            if not _bounding_boxes_overlap(base_pos, overlay_pos, threshold=0.97):
+                return "Base & Overlay graph coordinates have insufficient overlap."
+
+        return None
 
     def close_active_file(self) -> None:
         active_index = self.active_index
@@ -519,6 +635,30 @@ def _validate_graph_data(node_positions: np.ndarray, edge_indices: np.ndarray) -
         raise GraphVisualizationError("GraphML file contains non-finite node coordinates and cannot be rendered.")
     if edge_indices.size and (edge_indices.min() < 0 or edge_indices.max() >= node_positions.shape[0]):
         raise GraphVisualizationError("GraphML file contains an edge referencing a missing node.")
+
+
+def _bounding_boxes_overlap(
+    a: np.ndarray,
+    b: np.ndarray,
+    *,
+    threshold: float = 0.97,
+) -> bool:
+    """Return True if the bounding boxes of two point sets overlap >= *threshold*."""
+    if a.size == 0 or b.size == 0:
+        return False
+    a_min = a.min(axis=0)
+    a_max = a.max(axis=0)
+    b_min = b.min(axis=0)
+    b_max = b.max(axis=0)
+    a_vol = float(np.prod(np.maximum(a_max - a_min, 1e-9)))
+    b_vol = float(np.prod(np.maximum(b_max - b_min, 1e-9)))
+    overlap_min = np.maximum(a_min, b_min)
+    overlap_max = np.minimum(a_max, b_max)
+    overlap_dims = np.maximum(overlap_max - overlap_min, 0.0)
+    overlap_vol = float(np.prod(overlap_dims))
+    if a_vol == 0.0 or b_vol == 0.0:
+        return overlap_vol > 0.0
+    return (overlap_vol / a_vol) >= threshold and (overlap_vol / b_vol) >= threshold
 
 
 def _is_nifti_path(path: str | Path) -> bool:
@@ -917,11 +1057,15 @@ def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
 
 
 def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
-    """Render compact header bars above each viewport in double-view mode."""
+    """Render compact header bars above each viewport in double/overlay mode."""
     _remove_actor_list(plotter, session.header_actors)
-    if session.layout_mode != "double":
-        return
+    if session.layout_mode == "double":
+        _render_double_view_headers(plotter, session)
+    elif session.layout_mode == "overlay":
+        _render_overlay_header(plotter, session)
 
+
+def _render_double_view_headers(plotter: Any, session: GraphViewerSession) -> None:
     window_width, window_height = _plotter_window_size(plotter)
     scene_right_px = int(window_width * 0.75)
     header_px = int(window_height * HEADER_HEIGHT_FRACTION)
@@ -940,64 +1084,72 @@ def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
             kind_label = _kind_label(file.kind)
             name = file.path.name
             prefix = _view_label(view_id) + "  |  " + kind_label + "  "
-            available_px = half_scene - 20  # 10 px padding each side
-            max_chars = max(10, available_px // 8)  # 8 px conservative char width
+            available_px = half_scene - 20
+            max_chars = max(10, available_px // 8)
             full_text = prefix + name
             if len(full_text) > max_chars:
                 name_chars = max(4, max_chars - len(prefix))
                 name = name[: name_chars - 3] + "..."
             text = prefix + name
 
-        if is_active:
-            # border rect
-            session.header_actors.append(
-                _add_overlay_rect(
-                    plotter,
-                    x=header_x,
-                    y=header_y,
-                    width=half_scene,
-                    height=header_px,
-                    color=HEADER_BORDER_COLOR,
-                    opacity=1.0,
-                )
-            )
-            # inner rect
-            session.header_actors.append(
-                _add_overlay_rect(
-                    plotter,
-                    x=header_x + border_w,
-                    y=header_y + border_w,
-                    width=half_scene - 2 * border_w,
-                    height=header_px - 2 * border_w,
-                    color=HEADER_COLOR,
-                    opacity=1.0,
-                )
-            )
-            text_color = "#1a1a1a"
-        else:
-            session.header_actors.append(
-                _add_overlay_rect(
-                    plotter,
-                    x=header_x,
-                    y=header_y,
-                    width=half_scene,
-                    height=header_px,
-                    color=HEADER_COLOR,
-                    opacity=1.0,
-                )
-            )
-            text_color = "#4a4a4a"
+        _draw_header_cell(plotter, session, header_x, header_y, half_scene, header_px,
+                          text, is_active, border_w)
 
+
+def _render_overlay_header(plotter: Any, session: GraphViewerSession) -> None:
+    window_width, window_height = _plotter_window_size(plotter)
+    scene_right_px = int(window_width * 0.75)
+    header_px = int(window_height * HEADER_HEIGHT_FRACTION)
+    view = session.active_view
+    base = session._safe_file(view.base_file_index)
+    overlay = session._safe_file(view.overlay_file_index)
+
+    base_text = _loaded_file_label(base) if base else "\u2014"
+    overlay_text = _loaded_file_label(overlay) if overlay else "\u2014"
+    prefix = "Overlay View  |  Base: "
+    mid = "  |  Overlay: "
+    full = prefix + base_text + mid + overlay_text
+    available_px = scene_right_px - 20
+    max_chars = max(10, available_px // 8)
+    if len(full) > max_chars:
+        fixed_len = len(prefix) + len(mid)
+        name_budget = max(4, (max_chars - fixed_len) // 2)
+        base_text = base_text[: name_budget - 1] + "\u2026"
+        overlay_text = overlay_text[: name_budget - 1] + "\u2026"
+    text = prefix + base_text + mid + overlay_text
+
+    _draw_header_cell(plotter, session, 0, window_height - header_px,
+                      scene_right_px, header_px, text, True, HEADER_BORDER_WIDTH)
+
+
+def _draw_header_cell(
+    plotter: Any,
+    session: GraphViewerSession,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    text: str,
+    is_active: bool,
+    border_w: int,
+) -> None:
+    if is_active:
         session.header_actors.append(
-            _add_overlay_text(
-                plotter,
-                text,
-                x=header_x + 10,
-                y=header_y + header_px // 2,
-                font_size=HEADER_FONT_SIZE,
-                color=text_color,
-            )
-        )
+            _add_overlay_rect(plotter, x=x, y=y, width=width, height=height,
+                              color=HEADER_BORDER_COLOR, opacity=1.0))
+        session.header_actors.append(
+            _add_overlay_rect(plotter, x=x + border_w, y=y + border_w,
+                              width=width - 2 * border_w, height=height - 2 * border_w,
+                              color=HEADER_COLOR, opacity=1.0))
+        text_color = "#1a1a1a"
+    else:
+        session.header_actors.append(
+            _add_overlay_rect(plotter, x=x, y=y, width=width, height=height,
+                              color=HEADER_COLOR, opacity=1.0))
+        text_color = "#4a4a4a"
+    session.header_actors.append(
+        _add_overlay_text(plotter, text, x=x + 10, y=y + height // 2,
+                          font_size=HEADER_FONT_SIZE, color=text_color))
 
 
 def _ensure_overlay_renderer(plotter: Any, session: GraphViewerSession) -> Any | None:
@@ -1235,7 +1387,7 @@ def render_file_panel(plotter: Any, session: GraphViewerSession) -> None:
     """Draw compact per-viewport file status controls and optional file lists."""
     _remove_actor_list(plotter, session.file_panel_actors)
     session.file_hitboxes.clear()
-    if session.layout_mode == "double":
+    if session.layout_mode in ("double", "overlay"):
         for view in session.views.values():
             view.file_list_open = False
         if hasattr(plotter, "render"):
@@ -1399,7 +1551,13 @@ def _display_point(plotter: Any, position: Sequence[float]) -> tuple[float, floa
 
 def _selected_graph_data(session: GraphViewerSession, view_id: ViewID | None = None) -> tuple[GraphVisualizationData, int] | None:
     view = session.view_state(view_id)
-    active = session.file_for_view(view.view_id)
+    if session.layout_mode == "overlay":
+        if session.interactive_overlay_target == "base":
+            active = session.base_file_for_view(view.view_id)
+        else:
+            active = session.overlay_file_for_view(view.view_id)
+    else:
+        active = session.file_for_view(view.view_id)
     graph_data = active.data if active is not None and active.kind == "graphml" else None
     index = view.selected_node_index
     if graph_data is None or index is None or index < 0 or index >= graph_data.node_count:
@@ -1838,6 +1996,9 @@ def _remove_graph_actors(plotter: Any, session: GraphViewerSession, view_id: Vie
     view.graph_actors.clear()
     view.graph_node_actor = None
     view.graph_edge_actor = None
+    view.overlay_base_nifti_actor = None
+    view.overlay_overlay_nifti_actor = None
+    view.overlay_overlay_graph_actors.clear()
 
 
 def _update_graph_appearance(session: GraphViewerSession, view_id: ViewID | None = None) -> bool:
@@ -1849,6 +2010,122 @@ def _update_graph_appearance(session: GraphViewerSession, view_id: ViewID | None
     if view.graph_edge_actor is not None:
         view.graph_edge_actor.GetProperty().SetLineWidth(float(view.options.edge_thickness))
     return True
+
+
+def _render_overlay_layers(
+    plotter: Any,
+    session: GraphViewerSession,
+    view: ViewState,
+    *,
+    pv_module: Any | None = None,
+    reset_camera: bool = True,
+) -> None:
+    """Render base + overlay layers in a single viewport for overlay mode."""
+    _select_view_renderer(plotter, view.view_id)
+    _remove_graph_actors(plotter, session, view.view_id)
+    view.interactive_enabled = False
+    clear_interactive_selection(plotter, session, view.view_id)
+
+    base = session._safe_file(view.base_file_index)
+    overlay = session._safe_file(view.overlay_file_index)
+
+    if base is None and overlay is None:
+        _set_status(plotter, session)
+        render_tools_panel(plotter, session)
+        if hasattr(plotter, "render"):
+            plotter.render()
+        return
+
+    pv = _import_pyvista() if pv_module is None else pv_module
+
+    # Validate alignment
+    error_msg = session._validate_overlay_alignment()
+    if error_msg:
+        _show_warning_dialog("Alignment Warning", error_msg + "\nBase & Overlay files have mismatched coordinate system!")
+
+    # --- Base layer ---
+    if base is not None:
+        if base.kind == "graphml":
+            graph_data = base.data if isinstance(base.data, GraphVisualizationData) else None
+            if graph_data is not None:
+                actors, edge_a, node_a = _add_graph_scene(
+                    plotter, graph_data, view.base_options, pv_module=pv
+                )
+                view.graph_actors.extend(actors)
+                if view.overlay_target == "base":
+                    view.graph_node_actor = node_a
+                    view.graph_edge_actor = edge_a
+        else:
+            nifti_data = base.data if isinstance(base.data, NiftiVisualizationData) else None
+            if nifti_data is not None:
+                actor = _build_instanced_nifti_actor(nifti_data, pv_module=pv)
+                if actor is not None:
+                    actor.GetProperty().SetOpacity(view.base_opacity)
+                    try:
+                        plotter.add_actor(actor, render=False)
+                    except TypeError:
+                        plotter.add_actor(actor)
+                    view.graph_actors.append(actor)
+                    view.overlay_base_nifti_actor = actor
+
+    # --- Overlay layer ---
+    if overlay is not None:
+        opacity = view.overlay_opacity
+        if overlay.kind == "graphml":
+            graph_data = overlay.data if isinstance(overlay.data, GraphVisualizationData) else None
+            if graph_data is not None:
+                _add_overlay_graph(plotter, graph_data, view.overlay_options, view, opacity, pv)
+        else:
+            nifti_data = overlay.data if isinstance(overlay.data, NiftiVisualizationData) else None
+            if nifti_data is not None:
+                actor = _build_instanced_nifti_actor(nifti_data, pv_module=pv)
+                if actor is not None:
+                    actor.GetProperty().SetColor(*OVERLAY_NIFTI_COLOR)
+                    actor.GetProperty().SetOpacity(opacity)
+                    try:
+                        plotter.add_actor(actor, render=False)
+                    except TypeError:
+                        plotter.add_actor(actor)
+                    view.graph_actors.append(actor)
+                    view.overlay_overlay_nifti_actor = actor
+
+    if reset_camera:
+        plotter.reset_camera()
+        _store_initial_camera_state(plotter, session, view.view_id)
+    _set_status(plotter, session)
+    render_tools_panel(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
+
+
+def _add_overlay_graph(
+    plotter: Any,
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+    view: ViewState,
+    opacity: float,
+    pv: Any,
+) -> None:
+    """Add an overlay graph layer with distinct colors and reduced opacity."""
+    if graph_data.edge_indices.size:
+        line_data = pv.PolyData()
+        line_data.points = graph_data.node_positions
+        line_data.lines = _edge_polyline_array(graph_data.edge_indices)
+        edge_actor = plotter.add_mesh(
+            line_data, color=OVERLAY_GRAPH_EDGE_COLOR,
+            line_width=float(options.edge_thickness),
+            render_lines_as_tubes=True, render=False, opacity=opacity,
+        )
+        view.graph_actors.append(edge_actor)
+        view.overlay_overlay_graph_actors.append(edge_actor)
+    node_cloud = pv.PolyData(graph_data.node_positions)
+    node_actor = plotter.add_mesh(
+        node_cloud, color=OVERLAY_GRAPH_NODE_COLOR,
+        style="points", point_size=float(options.node_size),
+        render_points_as_spheres=True, render=False, opacity=opacity,
+    )
+    view.graph_actors.append(node_actor)
+    view.overlay_overlay_graph_actors.append(node_actor)
 
 
 def render_active_graph(
@@ -1863,6 +2140,11 @@ def render_active_graph(
     apply_view_layout(plotter, session)
     render_view_headers(plotter, session)
     view = session.view_state(view_id)
+
+    if session.layout_mode == "overlay":
+        _render_overlay_layers(plotter, session, view, pv_module=pv_module, reset_camera=reset_camera)
+        return
+
     _select_view_renderer(plotter, view.view_id)
     _remove_graph_actors(plotter, session, view.view_id)
     active_file = session.file_for_view(view.view_id)
@@ -2173,6 +2455,14 @@ def set_layout_mode(
         session.layout_mode = "double"
         session.active_view_id = "a"
         session.camera_sync_enabled = True
+    elif mode == "overlay":
+        session.layout_mode = "overlay"
+        session.active_view_id = "a"
+        session.camera_sync_enabled = True
+        session.views["b"].file_list_open = False
+        session.views["b"].interactive_enabled = False
+        _remove_graph_actors(plotter, session, "b")
+        _remove_selected_node_highlight(plotter, session, "b")
     else:
         session.active_view_id = "a"
         session.layout_mode = "single"
@@ -2405,7 +2695,9 @@ def _set_appearance_slider_from_display_x(
     *,
     pv_module: Any | None = None,
 ) -> bool:
-    if hitbox.value not in ("node", "edge") or session.active_kind != "graphml":
+    if hitbox.value not in ("node", "edge", "base_opacity", "overlay_opacity"):
+        return False
+    if hitbox.value in ("node", "edge") and session.active_kind != "graphml" and session.layout_mode != "overlay":
         return False
     bounds = _appearance_slider_bounds(hitbox.value)
     fraction = min(max((float(x_pos) - hitbox.x) / max(float(hitbox.width), 1.0), 0.0), 1.0)
@@ -2473,7 +2765,14 @@ def _picked_graph_node_index(plotter: Any, session: GraphViewerSession, x_pos: i
 
 
 def _nearest_graph_node_index(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> int | None:
-    graph_data = session.active_graph_data
+    if session.layout_mode == "overlay":
+        if session.interactive_overlay_target == "base":
+            active = session.base_file_for_view()
+        else:
+            active = session.overlay_file_for_view()
+        graph_data = active.data if active is not None and active.kind == "graphml" else None
+    else:
+        graph_data = session.active_graph_data
     if graph_data is None:
         return None
     picked_index = _picked_graph_node_index(plotter, session, x_pos, y_pos)
@@ -2501,7 +2800,16 @@ def select_graph_node_at_display_position(
     *,
     pv_module: Any | None = None,
 ) -> bool:
-    if not session.interactive_enabled or session.active_kind != "graphml":
+    if not session.interactive_enabled:
+        return False
+    if session.layout_mode == "overlay":
+        has_graph = (
+            (session.base_file_for_view() is not None and session.base_file_for_view().kind == "graphml") or
+            (session.overlay_file_for_view() is not None and session.overlay_file_for_view().kind == "graphml")
+        )
+        if not has_graph:
+            return False
+    elif session.active_kind != "graphml":
         return False
     if _inside_tools_panel(plotter, session, x_pos, y_pos):
         return False
@@ -2677,14 +2985,37 @@ def dispatch_ui_click(
                 plotter.render()
             return True
         if hitbox.action == "set-layout":
-            set_layout_mode(plotter, session, "double" if hitbox.index == 1 else "single", pv_module=pv_module)
+            set_layout_mode(
+                plotter, session,
+                {0: "single", 1: "double", 2: "overlay"}.get(hitbox.index or 0, "single"),
+                pv_module=pv_module,
+            )
             return True
         if hitbox.action == "toggle-view-menu" and hitbox.view_id is not None:
             session.view_menu_open = None if session.view_menu_open == hitbox.view_id else hitbox.view_id
             session.layout_menu_open = False
+            session.overlay_menu_open = None
             render_tools_panel(plotter, session)
             if hasattr(plotter, "render"):
                 plotter.render()
+            return True
+        if hitbox.action == "toggle-overlay-file-menu" and hitbox.view_id is not None:
+            target = "base" if hitbox.index == 0 else "overlay"
+            session.overlay_menu_open = None if session.overlay_menu_open == target else target
+            session.layout_menu_open = False
+            session.view_menu_open = None
+            render_tools_panel(plotter, session)
+            if hasattr(plotter, "render"):
+                plotter.render()
+            return True
+        if hitbox.action == "assign-overlay-file" and hitbox.view_id is not None:
+            if hitbox.index is not None:
+                if session.overlay_menu_open == "base":
+                    session.assign_base_file(hitbox.view_id, hitbox.index)
+                else:
+                    session.assign_overlay_file(hitbox.view_id, hitbox.index)
+            session.overlay_menu_open = None
+            render_active_graph(plotter, session, pv_module=pv_module, view_id=hitbox.view_id)
             return True
         if hitbox.action == "assign-view-file" and hitbox.view_id is not None:
             set_active_view(plotter, session, hitbox.view_id)
@@ -2692,15 +3023,25 @@ def dispatch_ui_click(
             session.view_menu_open = None
             render_active_graph(plotter, session, pv_module=pv_module, view_id=hitbox.view_id)
             return True
-        if hitbox.action == "appearance-slider" and hitbox.value in ("node", "edge"):
+        if hitbox.action == "appearance-slider" and hitbox.value in (
+            "node", "edge", "base_opacity", "overlay_opacity",
+        ):
             session.appearance_slider_dragging = hitbox.value
             _set_appearance_slider_from_display_x(plotter, session, hitbox, x_pos, pv_module=pv_module)
             return True
         if hitbox.action == "toggle-interactive":
             toggle_interactive(plotter, session, pv_module=pv_module)
             return True
+        if hitbox.action == "toggle-interactive-overlay-target":
+            session.interactive_overlay_target = "overlay" if session.interactive_overlay_target == "base" else "base"
+            clear_interactive_selection(plotter, session, session.active_view_id)
+            render_tools_panel(plotter, session)
+            if hasattr(plotter, "render"):
+                plotter.render()
+            return True
         if hitbox.action == "toggle-camera-sync":
-            toggle_camera_sync(plotter, session)
+            if session.layout_mode != "overlay":
+                toggle_camera_sync(plotter, session)
             return True
         if hitbox.action == "edit-node-id":
             _begin_node_id_edit(plotter, session)
@@ -2897,6 +3238,8 @@ def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, 
     layout["edge_slider"] = layout["node_slider"] - APPEARANCE_SLIDER_SPACING
 
     cursor_top = layout["edge_slider"] - APPEARANCE_SLIDER_BOTTOM_GAP
+    if session.layout_mode == "overlay":
+        cursor_top -= APPEARANCE_SLIDER_SPACING * 2
     layout["interactive_header"] = cursor_top - TOOLS_SECTION_HEADER_HEIGHT
     layout["interactive_toggle"] = layout["interactive_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
     layout["node_id"] = layout["interactive_toggle"] - row_stride
@@ -3008,6 +3351,10 @@ def _view_label(view_id: ViewID) -> str:
     return "View A" if view_id == "a" else "View B"
 
 
+def _layout_mode_label(mode: ViewLayoutMode) -> str:
+    return {"single": "Single View", "double": "Double View", "overlay": "Overlay View"}[mode]
+
+
 def _loaded_file_label(loaded_file: LoadedVisualizationFile, *, max_length: int = 24) -> str:
     label = f"{_kind_label(loaded_file.kind)} {loaded_file.path.name}"
     return label if len(label) <= max_length else label[: max_length - 3] + "..."
@@ -3018,6 +3365,13 @@ def _view_dropdown_label(session: GraphViewerSession, view_id: ViewID) -> str:
     if active is None:
         return "Empty"
     return _loaded_file_label(active)
+
+
+def _file_index_dropdown_label(session: GraphViewerSession, index: int | None) -> str:
+    file = session._safe_file(index)
+    if file is None:
+        return "Empty"
+    return _loaded_file_label(file)
 
 
 def _add_dropdown_button(
@@ -3151,6 +3505,13 @@ def render_interactive_controls(plotter: Any, session: GraphViewerSession) -> No
 
     button_y = layout["interactive_toggle"]
     has_graphml_file = session.active_kind == "graphml"
+    if session.layout_mode == "overlay":
+        base = session._safe_file(session.active_view.base_file_index)
+        overlay_f = session._safe_file(session.active_view.overlay_file_index)
+        has_graphml_file = (
+            (base is not None and base.kind == "graphml") or
+            (overlay_f is not None and overlay_f.kind == "graphml")
+        )
     active = session.interactive_enabled and has_graphml_file
     interactive_button_background = (0.10, 0.45, 0.31) if active else (
         (0.19, 0.26, 0.34) if has_graphml_file else (0.29, 0.31, 0.34)
@@ -3167,6 +3528,21 @@ def render_interactive_controls(plotter: Any, session: GraphViewerSession) -> No
             width=inner_width,
             background=interactive_button_background,
         )
+
+    if session.layout_mode == "overlay" and has_graphml_file:
+        base_g = base is not None and base.kind == "graphml" if (base := session._safe_file(session.active_view.base_file_index)) else False
+        overlay_g = (overlay_f is not None and overlay_f.kind == "graphml") if (overlay_f := session._safe_file(session.active_view.overlay_file_index)) else False
+        if base_g and overlay_g:
+            target_y = button_y - COMMAND_BUTTON_HEIGHT - COMMAND_BUTTON_GAP
+            if _tools_row_visible(plotter, target_y):
+                _add_dropdown_button(
+                    plotter, session,
+                    label="Target",
+                    value=session.interactive_overlay_target.capitalize(),
+                    action="toggle-interactive-overlay-target",
+                    x=inner_x, y=target_y, width=inner_width,
+                )
+            node_id_y = target_y - COMMAND_BUTTON_GAP
 
     position = selected_node_position(session)
     node_id = selected_node_id(session)
@@ -3286,30 +3662,55 @@ def render_view_layout_controls(plotter: Any, session: GraphViewerSession) -> No
             plotter,
             session,
             label="Layout",
-            value="Single View" if session.layout_mode == "single" else "Double View",
+            value=_layout_mode_label(session.layout_mode),
             action="toggle-layout-menu",
             x=inner_x,
             y=layout_y,
             width=inner_width,
         )
 
-    enabled = session.layout_mode == "double"
-    for view_id, row_key in (("a", "view_a_dropdown"), ("b", "view_b_dropdown")):
-        row_y = layout[row_key]
-        if not _tools_row_visible(plotter, row_y):
-            continue
-        _add_dropdown_button(
-            plotter,
-            session,
-            label=_view_label(view_id),
-            value=_view_dropdown_label(session, view_id),
-            action="toggle-view-menu",
-            x=inner_x,
-            y=row_y,
-            width=inner_width,
-            enabled=enabled,
-            view_id=view_id,
-        )
+    if session.layout_mode == "single":
+        view_id = session.active_view_id
+        row_y = layout["view_a_dropdown"]
+        if _tools_row_visible(plotter, row_y):
+            _add_dropdown_button(
+                plotter, session,
+                label="View",
+                value=_view_dropdown_label(session, view_id),
+                action="toggle-view-menu",
+                x=inner_x, y=row_y, width=inner_width,
+                view_id=view_id,
+            )
+    elif session.layout_mode == "double":
+        for view_id, row_key in (("a", "view_a_dropdown"), ("b", "view_b_dropdown")):
+            row_y = layout[row_key]
+            if not _tools_row_visible(plotter, row_y):
+                continue
+            _add_dropdown_button(
+                plotter, session,
+                label=_view_label(view_id),
+                value=_view_dropdown_label(session, view_id),
+                action="toggle-view-menu",
+                x=inner_x, y=row_y, width=inner_width,
+                view_id=view_id,
+            )
+    elif session.layout_mode == "overlay":
+        view = session.active_view
+        for label, file_index, action_key in (
+            ("Base", view.base_file_index, "view_a_dropdown"),
+            ("Overlay", view.overlay_file_index, "view_b_dropdown"),
+        ):
+            row_y = layout[action_key]
+            if not _tools_row_visible(plotter, row_y):
+                continue
+            _add_dropdown_button(
+                plotter, session,
+                label=label,
+                value=_file_index_dropdown_label(session, file_index),
+                action="toggle-overlay-file-menu",
+                x=inner_x, y=row_y, width=inner_width,
+                view_id=session.active_view_id,
+            )
 
 
 def render_open_dropdown_menus(plotter: Any, session: GraphViewerSession) -> None:
@@ -3329,18 +3730,34 @@ def render_open_dropdown_menus(plotter: Any, session: GraphViewerSession) -> Non
             x=inner_x,
             y=layout["layout_dropdown"],
             width=inner_width,
-            rows=(("Single View", "set-layout", None, None), ("Double View", "set-layout", 1, None)),
+            rows=(
+                ("Single View", "set-layout", None, None),
+                ("Double View", "set-layout", 1, None),
+                ("Overlay View", "set-layout", 2, None),
+            ),
         )
 
-    if session.layout_mode != "double" or session.view_menu_open is None:
-        return
-    row_key = "view_a_dropdown" if session.view_menu_open == "a" else "view_b_dropdown"
-    rows: list[tuple[str, str, int | None, ViewID | None]] = [("Empty", "assign-view-file", None, session.view_menu_open)]
-    rows.extend(
-        (_loaded_file_label(loaded_file), "assign-view-file", index, session.view_menu_open)
-        for index, loaded_file in enumerate(session.loaded_files)
-    )
-    _add_dropdown_menu(plotter, session, x=inner_x, y=layout[row_key], width=inner_width, rows=rows)
+    if session.view_menu_open is not None:
+        row_key = "view_a_dropdown" if session.view_menu_open == "a" else "view_b_dropdown"
+        rows: list[tuple[str, str, int | None, ViewID | None]] = [
+            ("Empty", "assign-view-file", None, session.view_menu_open)
+        ]
+        rows.extend(
+            (_loaded_file_label(loaded_file), "assign-view-file", index, session.view_menu_open)
+            for index, loaded_file in enumerate(session.loaded_files)
+        )
+        _add_dropdown_menu(plotter, session, x=inner_x, y=layout[row_key], width=inner_width, rows=rows)
+
+    if session.overlay_menu_open is not None:
+        row_key = "view_a_dropdown" if session.overlay_menu_open == "base" else "view_b_dropdown"
+        rows: list[tuple[str, str, int | None, ViewID | None]] = [
+            ("Empty", "assign-overlay-file", None, session.active_view_id)
+        ]
+        rows.extend(
+            (_loaded_file_label(loaded_file), "assign-overlay-file", index, session.active_view_id)
+            for index, loaded_file in enumerate(session.loaded_files)
+        )
+        _add_dropdown_menu(plotter, session, x=inner_x, y=layout[row_key], width=inner_width, rows=rows)
 
 
 def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
@@ -3399,7 +3816,12 @@ def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
             )
 
     sync_button_y = layout["camera_sync"]
-    sync_button_background = (0.10, 0.45, 0.31) if session.camera_sync_enabled else (0.19, 0.26, 0.34)
+    sync_enabled = session.layout_mode != "overlay"
+    sync_button_background = (
+        (0.10, 0.45, 0.31) if session.camera_sync_enabled and sync_enabled
+        else (0.29, 0.31, 0.34) if not sync_enabled
+        else (0.19, 0.26, 0.34)
+    )
     if _tools_row_visible(plotter, sync_button_y):
         _add_ui_button(
             plotter,
@@ -3478,12 +3900,34 @@ def _remove_graph_sliders(plotter: Any, session: GraphViewerSession) -> None:
     session.sliders_visible = False
 
 
-def _appearance_slider_bounds(option: Literal["node", "edge"]) -> tuple[float, float]:
-    return NODE_SIZE_RANGE if option == "node" else EDGE_THICKNESS_RANGE
+def _appearance_slider_bounds(
+    option: Literal["node", "edge", "base_opacity", "overlay_opacity"],
+) -> tuple[float, float]:
+    if option == "node":
+        return NODE_SIZE_RANGE
+    if option == "edge":
+        return EDGE_THICKNESS_RANGE
+    return OPACITY_RANGE
 
 
-def _appearance_slider_value(session: GraphViewerSession, option: Literal["node", "edge"]) -> float:
-    value = session.preview_node_size if option == "node" else session.preview_edge_thickness
+def _appearance_slider_value(
+    session: GraphViewerSession,
+    option: Literal["node", "edge", "base_opacity", "overlay_opacity"],
+) -> float:
+    if option == "node":
+        if session.layout_mode == "overlay":
+            value = session.active_view.overlay_preview_node_size_for_target()
+        else:
+            value = session.preview_node_size
+    elif option == "edge":
+        if session.layout_mode == "overlay":
+            value = session.active_view.overlay_preview_edge_thickness_for_target()
+        else:
+            value = session.preview_edge_thickness
+    elif option == "base_opacity":
+        value = session.active_view.base_opacity
+    else:
+        value = session.active_view.overlay_opacity
     bounds = _appearance_slider_bounds(option)
     return _clamp_preview_value(float(value if value is not None else bounds[0]), bounds)
 
@@ -3581,6 +4025,59 @@ def _render_appearance_slider_row(
         )
 
 
+def _render_overlay_appearance_sliders(
+    plotter: Any,
+    session: GraphViewerSession,
+    inner_x: int,
+    inner_width: int,
+    node_y: int,
+    edge_y: int,
+    layout: dict[str, int],
+) -> None:
+    """Render overlay-mode appearance: target dropdown, opacity sliders."""
+    view = session.active_view
+    base = session._safe_file(view.base_file_index)
+    overlay_file = session._safe_file(view.overlay_file_index)
+    base_is_graph = base is not None and base.kind == "graphml"
+    overlay_is_graph = overlay_file is not None and overlay_file.kind == "graphml"
+    any_graph = base_is_graph or overlay_is_graph
+
+    if base_is_graph and overlay_is_graph:
+        # Target dropdown
+        target_y = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
+        if _tools_row_visible(plotter, target_y):
+            _add_dropdown_button(
+                plotter, session,
+                label="Target",
+                value=view.overlay_target.capitalize(),
+                action="toggle-overlay-target-menu",
+                x=inner_x, y=target_y, width=inner_width,
+            )
+        node_y -= COMMAND_BUTTON_HEIGHT + COMMAND_BUTTON_GAP
+        edge_y -= COMMAND_BUTTON_HEIGHT + COMMAND_BUTTON_GAP
+
+    _render_appearance_slider_row(
+        plotter, session, title="Node Size", option="node",
+        center_y=node_y, x=inner_x, width=inner_width, enabled=any_graph,
+    )
+    _render_appearance_slider_row(
+        plotter, session, title="Edge Thickness", option="edge",
+        center_y=edge_y, x=inner_x, width=inner_width, enabled=any_graph,
+    )
+
+    # Opacity sliders
+    base_opacity_y = edge_y - APPEARANCE_SLIDER_SPACING
+    overlay_opacity_y = base_opacity_y - APPEARANCE_SLIDER_SPACING
+    _render_appearance_slider_row(
+        plotter, session, title="Base Opacity", option="base_opacity",
+        center_y=base_opacity_y, x=inner_x, width=inner_width, enabled=True,
+    )
+    _render_appearance_slider_row(
+        plotter, session, title="Overlay Opacity", option="overlay_opacity",
+        center_y=overlay_opacity_y, x=inner_x, width=inner_width, enabled=True,
+    )
+
+
 def render_graph_sliders(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     """Show GraphML appearance sliders only while the Tools panel is visible."""
     should_show = session.tools_panel_visible
@@ -3608,6 +4105,11 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession, *, pv_module
         )
 
     _remove_graph_sliders(plotter, session)
+
+    if session.layout_mode == "overlay":
+        _render_overlay_appearance_sliders(plotter, session, inner_x, inner_width, node_y_abs, edge_y_abs, layout)
+        return
+
     enabled = session.active_kind == "graphml"
     _render_appearance_slider_row(
         plotter,
@@ -3652,22 +4154,66 @@ def _commit_graph_preview_value(
     plotter: Any,
     session: GraphViewerSession,
     *,
-    option: Literal["node", "edge"],
+    option: Literal["node", "edge", "base_opacity", "overlay_opacity"],
     value: float,
     pv_module: Any | None = None,
 ) -> bool:
-    if session.active_kind != "graphml":
+    if option in ("base_opacity", "overlay_opacity"):
+        next_value = _clamp_preview_value(float(value), OPACITY_RANGE)
+        view = session.active_view
+        if option == "base_opacity":
+            if np.isclose(view.base_opacity, next_value):
+                return False
+            view.base_opacity = next_value
+            if view.overlay_base_nifti_actor is not None:
+                view.overlay_base_nifti_actor.GetProperty().SetOpacity(next_value)
+                if hasattr(plotter, "render"):
+                    plotter.render()
+                return True
+        else:
+            if np.isclose(view.overlay_opacity, next_value):
+                return False
+            view.overlay_opacity = next_value
+            updated = False
+            if view.overlay_overlay_nifti_actor is not None:
+                view.overlay_overlay_nifti_actor.GetProperty().SetOpacity(next_value)
+                updated = True
+            for actor in view.overlay_overlay_graph_actors:
+                actor.GetProperty().SetOpacity(next_value)
+                updated = True
+            if updated:
+                if hasattr(plotter, "render"):
+                    plotter.render()
+                return True
+        refresh_active_graph(plotter, session, pv_module=pv_module)
+        return True
+
+    if session.active_kind != "graphml" and session.layout_mode != "overlay":
         return False
     if option == "node":
-        next_value = _clamp_preview_value(float(value), NODE_SIZE_RANGE)
-        if np.isclose(float(session.preview_node_size), next_value):
-            return False
-        session.set_preview_node_size(next_value)
+        if session.layout_mode == "overlay":
+            next_value = _clamp_preview_value(float(value), NODE_SIZE_RANGE)
+            current = session.active_view.overlay_preview_node_size_for_target()
+            if np.isclose(current, next_value):
+                return False
+            session.active_view.set_overlay_preview_node_size_for_target(next_value)
+        else:
+            next_value = _clamp_preview_value(float(value), NODE_SIZE_RANGE)
+            if np.isclose(float(session.preview_node_size), next_value):
+                return False
+            session.set_preview_node_size(next_value)
     else:
-        next_value = _clamp_preview_value(float(value), EDGE_THICKNESS_RANGE)
-        if np.isclose(float(session.preview_edge_thickness), next_value):
-            return False
-        session.set_preview_edge_thickness(next_value)
+        if session.layout_mode == "overlay":
+            next_value = _clamp_preview_value(float(value), EDGE_THICKNESS_RANGE)
+            current = session.active_view.overlay_preview_edge_thickness_for_target()
+            if np.isclose(current, next_value):
+                return False
+            session.active_view.set_overlay_preview_edge_thickness_for_target(next_value)
+        else:
+            next_value = _clamp_preview_value(float(value), EDGE_THICKNESS_RANGE)
+            if np.isclose(float(session.preview_edge_thickness), next_value):
+                return False
+            session.set_preview_edge_thickness(next_value)
     refresh_active_graph(plotter, session, pv_module=pv_module)
     return True
 
