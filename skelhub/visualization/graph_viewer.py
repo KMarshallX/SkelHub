@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import importlib
 from pathlib import Path
 from typing import Any, Literal, Sequence
+import warnings
 
 import igraph as ig
 import nibabel as nib
@@ -22,10 +23,9 @@ FILE_PANEL_X = 10
 FILE_PANEL_TOP_MARGIN = 12
 FILE_PANEL_WIDTH = 300
 FILE_PANEL_ROW_HEIGHT = 22
-TOOLS_PANEL_RIGHT_MARGIN = 18
+TOOLS_PANEL_RIGHT_MARGIN = 0
 TOOLS_PANEL_TOP_MARGIN = 12
-TOOLS_BUTTON_WIDTH = 76
-TOOLS_PANEL_WIDTH = 336
+TOOLS_PANEL_WIDTH = 336  # kept for backward reference; runtime width is 25 % of window
 TOOLS_PANEL_HEIGHT = 560
 TOOLS_PANEL_MIN_HEIGHT = 220
 TOOLS_PANEL_BOTTOM_MARGIN = 12
@@ -34,7 +34,7 @@ TOOLS_SCROLLBAR_WIDTH = 10
 TOOLS_SCROLLBAR_GUTTER = 30
 TOOLS_SCROLL_STEP = 42
 TOOLS_VIEWPORT_CLIP_PADDING = 2
-TOOLS_PANEL_GAP = 8
+TOOLS_PANEL_GAP = 0
 TOOLS_PANEL_PADDING = 14
 TOOLS_SECTION_HEADER_HEIGHT = 14
 TOOLS_SECTION_HEADER_GAP = 4
@@ -45,6 +45,11 @@ TOOLS_BUTTON_FONT_SIZE = 10
 TOOLS_MENU_FONT_SIZE = 10
 VIEW_LAYOUT_MENU_ROW_HEIGHT = 22
 VIEW_LAYOUT_MENU_MAX_ROWS = 6
+HEADER_HEIGHT_FRACTION = 0.05
+HEADER_COLOR = (0.733, 0.765, 0.780)  # #BBC3C7
+HEADER_BORDER_COLOR = (0.949, 0.949, 0.306)  # #F2F24E
+HEADER_BORDER_WIDTH = 2
+HEADER_FONT_SIZE = 11
 APPEARANCE_SLIDER_TOP_GAP = 42
 APPEARANCE_SLIDER_SPACING = 84
 APPEARANCE_SLIDER_RESERVED_HEIGHT = 76
@@ -202,15 +207,15 @@ class GraphViewerSession:
     active_view_id: ViewID = "a"
     views: dict[ViewID, ViewState] = field(default_factory=dict)
     file_panel_actors: list[Any] = field(default_factory=list)
-    tools_button_actors: list[Any] = field(default_factory=list)
     tools_panel_actors: list[Any] = field(default_factory=list)
     command_button_actors: list[Any] = field(default_factory=list)
+    header_actors: list[Any] = field(default_factory=list)
     slider_widgets: list[Any] = field(default_factory=list)
     file_hitboxes: list[UIHitbox] = field(default_factory=list)
     tools_hitboxes: list[UIHitbox] = field(default_factory=list)
     command_hitboxes: list[UIHitbox] = field(default_factory=list)
     sliders_visible: bool = False
-    tools_panel_visible: bool = False
+    tools_panel_visible: bool = True
     tools_scroll_offset: float = 0.0
     tools_scroll_dragging: bool = False
     tools_scroll_drag_last_y: int | None = None
@@ -542,7 +547,13 @@ def load_graph_visualization_data(input_path: str | Path) -> GraphVisualizationD
         raise GraphVisualizationError(f"GraphML input does not exist: {graph_path}")
 
     try:
-        graph = ig.Graph.Read_GraphML(str(graph_path))
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="Could not add vertex ids, there is already an 'id' vertex attribute",
+                category=RuntimeWarning,
+            )
+            graph = ig.Graph.Read_GraphML(str(graph_path))
     except Exception as exc:  # pragma: no cover - igraph raises several concrete types
         raise GraphVisualizationError(f"Failed to load GraphML file '{graph_path}': {exc}") from exc
 
@@ -791,15 +802,18 @@ def _scene_renderer(plotter: Any, view_id: ViewID) -> Any | None:
     return getattr(plotter, "renderer", None)
 
 
-def _axes_marker_viewport(scene_left: float, scene_right: float) -> tuple[float, float, float, float]:
+def _axes_marker_viewport(*, scale_x: float = 1.0) -> tuple[float, float, float, float]:
+    """Return the renderer-relative viewport for the orientation axes marker.
+
+    VTK's orientation marker widget interprets the viewport relative to the
+    parent renderer, not the full window.  When *scale_x* is > 1.0 (e.g. in
+    double-view mode where each renderer occupies half the scene width) the
+    widget width is scaled up so it keeps the same physical pixel size as in
+    single-view mode.
+    """
     x_min, y_min, x_max, y_max = AXES_MARKER_VIEWPORT
-    scene_width = max(float(scene_right) - float(scene_left), 0.0)
-    return (
-        float(scene_left) + x_min * scene_width,
-        y_min,
-        float(scene_left) + x_max * scene_width,
-        y_max,
-    )
+    effective_x_max = x_min + (x_max - x_min) * float(scale_x)
+    return (x_min, y_min, effective_x_max, y_max)
 
 
 def _set_axes_marker_visible(
@@ -865,12 +879,18 @@ def _plotter_window_size(plotter: Any) -> tuple[int, int]:
     return 1280, 800
 
 
+def _tools_panel_width(plotter: Any) -> int:
+    """Return the tools panel width as 25 % of the window width."""
+    window_width, _height = _plotter_window_size(plotter)
+    return int(window_width * 0.25)
+
+
 def _scene_area_fraction(plotter: Any) -> float:
-    width, _height = _plotter_window_size(plotter)
-    tools_width = TOOLS_PANEL_WIDTH + 2 * TOOLS_PANEL_RIGHT_MARGIN
-    if width <= tools_width:
-        return 1.0
-    return max(0.1, min(1.0, (width - tools_width) / width))
+    """Return the right edge of the scene area as a fraction of the window.
+
+    The scene occupies 75 % of the window; the remaining 25 % is the tools panel.
+    """
+    return 0.75
 
 
 def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
@@ -878,26 +898,106 @@ def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
     scene_right = _scene_area_fraction(plotter)
     renderer_a = _scene_renderer(plotter, "a")
     renderer_b = _scene_renderer(plotter, "b")
-    if renderer_a is not None and hasattr(renderer_a, "SetViewport"):
-        if session.layout_mode == "double":
-            renderer_a.SetViewport(0.0, 0.0, scene_right / 2.0, 1.0)
-        else:
-            renderer_a.SetViewport(0.0, 0.0, scene_right, 1.0)
-    if renderer_b is not None and hasattr(renderer_b, "SetViewport"):
-        if session.layout_mode == "double":
-            renderer_b.SetViewport(scene_right / 2.0, 0.0, scene_right, 1.0)
-        else:
-            renderer_b.SetViewport(0.0, 0.0, 0.0, 0.0)
     if session.layout_mode == "double":
-        _set_axes_marker_visible(renderer_a, visible=True, viewport=_axes_marker_viewport(0.0, scene_right / 2.0))
-        _set_axes_marker_visible(
-            renderer_b,
-            visible=True,
-            viewport=_axes_marker_viewport(scene_right / 2.0, scene_right),
-        )
+        header_bottom = 1.0 - HEADER_HEIGHT_FRACTION
+        if renderer_a is not None and hasattr(renderer_a, "SetViewport"):
+            renderer_a.SetViewport(0.0, 0.0, scene_right / 2.0, header_bottom)
+        if renderer_b is not None and hasattr(renderer_b, "SetViewport"):
+            renderer_b.SetViewport(scene_right / 2.0, 0.0, scene_right, header_bottom)
+        axes_viewport = _axes_marker_viewport(scale_x=2.0)
+        _set_axes_marker_visible(renderer_a, visible=True, viewport=axes_viewport)
+        _set_axes_marker_visible(renderer_b, visible=True, viewport=axes_viewport)
     else:
-        _set_axes_marker_visible(renderer_a, visible=True, viewport=_axes_marker_viewport(0.0, scene_right))
+        if renderer_a is not None and hasattr(renderer_a, "SetViewport"):
+            renderer_a.SetViewport(0.0, 0.0, scene_right, 1.0)
+        if renderer_b is not None and hasattr(renderer_b, "SetViewport"):
+            renderer_b.SetViewport(0.0, 0.0, 0.0, 0.0)
+        _set_axes_marker_visible(renderer_a, visible=True, viewport=_axes_marker_viewport())
         _set_axes_marker_visible(renderer_b, visible=False, viewport=AXES_MARKER_HIDDEN_VIEWPORT)
+
+
+def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
+    """Render compact header bars above each viewport in double-view mode."""
+    _remove_actor_list(plotter, session.header_actors)
+    if session.layout_mode != "double":
+        return
+
+    window_width, window_height = _plotter_window_size(plotter)
+    scene_right_px = int(window_width * 0.75)
+    header_px = int(window_height * HEADER_HEIGHT_FRACTION)
+    half_scene = scene_right_px // 2
+    border_w = HEADER_BORDER_WIDTH
+
+    for col, view_id in enumerate(("a", "b")):
+        header_x = col * half_scene
+        header_y = window_height - header_px
+        is_active = session.active_view_id == view_id
+
+        file = session.file_for_view(view_id)
+        if file is None:
+            text = f"{_view_label(view_id)}  |  No file"
+        else:
+            kind_label = _kind_label(file.kind)
+            name = file.path.name
+            prefix = _view_label(view_id) + "  |  " + kind_label + "  "
+            available_px = half_scene - 20  # 10 px padding each side
+            max_chars = max(10, available_px // 8)  # 8 px conservative char width
+            full_text = prefix + name
+            if len(full_text) > max_chars:
+                name_chars = max(4, max_chars - len(prefix))
+                name = name[: name_chars - 3] + "..."
+            text = prefix + name
+
+        if is_active:
+            # border rect
+            session.header_actors.append(
+                _add_overlay_rect(
+                    plotter,
+                    x=header_x,
+                    y=header_y,
+                    width=half_scene,
+                    height=header_px,
+                    color=HEADER_BORDER_COLOR,
+                    opacity=1.0,
+                )
+            )
+            # inner rect
+            session.header_actors.append(
+                _add_overlay_rect(
+                    plotter,
+                    x=header_x + border_w,
+                    y=header_y + border_w,
+                    width=half_scene - 2 * border_w,
+                    height=header_px - 2 * border_w,
+                    color=HEADER_COLOR,
+                    opacity=1.0,
+                )
+            )
+            text_color = "#1a1a1a"
+        else:
+            session.header_actors.append(
+                _add_overlay_rect(
+                    plotter,
+                    x=header_x,
+                    y=header_y,
+                    width=half_scene,
+                    height=header_px,
+                    color=HEADER_COLOR,
+                    opacity=1.0,
+                )
+            )
+            text_color = "#4a4a4a"
+
+        session.header_actors.append(
+            _add_overlay_text(
+                plotter,
+                text,
+                x=header_x + 10,
+                y=header_y + header_px // 2,
+                font_size=HEADER_FONT_SIZE,
+                color=text_color,
+            )
+        )
 
 
 def _ensure_overlay_renderer(plotter: Any, session: GraphViewerSession) -> Any | None:
@@ -1761,6 +1861,7 @@ def render_active_graph(
 ) -> None:
     """Render the active session file using committed appearance options."""
     apply_view_layout(plotter, session)
+    render_view_headers(plotter, session)
     view = session.view_state(view_id)
     _select_view_renderer(plotter, view.view_id)
     _remove_graph_actors(plotter, session, view.view_id)
@@ -2094,6 +2195,9 @@ def set_active_view(plotter: Any, session: GraphViewerSession, view_id: ViewID) 
     _select_view_renderer(plotter, view_id)
     render_tools_panel(plotter, session)
     render_file_panel(plotter, session)
+    render_view_headers(plotter, session)
+    if hasattr(plotter, "render"):
+        plotter.render()
     return True
 
 
@@ -2187,15 +2291,12 @@ def _inside_tools_panel(plotter: Any, session: GraphViewerSession, x_pos: int, y
     if not session.tools_panel_visible:
         return False
     panel_x, panel_top, panel_bottom = _tools_panel_geometry(plotter)
-    return panel_x <= x_pos <= panel_x + TOOLS_PANEL_WIDTH and panel_bottom <= y_pos <= panel_top
+    return panel_x <= x_pos <= panel_x + _tools_panel_width(plotter) and panel_bottom <= y_pos <= panel_top
 
 
 def _tools_panel_visible_height(plotter: Any) -> int:
     _window_width, height = _plotter_window_size(plotter)
-    button_y = height - TOOLS_PANEL_TOP_MARGIN - COMMAND_BUTTON_HEIGHT
-    panel_top = button_y - TOOLS_PANEL_GAP
-    available_height = max(TOOLS_PANEL_MIN_HEIGHT, panel_top - TOOLS_PANEL_BOTTOM_MARGIN)
-    return int(min(TOOLS_PANEL_HEIGHT, available_height))
+    return max(TOOLS_PANEL_MIN_HEIGHT, height - TOOLS_PANEL_TOP_MARGIN - TOOLS_PANEL_BOTTOM_MARGIN)
 
 
 def _tools_scroll_max(plotter: Any) -> float:
@@ -2255,7 +2356,7 @@ def _tools_scrollbar_geometry(plotter: Any, session: GraphViewerSession) -> tupl
     thumb_y = panel_top - TOOLS_PANEL_PADDING - thumb_height - int(
         round((session.tools_scroll_offset / max_scroll) * thumb_travel)
     )
-    thumb_x = panel_x + TOOLS_PANEL_WIDTH - TOOLS_PANEL_PADDING - TOOLS_SCROLLBAR_WIDTH
+    thumb_x = panel_x + _tools_panel_width(plotter) - TOOLS_PANEL_PADDING - TOOLS_SCROLLBAR_WIDTH
     return thumb_x, thumb_y, TOOLS_SCROLLBAR_WIDTH, thumb_height
 
 
@@ -2595,16 +2696,6 @@ def dispatch_ui_click(
             session.appearance_slider_dragging = hitbox.value
             _set_appearance_slider_from_display_x(plotter, session, hitbox, x_pos, pv_module=pv_module)
             return True
-        if hitbox.action == "toggle-tools":
-            session.tools_panel_visible = not session.tools_panel_visible
-            _end_tools_scroll_drag(session)
-            _end_appearance_slider_drag(session)
-            if not session.tools_panel_visible:
-                _clear_node_id_edit(session)
-            render_tools_panel(plotter, session)
-            if hasattr(plotter, "render"):
-                plotter.render()
-            return True
         if hitbox.action == "toggle-interactive":
             toggle_interactive(plotter, session, pv_module=pv_module)
             return True
@@ -2658,6 +2749,7 @@ def install_ui_mouse_observers(
 
     def _on_resize(_caller: Any, _event: str) -> None:
         apply_view_layout(plotter, session)
+        render_view_headers(plotter, session)
         render_tools_panel(plotter, session)
         render_file_panel(plotter, session)
         if hasattr(plotter, "render"):
@@ -2773,9 +2865,8 @@ def install_ui_mouse_observers(
 def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
     """Return panel x, top edge, and bottom edge in display coordinates."""
     window_width, height = _plotter_window_size(plotter)
-    panel_x = max(TOOLS_PANEL_RIGHT_MARGIN, window_width - TOOLS_PANEL_RIGHT_MARGIN - TOOLS_PANEL_WIDTH)
-    button_y = height - TOOLS_PANEL_TOP_MARGIN - COMMAND_BUTTON_HEIGHT
-    panel_top = button_y - TOOLS_PANEL_GAP
+    panel_x = int(window_width * 0.75)
+    panel_top = height - TOOLS_PANEL_TOP_MARGIN
     return panel_x, panel_top, panel_top - _tools_panel_visible_height(plotter)
 
 
@@ -3037,26 +3128,6 @@ def _add_dropdown_menu(
         )
 
 
-def render_tools_button(plotter: Any, session: GraphViewerSession) -> None:
-    """Draw the always-visible top-right Tools panel toggle."""
-    _remove_actor_list(plotter, session.tools_button_actors)
-    session.tools_hitboxes.clear()
-    window_width, height = _plotter_window_size(plotter)
-    x_pos = max(TOOLS_PANEL_RIGHT_MARGIN, window_width - TOOLS_PANEL_RIGHT_MARGIN - TOOLS_BUTTON_WIDTH)
-    y_pos = height - TOOLS_PANEL_TOP_MARGIN - COMMAND_BUTTON_HEIGHT
-    _add_ui_button(
-        plotter,
-        session.tools_button_actors,
-        session.tools_hitboxes,
-        label="Tools",
-        action="toggle-tools",
-        x=x_pos,
-        y=y_pos,
-        width=TOOLS_BUTTON_WIDTH,
-        background=(0.12, 0.16, 0.21) if not session.tools_panel_visible else (0.24, 0.34, 0.43),
-    )
-
-
 def render_interactive_controls(plotter: Any, session: GraphViewerSession) -> None:
     """Draw GraphML interactive-selection controls in the Tools panel."""
     if not session.tools_panel_visible:
@@ -3065,7 +3136,7 @@ def render_interactive_controls(plotter: Any, session: GraphViewerSession) -> No
     layout = _tools_panel_layout(plotter, session)
     inner_x = panel_x + TOOLS_PANEL_PADDING
     scroll_gutter = TOOLS_SCROLLBAR_GUTTER if _tools_scroll_max(plotter) > 0 else 0
-    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter
+    inner_width = _tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter
 
     header_y = layout["interactive_header"]
     if _tools_row_visible(plotter, header_y, TOOLS_SECTION_HEADER_HEIGHT):
@@ -3196,7 +3267,7 @@ def render_view_layout_controls(plotter: Any, session: GraphViewerSession) -> No
     layout = _tools_panel_layout(plotter, session)
     inner_x = panel_x + TOOLS_PANEL_PADDING
     scroll_gutter = TOOLS_SCROLLBAR_GUTTER if _tools_scroll_max(plotter) > 0 else 0
-    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter
+    inner_width = _tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter
 
     header_y = layout["view_layout_header"]
     if _tools_row_visible(plotter, header_y, TOOLS_SECTION_HEADER_HEIGHT):
@@ -3249,7 +3320,7 @@ def render_open_dropdown_menus(plotter: Any, session: GraphViewerSession) -> Non
     layout = _tools_panel_layout(plotter, session)
     scroll_gutter = TOOLS_SCROLLBAR_GUTTER if _tools_scroll_max(plotter) > 0 else 0
     inner_x = panel_x + TOOLS_PANEL_PADDING
-    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter
+    inner_width = _tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter
 
     if session.layout_menu_open:
         _add_dropdown_menu(
@@ -3283,8 +3354,8 @@ def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
     layout = _tools_panel_layout(plotter, session)
     scroll_gutter = TOOLS_SCROLLBAR_GUTTER if _tools_scroll_max(plotter) > 0 else 0
     inner_x = panel_x + TOOLS_PANEL_PADDING
-    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter
-    button_width = (TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter - COMMAND_BUTTON_GAP) // 2
+    inner_width = _tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter
+    button_width = (_tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter - COMMAND_BUTTON_GAP) // 2
 
     section_headers = (
         ("Session", layout["session_header"]),
@@ -3521,7 +3592,7 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession, *, pv_module
     layout = _tools_panel_layout(plotter, session)
     scroll_gutter = TOOLS_SCROLLBAR_GUTTER if _tools_scroll_max(plotter) > 0 else 0
     inner_x = panel_x + TOOLS_PANEL_PADDING
-    inner_width = TOOLS_PANEL_WIDTH - 2 * TOOLS_PANEL_PADDING - scroll_gutter
+    inner_width = _tools_panel_width(plotter) - 2 * TOOLS_PANEL_PADDING - scroll_gutter
     appearance_header_y = layout["appearance_header"]
     node_y_abs = layout["node_slider"]
     edge_y_abs = layout["edge_slider"]
@@ -3606,7 +3677,7 @@ def render_tools_scrollbar(plotter: Any, session: GraphViewerSession) -> None:
     if geometry is None:
         return
     panel_x, panel_top, panel_bottom = _tools_panel_geometry(plotter)
-    track_x = panel_x + TOOLS_PANEL_WIDTH - TOOLS_PANEL_PADDING - TOOLS_SCROLLBAR_WIDTH
+    track_x = panel_x + _tools_panel_width(plotter) - TOOLS_PANEL_PADDING - TOOLS_SCROLLBAR_WIDTH
     track_y = panel_bottom + TOOLS_PANEL_PADDING
     track_height = panel_top - panel_bottom - 2 * TOOLS_PANEL_PADDING
     session.tools_panel_actors.append(
@@ -3639,26 +3710,21 @@ def _clamp_preview_value(value: float, bounds: tuple[float, float]) -> float:
 
 
 def render_tools_panel(plotter: Any, session: GraphViewerSession, *, include_sliders: bool = True) -> None:
-    """Render or hide the right-side tool panel and its current controls."""
+    """Render the always-visible right-side tool panel and its current controls."""
     _clamp_tools_scroll(plotter, session)
     _remove_actor_list(plotter, session.tools_panel_actors)
-    render_tools_button(plotter, session)
-    if not session.tools_panel_visible:
-        _clear_node_id_edit(session)
-        render_command_buttons(plotter, session)
-        _remove_graph_sliders(plotter, session)
-        return
 
     panel_x, panel_top, panel_bottom = _tools_panel_geometry(plotter)
+    _window_width, window_height = _plotter_window_size(plotter)
     session.tools_panel_actors.append(
         _add_overlay_rect(
             plotter,
             x=panel_x,
-            y=panel_bottom,
-            width=TOOLS_PANEL_WIDTH,
-            height=panel_top - panel_bottom,
+            y=0,
+            width=_tools_panel_width(plotter),
+            height=window_height,
             color=(0.12, 0.16, 0.21),
-            opacity=0.90,
+            opacity=1.0,
         )
     )
     render_command_buttons(plotter, session)
@@ -3674,6 +3740,7 @@ def add_graph_viewer_controls(plotter: Any, session: GraphViewerSession, *, pv_m
     """Add pure-PyVista controls for file/session management and appearance preview."""
     _ensure_overlay_renderer(plotter, session)
     apply_view_layout(plotter, session)
+    render_view_headers(plotter, session)
     render_tools_panel(plotter, session)
     render_file_panel(plotter, session)
     install_ui_mouse_observers(plotter, session, pv_module=pv_module)

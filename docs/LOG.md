@@ -1,5 +1,145 @@
 # Development Log
 
+## 2026-06-02 19:30 AEST
+
+### Header: pixel-based text truncation; immediate border update on click
+
+1. Summary of what changed
+- Header text truncation now uses viewport pixel width instead of a fixed char limit (`HEADER_MAX_CHARS` removed). Available width is `half_scene - 20` px; conservatively estimates 8 px per character and truncates only the filename portion, keeping the prefix intact.
+- `set_active_view` now calls `plotter.render()` after updating headers, so the active-view border changes immediately on viewport click without waiting for the next VTK event-loop render.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+## 2026-06-02 19:20 AEST
+
+### Add compact viewport header bars in double-view mode
+
+1. Summary of what changed
+- Added 5 %-height header bars above each viewport in double-view mode.
+- Active view's header has a bright #F2F24E border; inactive uses the base #BBC3C7 color.
+- Header shows "View A/B | [GraphML/NIfTI] filename" (truncated at 36 chars).
+- Viewport scenes are offset vertically to make room for the headers (`header_bottom = 0.95`).
+- Headers are rendered as 2D overlay actors and update on layout switches, active-view changes, window resizes, and file loads.
+
+2. New constants
+- `HEADER_HEIGHT_FRACTION = 0.05`, `HEADER_COLOR`, `HEADER_BORDER_COLOR`, `HEADER_BORDER_WIDTH = 2`, `HEADER_FONT_SIZE = 11`, `HEADER_MAX_CHARS = 36`
+
+3. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+4. Architecture decisions
+- `render_view_headers` is called from `add_graph_viewer_controls`, `render_active_graph`, `set_active_view`, and `_on_resize` — covering initial setup, layout switches, view switches, and resizes.
+
+## 2026-06-02 19:00 AEST
+
+### Content area fills panel height; scrollbar only when needed
+
+1. Summary of what changed
+- Removed the `TOOLS_PANEL_HEIGHT` (560 px) cap from `_tools_panel_visible_height`. The visible content area now fills the full panel height.
+- Scrollbar only appears when the window is shorter than `TOOLS_PANEL_CONTENT_HEIGHT` (830 px) minus the top/bottom margins (24 px), i.e. below ~854 px window height.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+3. Architecture decisions
+- At typical window heights (≥ 900 px) all tools-panel glyphs fit without scrolling. The scrollbar and scroll-handling logic remain in place for smaller windows.
+
+## 2026-06-02 18:45 AEST
+
+### Tools panel: flush full height, fully opaque
+
+1. Summary of what changed
+- The blue tools-panel background rect now spans the full window height (`y=0`, `height=window_height`) and is fully opaque (`opacity=1.0`, was `0.90`).
+- This eliminates any black render-window background visible above or below the panel.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+3. Architecture decisions
+- The content area and scrollbar geometry remain unchanged (`_tools_panel_geometry` still returns the content-based top/bottom for controls and scrollbar). Only the background overlay rect was extended to full height.
+
+## 2026-06-02 18:30 AEST
+
+### UI layout: fixed tools panel to 25 % window, removed Tools toggle button
+
+1. Summary of what changed
+- Scene right-edge is now a hard 75 % of the window (`_scene_area_fraction` returns `0.75`). The remaining 25 % is the always-visible tools panel.
+- Removed the "Tools" toggle button and its hitbox entirely. The tools panel is now permanently visible.
+- Replaced the fixed-pixel `TOOLS_PANEL_WIDTH` (336 px) with a dynamic `_tools_panel_width(plotter)` helper that returns 25 % of the window width.
+- Panel starts at 75 % of window width (no gap to scene) and extends to the window right edge (no margin).
+- Adjusted `_tools_panel_visible_height` to remove the button/gap deduction from the available height.
+- Removed `tools_button_actors` from session; `tools_panel_visible` defaults to `True`.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+3. Architecture decisions
+- Scene/viewport and tools panel now use a fixed 75/25 split rather than a pixel-based reservation. This eliminates the black "dead zone" background that appeared when the renderer viewport did not cover the full window.
+- The tools panel is always visible, so all `tools_panel_visible` guards become no-ops (but are left in place for safety).
+
+4. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+
+5. Limitations
+- At very narrow window widths (below ~500 px) the 25 % panel may be too narrow for all controls. The minimum panel width is not separately enforced beyond the scrollbar/padding logic inherited from the previous layout.
+
+## 2026-06-02 18:15 AEST
+
+### Fix orientation axes widget size mismatch in double-view mode (corrected)
+
+1. Summary of what changed
+- Changed `_axes_marker_viewport` to return renderer-relative coordinates instead of computing global window coordinates. VTK's `vtkOrientationMarkerWidget::SetViewport` interprets the viewport relative to the parent renderer, not the full window.
+- Removed the unused `scene_left` and `scene_right` parameters; the function now only takes `scale_x`.
+- In `apply_view_layout`, pass `scale_x=2.0` for double-view mode so the width span doubles (2%-38% of renderer instead of 2%-20%), compensating for the halved renderer width.
+- Single-view mode uses `scale_x=1.0` (default), producing the intended 2%-20% renderer-relative viewport.
+
+2. Root cause
+- The previous implementation incorrectly treated `SetViewport` as accepting global window coordinates and scaled the viewport by `scene_width`, producing values that were disproportionately small in double-view mode. The single-view case happened to look acceptable because the renderer starts at (0,0).
+
+3. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+4. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+
+## 2026-06-02 18:00 AEST
+
+### ~~Fix orientation axes widget size mismatch in double-view mode~~ (superseded by 18:15 entry)
+
+## 2026-06-02 17:50 AEST
+
+### Suppress igraph duplicate 'id' vertex attribute warning on GraphML load
+
+1. Summary of what changed
+- Wrapped `ig.Graph.Read_GraphML` in `load_graph_visualization_data` with a targeted `warnings.catch_warnings` filter that ignores the RuntimeWarning "Could not add vertex ids, there is already an 'id' vertex attribute".
+- Added `import warnings` to the module imports.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `docs/LOG.md`
+
+3. Architecture decisions
+- Chose targeted warning suppression over changing the igraph read/write parameter mapping because the warning originates from igraph's internal GraphML roundtrip behavior (the writer stores `name` as both XML `id` and `<data key="name">`, and the reader collides when trying to map XML `id` → vertex `id` that already exists).
+- The warning is harmless — graph rendering and node-id extraction both work correctly regardless.
+
+4. Assumptions
+- The warning is purely cosmetic and does not affect data integrity.
+- Future igraph versions may change the default `index` parameter behavior; the targeted suppression is version-agnostic.
+
+5. Limitations
+- Only suppresses this specific duplicate-attribute warning; other igraph warnings during GraphML I/O will still surface.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+- `python -m skelhub graphviz --help`
+
 ## 2026-06-02 17:20 AEST
 
 ### Tools panel slider containment and dropdown layering
