@@ -1,5 +1,158 @@
 # Development Log
 
+## 2026-06-03 23:42 AEST
+
+### Fix overlay Interactive selected-node highlight
+
+1. Summary of what changed
+- Overlay rendering no longer disables Interactive mode or clears the selected node on every overlay scene rebuild.
+- Overlay mode now redraws the selected-node highlight after Base/Overlay layers are rebuilt.
+- The highlight uses the existing `INTERACTIVE_SELECTED_COLOR` preset, renders unlit/fully opaque, and is slightly larger than the selected Base/Overlay graph layer's node-size setting so it is not hidden by the underlying node.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `tests/test_graph_viewer_overlay.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Reused the same selected-node highlight actor path used by Single and Double View.
+- Added small helpers to resolve highlight size from the active overlay interactive target and style the selected actor as an unlit overlay marker.
+
+4. Assumptions
+- Overlay Interactive selection should persist across ordinary overlay refreshes as long as the selected graph layer is still loaded.
+- If the selected graph layer is removed or replaced with a non-GraphML layer, the existing clear-selection behavior remains correct.
+- The selected marker should be visibly distinct even when graph node size is large, because same-size co-located point actors can be depth-tested or shaded into a dark color.
+
+5. Limitations
+- Manual desktop verification is still useful to confirm the highlight remains visible on dense or large graph layers.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+- `/usr/bin/python3.12 -m py_compile skelhub/visualization/graph_viewer.py tests/test_graph_viewer_overlay.py`
+- Dependency-stubbed `/usr/bin/python3.12` smoke script: passed overlay selected-node highlight color/size checks and overlay rebuild preserving/redrawing the selected highlight.
+- Dependency-stubbed `/usr/bin/python3.12` smoke script: passed cyan highlight marker checks for larger-than-node point size, disabled lighting, full opacity, and unlit material properties.
+
+7. Remaining risks or recommended next steps
+- Run `python -m pytest tests/test_graph_viewer_overlay.py -q` and manually verify overlay Interactive selection in a desktop environment with dependencies installed.
+
+## 2026-06-03 23:23 AEST
+
+### Fix overlay refresh after NIfTI opacity and restore full NIfTI opacity
+
+1. Summary of what changed
+- Overlay refresh now always commits graph preview options before rebuilding overlay scenes, independent of the single-view `active_kind`.
+- This prevents Base GraphML node size and edge thickness from falling back to defaults after changing Overlay NIfTI opacity.
+- Scene actor opacity updates now use `_set_actor_opacity`, which also updates VTK opaque/translucent pass hints when supported.
+- NIfTI actors moved back to opacity `1.0` now force opaque rendering immediately instead of waiting for a dropdown-triggered rebuild.
+- Opacity values within `0.005` of the slider endpoints now snap to exact `0.0`/`1.0`, so a UI value displayed as `1` is not secretly rendered as a translucent value such as `0.998`.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `tests/test_graph_viewer_overlay.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept the overlay fix in the existing refresh pipeline instead of adding a separate graph-only overlay refresh path.
+- Centralized scene actor opacity handling while leaving 2D UI overlay opacity unchanged.
+- Rebuild NIfTI overlay actors when they cross the opaque/translucent boundary, because VTK can keep actors previously rendered with alpha in the translucent pass until the actor is reconstructed.
+
+4. Assumptions
+- Overlay scene rebuilds should always use the committed graph preview options for Base and Overlay graph layers.
+- VTK render-pass hints are safe to set when the actor exposes `SetForceOpaque` and `SetForceTranslucent`.
+- Slider values that visually round to endpoint labels should behave as exact endpoint values.
+
+5. Limitations
+- Manual desktop verification is still recommended to confirm VTK backend behavior with representative NIfTI opacity changes.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+- `/usr/bin/python3.12 -m py_compile skelhub/visualization/graph_viewer.py tests/test_graph_viewer_overlay.py`
+- Dependency-stubbed `/usr/bin/python3.12` smoke script: passed overlay refresh committing Base GraphML preview sizes while active file is NIfTI, and passed opacity `1.0` forcing a NIfTI actor opaque.
+- Dependency-stubbed `/usr/bin/python3.12` smoke script: passed near-endpoint opacity snapping (`0.998` -> `1.0`), actor/pass invalidation, and NIfTI opaque-boundary overlay rebuild.
+- `python -m pytest tests/test_graph_viewer_overlay.py -q` could not run because the local Python 3.13 pytest installation fails during import (`AttributeError: __spec__` in `py/_vendored_packages/apipkg`).
+- `/usr/bin/python3.12 -m pytest tests/test_graph_viewer_overlay.py -q` could not run because pytest is not installed for Python 3.12.
+- `python -m skelhub graphviz --help` could not run because `numpy` is not installed in the active Python environment.
+
+7. Remaining risks or recommended next steps
+- Run `python -m pytest tests/test_graph_viewer_overlay.py -q` and manually verify `skelhub graphviz` overlay mode in a desktop environment with dependencies installed.
+
+## 2026-06-03 22:54 AEST
+
+### Fix overlay-view graph sliders, opacity, target menus, and Interactive layout
+
+1. Summary of what changed
+- Overlay Node Size and Edge Thickness sliders now target the actual GraphML layer when only Base or only Overlay is a graph.
+- Base Opacity now applies directly to Base GraphML actors as well as Base NIfTI actors.
+- Overlay Appearance and Interactive `Target` controls now open dropdown menus with explicit `Base` and `Overlay` choices.
+- Overlay Interactive controls now reserve layout space for the target row, coordinates, and node degree so X/Y/Z and Node dgr stay inside the Tools panel.
+- Overlay interactive selection helpers now use the selected overlay graph layer instead of the single-view active file slot.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `tests/test_graph_viewer_overlay.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Added small overlay target helpers so appearance sliders and interactive selection share the same Base/Overlay resolution rules.
+- Kept graph opacity tracking local to overlay `ViewState` actor lists instead of changing the public result or render API.
+- Kept the viewer dependency set unchanged and continued using the existing PyVista/VTK overlay UI actor model.
+
+4. Assumptions
+- If exactly one overlay layer is GraphML, graph appearance sliders should control that layer without requiring a visible Target selector.
+- If both overlay layers are GraphML, the Target dropdown should decide which layer the graph sliders or Interactive readout controls.
+- Opacity changes should apply in place when actor references are available, with rebuild fallback kept for other cases.
+
+5. Limitations
+- Manual desktop verification is still recommended because custom VTK/PyVista overlay controls can be sensitive to window size and backend behavior.
+- This patch does not change overlay camera framing or alignment-warning behavior.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+- `/usr/bin/python3.12 -m py_compile skelhub/visualization/graph_viewer.py tests/test_graph_viewer_overlay.py`
+- Dependency-stubbed `/usr/bin/python3.12` smoke script: passed overlay graph slider target selection, Base GraphML opacity update, Appearance Target menu selection, and Interactive Target menu selection.
+- Full pytest could not be run in this local environment because Python 3.13 pytest fails during import and Python 3.12 does not have pytest installed.
+- CLI smoke still cannot run in this local environment because `numpy` is not installed in the available interpreters.
+
+7. Remaining risks or recommended next steps
+- Run `python -m pytest tests/test_graph_viewer_overlay.py -q` and manually check `skelhub graphviz` overlay mode in a desktop-capable environment with project dependencies installed.
+
+## 2026-06-03 22:15 AEST
+
+### Fix overlay-view Base and Overlay file dropdown selection
+
+1. Summary of what changed
+- `skelhub graphviz` overlay-mode Base and Overlay dropdown buttons now store which layer they control, so the Base button opens the Base file menu instead of being treated like Overlay.
+- Overlay dropdown assignment now accepts `None`, allowing the `Empty` row to clear either layer.
+- The same loaded file can be assigned to both Base and Overlay because assignment no longer filters or swaps duplicate layer indices.
+
+2. Files modified
+- `skelhub/visualization/graph_viewer.py`
+- `tests/test_graph_viewer_overlay.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept the fix localized to the PyVista overlay UI event model and session assignment path.
+- Reused existing `UIHitbox.index` metadata instead of adding a new UI state object.
+
+4. Assumptions
+- Overlay mode should allow any loaded visualization file or an empty layer for both Base and Overlay.
+- Rendering the same file twice is acceptable and should use the existing base/overlay appearance styling.
+
+5. Limitations
+- This patch does not change overlay rendering order, alignment warnings, or per-layer appearance behavior.
+- Manual desktop verification is still useful because the controls are custom VTK/PyVista overlay actors.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/graph_viewer.py`
+- `/usr/bin/python3.12 -m py_compile skelhub/visualization/graph_viewer.py tests/test_graph_viewer_overlay.py`
+- Dependency-stubbed `/usr/bin/python3.12` dispatch smoke script: passed Base menu toggle, Empty layer clearing, and same-file Base/Overlay assignment checks.
+- `python -m pytest tests/test_graph_viewer_overlay.py -q` could not run because the local Python 3.13 pytest installation fails during import (`AttributeError: __spec__` in `py/_vendored_packages/apipkg`).
+- `/usr/bin/python3.12 -m pytest tests/test_graph_viewer_overlay.py -q` could not run because pytest is not installed for Python 3.12.
+- `python -m skelhub graphviz --help` and `/usr/bin/python3.12 -m skelhub graphviz --help` could not run because `numpy` is not installed in those interpreters.
+
+7. Remaining risks or recommended next steps
+- Run `python -m pytest tests/test_graph_viewer_overlay.py -q` and a desktop `skelhub graphviz` session after installing the project dependencies in the active Python environment.
+
 ## 2026-06-03 11:30 AEST
 
 ### Fix overlay-view UI issues: file panel, slider overlap, header truncation
