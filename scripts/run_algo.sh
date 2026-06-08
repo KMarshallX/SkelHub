@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  run_alog.sh --algorithm ALGORITHM --input-dir INPUT_DIR --output-dir OUTPUT_DIR [options] [-- extra skelhub flags]
+  run_algo.sh --algorithm ALGORITHM --input-dir INPUT_DIR --output-dir OUTPUT_DIR [options] [-- extra skelhub flags]
 
 Required arguments:
   -a, --algorithm     SkelHub backend name, for example: mcp or lee94
@@ -21,7 +21,7 @@ Any arguments after -- are forwarded to:
   skelhub run --algorithm ...
 
 Example:
-  ./scripts/run_alog.sh \
+  ./scripts/run_algo.sh \
     --algorithm mcp \
     --input-dir ./test_data \
     --output-dir ./test_outputs/batch \
