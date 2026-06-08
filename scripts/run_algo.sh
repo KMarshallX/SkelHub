@@ -29,23 +29,6 @@ Example:
 EOF
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VENV_ACTIVATE="${REPO_ROOT}/.venv/bin/activate"
-
-if [[ ! -f "${VENV_ACTIVATE}" ]]; then
-    echo "Error: virtual environment activation script not found at ${VENV_ACTIVATE}" >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "${VENV_ACTIVATE}"
-
-if ! command -v skelhub >/dev/null 2>&1; then
-    echo "Error: 'skelhub' is not available after activating ${VENV_ACTIVATE}" >&2
-    exit 1
-fi
-
 ALGORITHM=""
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -95,6 +78,48 @@ done
 if [[ -z "${ALGORITHM}" || -z "${INPUT_DIR}" || -z "${OUTPUT_DIR}" ]]; then
     echo "Error: --algorithm, --input-dir, and --output-dir are required." >&2
     usage >&2
+    exit 1
+fi
+
+if [[ -z "${CONDA_PREFIX:-}" ]]; then
+    echo "Warning: no active conda environment detected. Activate the conda environment containing SkelHub dependencies and retry." >&2
+    exit 1
+fi
+
+if ! command -v python >/dev/null 2>&1; then
+    echo "Warning: 'python' is not available in the active conda environment: ${CONDA_DEFAULT_ENV:-${CONDA_PREFIX}}" >&2
+    exit 1
+fi
+
+if ! command -v skelhub >/dev/null 2>&1; then
+    echo "Warning: 'skelhub' is not available in the active conda environment: ${CONDA_DEFAULT_ENV:-${CONDA_PREFIX}}" >&2
+    exit 1
+fi
+
+if ! python - <<'PY'
+import importlib.util
+import sys
+
+required_modules = (
+    "skelhub",
+    "geomdl",
+    "igraph",
+    "nibabel",
+    "numba",
+    "networkx",
+    "numpy",
+    "skimage",
+    "scipy",
+    "pyvista",
+)
+
+missing = [module for module in required_modules if importlib.util.find_spec(module) is None]
+if missing:
+    print(", ".join(missing), file=sys.stderr)
+    raise SystemExit(1)
+PY
+then
+    echo "Warning: active conda environment is missing required SkelHub dependencies: ${CONDA_DEFAULT_ENV:-${CONDA_PREFIX}}" >&2
     exit 1
 fi
 
