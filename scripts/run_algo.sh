@@ -104,8 +104,28 @@ if [[ ! -d "${INPUT_DIR}" ]]; then
 fi
 
 INPUT_DIR="$(cd "${INPUT_DIR}" && pwd)"
-mkdir -p "${OUTPUT_DIR}"
-OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
+if [[ -e "${OUTPUT_DIR}" && ! -d "${OUTPUT_DIR}" ]]; then
+    echo "Warning: --output-dir exists but is not a directory: ${OUTPUT_DIR}" >&2
+    exit 1
+fi
+
+if [[ ! -d "${OUTPUT_DIR}" ]]; then
+    echo "Notice: --output-dir does not exist; creating: ${OUTPUT_DIR}" >&2
+    if ! mkdir -p "${OUTPUT_DIR}"; then
+        echo "Warning: unable to create --output-dir: ${OUTPUT_DIR}" >&2
+        exit 1
+    fi
+fi
+
+if [[ ! -d "${OUTPUT_DIR}" ]]; then
+    echo "Warning: --output-dir is not a valid directory after creation: ${OUTPUT_DIR}" >&2
+    exit 1
+fi
+
+if ! OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"; then
+    echo "Warning: unable to resolve --output-dir: ${OUTPUT_DIR}" >&2
+    exit 1
+fi
 
 mapfile -d '' NIFTI_FILES < <(
     find "${INPUT_DIR}" -type f \( -name '*.nii' -o -name '*.nii.gz' \) -print0 | sort -z
