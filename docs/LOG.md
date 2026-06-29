@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-06-29 17:55 AEST
+
+### Document postprocessing methods
+
+1. Summary of what changed
+- Added concise `Method` workflows for GraphML graph generation and vessel
+  feature extraction.
+
+2. Files modified
+- `docs/postprocessing.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Documented the existing implementation without changing interfaces or
+  behavior.
+
+4. Assumptions
+- The code in `skelhub/postprocessing/graphgen/` and
+  `skelhub/postprocessing/feature/` is the source of truth.
+
+5. Limitations
+- The method summaries describe the current workflows rather than their Voreen
+  provenance or mathematical derivation.
+
+6. Tests run
+- Documentation structure and subsection word counts were checked locally.
+
+7. Remaining risks or recommended next steps
+- None; this is a documentation-only change.
+
 ## 2026-06-05 23:51 AEST
 
 ### Refactor graphviz module import structure
