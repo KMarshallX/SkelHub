@@ -1,8 +1,10 @@
 # SkelHub Scripts
 
 Helper scripts in this directory assume they are run from an installed checkout
-with `Tools/SkelHub/.venv` available. Each bash wrapper activates that virtual
-environment before calling the relevant SkelHub command or Python helper.
+with SkelHub available in the execution environment. `run_algo.sh` and
+`run_graphgen.sh` use the currently activated conda environment and halt if
+required dependencies are missing. Older wrappers may still activate the local
+`Tools/SkelHub/.venv` before calling SkelHub commands or Python helpers.
 
 ## `run_algo.sh`
 
@@ -29,6 +31,32 @@ Useful options:
 - `--suffix`: output suffix, default `_centreline`.
 - `--no-verbose`: do not pass `--verbose` to `skelhub run`.
 - Arguments after `--` are forwarded to `skelhub run`.
+
+## `run_graphgen.sh`
+
+Batch-generates GraphML proto-graphs from skeleton NIfTI files. The script
+searches recursively under the input directory, preserves relative subdirectory
+structure, and writes one `.graphml` file per `.nii` or `.nii.gz` skeleton.
+
+```bash
+./scripts/run_graphgen.sh \
+  --input ./test_outputs/exvivo/mcp/selected \
+  --output ./test_outputs/exvivo/mcp/graphs \
+  --verbose
+```
+
+Required:
+
+- `--input`, `-i`: directory searched recursively for skeleton NIfTI files.
+- `--output`, `-o`: destination directory for generated GraphML files.
+
+Useful options:
+
+- `--verbose`, `-v`: pass `--verbose` to `skelhub graphgen`.
+
+If the output directory does not exist, the script prints a notice and creates
+it. If the path cannot be created or does not resolve to a directory, it prints
+a warning and halts.
 
 ## `run_eval.sh`
 
