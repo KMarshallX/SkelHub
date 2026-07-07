@@ -5,67 +5,56 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  run_algo.sh --algorithm ALGORITHM --input-dir INPUT_DIR --output-dir OUTPUT_DIR [options] [-- extra skelhub flags]
+  run_graphgen.sh --input INPUT_DIR --output OUTPUT_DIR [options]
 
 Required arguments:
-  -a, --algorithm     SkelHub backend name, for example: mcp or lee94
-  -i, --input-dir     Directory to search recursively for .nii and .nii.gz files
-  -o, --output-dir    Directory where processed outputs will be written
+  -i, --input      Directory to search recursively for skeleton .nii and .nii.gz files
+  -o, --output     Directory where generated GraphML files will be written
 
 Options:
-  -s, --suffix        Suffix inserted before the NIfTI extension (default: _centreline)
-      --no-verbose    Do not pass --verbose to skelhub run
-  -h, --help          Show this help message
-
-Any arguments after -- are forwarded to:
-  skelhub run --algorithm ...
+  -v, --verbose    Pass --verbose to skelhub graphgen
+  -h, --help       Show this help message
 
 Example:
-  ./scripts/run_algo.sh \
-    --algorithm mcp \
-    --input-dir ./test_data \
-    --output-dir ./test_outputs/batch \
-    -- --threshold-scale 1.2 --max-iterations 150
+  ./scripts/run_graphgen.sh \
+    --input ./test_outputs/exvivo/mcp/selected \
+    --output ./test_outputs/exvivo/mcp/graphs \
+    --verbose
 EOF
 }
 
-ALGORITHM=""
+nifti_stem() {
+    local filename="$1"
+    if [[ "${filename}" == *.nii.gz ]]; then
+        printf '%s\n' "${filename%.nii.gz}"
+    elif [[ "${filename}" == *.nii ]]; then
+        printf '%s\n' "${filename%.nii}"
+    else
+        return 1
+    fi
+}
+
 INPUT_DIR=""
 OUTPUT_DIR=""
-SUFFIX="_centreline"
-VERBOSE=1
-EXTRA_ARGS=()
+VERBOSE=0
 
 while (($# > 0)); do
     case "$1" in
-        -a|--algorithm)
-            ALGORITHM="${2:-}"
-            shift 2
-            ;;
-        -i|--input-dir)
+        -i|--input)
             INPUT_DIR="${2:-}"
             shift 2
             ;;
-        -o|--output-dir)
+        -o|--output)
             OUTPUT_DIR="${2:-}"
             shift 2
             ;;
-        -s|--suffix)
-            SUFFIX="${2:-}"
-            shift 2
-            ;;
-        --no-verbose)
-            VERBOSE=0
+        -v|--verbose)
+            VERBOSE=1
             shift
             ;;
         -h|--help)
             usage
             exit 0
-            ;;
-        --)
-            shift
-            EXTRA_ARGS=("$@")
-            break
             ;;
         *)
             echo "Error: unknown argument '$1'" >&2
@@ -75,8 +64,8 @@ while (($# > 0)); do
     esac
 done
 
-if [[ -z "${ALGORITHM}" || -z "${INPUT_DIR}" || -z "${OUTPUT_DIR}" ]]; then
-    echo "Error: --algorithm, --input-dir, and --output-dir are required." >&2
+if [[ -z "${INPUT_DIR}" || -z "${OUTPUT_DIR}" ]]; then
+    echo "Error: --input and --output are required." >&2
     usage >&2
     exit 1
 fi
@@ -102,15 +91,10 @@ import sys
 
 required_modules = (
     "skelhub",
-    "geomdl",
     "igraph",
     "nibabel",
-    "numba",
-    "networkx",
     "numpy",
-    "skimage",
     "scipy",
-    "pyvista",
 )
 
 missing = [module for module in required_modules if importlib.util.find_spec(module) is None]
@@ -119,7 +103,7 @@ if missing:
     raise SystemExit(1)
 PY
 then
-    echo "Warning: active conda environment is missing required SkelHub dependencies: ${CONDA_DEFAULT_ENV:-${CONDA_PREFIX}}" >&2
+    echo "Warning: active conda environment is missing required graphgen dependencies: ${CONDA_DEFAULT_ENV:-${CONDA_PREFIX}}" >&2
     exit 1
 fi
 
@@ -130,25 +114,25 @@ fi
 
 INPUT_DIR="$(cd "${INPUT_DIR}" && pwd)"
 if [[ -e "${OUTPUT_DIR}" && ! -d "${OUTPUT_DIR}" ]]; then
-    echo "Warning: --output-dir exists but is not a directory: ${OUTPUT_DIR}" >&2
+    echo "Warning: --output exists but is not a directory: ${OUTPUT_DIR}" >&2
     exit 1
 fi
 
 if [[ ! -d "${OUTPUT_DIR}" ]]; then
-    echo "Notice: --output-dir does not exist; creating: ${OUTPUT_DIR}" >&2
+    echo "Notice: --output does not exist; creating: ${OUTPUT_DIR}" >&2
     if ! mkdir -p "${OUTPUT_DIR}"; then
-        echo "Warning: unable to create --output-dir: ${OUTPUT_DIR}" >&2
+        echo "Warning: unable to create --output: ${OUTPUT_DIR}" >&2
         exit 1
     fi
 fi
 
 if [[ ! -d "${OUTPUT_DIR}" ]]; then
-    echo "Warning: --output-dir is not a valid directory after creation: ${OUTPUT_DIR}" >&2
+    echo "Warning: --output is not a valid directory after creation: ${OUTPUT_DIR}" >&2
     exit 1
 fi
 
 if ! OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"; then
-    echo "Warning: unable to resolve --output-dir: ${OUTPUT_DIR}" >&2
+    echo "Warning: unable to resolve --output: ${OUTPUT_DIR}" >&2
     exit 1
 fi
 
@@ -161,24 +145,13 @@ if [[ ${#NIFTI_FILES[@]} -eq 0 ]]; then
     exit 1
 fi
 
-echo "Found ${#NIFTI_FILES[@]} NIfTI file(s) under ${INPUT_DIR}"
-echo "Running algorithm '${ALGORITHM}'"
+echo "Found ${#NIFTI_FILES[@]} skeleton NIfTI file(s) under ${INPUT_DIR}"
 
 for input_file in "${NIFTI_FILES[@]}"; do
     relative_path="${input_file#${INPUT_DIR}/}"
     relative_dir="$(dirname "${relative_path}")"
     filename="$(basename "${input_file}")"
-
-    if [[ "${filename}" == *.nii.gz ]]; then
-        stem="${filename%.nii.gz}"
-        extension=".nii.gz"
-    elif [[ "${filename}" == *.nii ]]; then
-        stem="${filename%.nii}"
-        extension=".nii"
-    else
-        echo "Skipping unsupported file: ${input_file}" >&2
-        continue
-    fi
+    stem="$(nifti_stem "${filename}")"
 
     output_subdir="${OUTPUT_DIR}"
     if [[ "${relative_dir}" != "." ]]; then
@@ -186,14 +159,13 @@ for input_file in "${NIFTI_FILES[@]}"; do
     fi
     mkdir -p "${output_subdir}"
 
-    output_file="${output_subdir}/${stem}${SUFFIX}${extension}"
+    output_file="${output_subdir}/${stem}.graphml"
 
     echo "Processing: ${input_file}"
     echo "Output: ${output_file}"
 
     cmd=(
-        skelhub run
-        --algorithm "${ALGORITHM}"
+        skelhub graphgen
         --input "${input_file}"
         --output "${output_file}"
     )
@@ -202,11 +174,7 @@ for input_file in "${NIFTI_FILES[@]}"; do
         cmd+=(--verbose)
     fi
 
-    if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-        cmd+=("${EXTRA_ARGS[@]}")
-    fi
-
     "${cmd[@]}"
 done
 
-echo "Completed ${#NIFTI_FILES[@]} file(s). Outputs written under ${OUTPUT_DIR}"
+echo "Completed ${#NIFTI_FILES[@]} file(s). GraphML outputs written under ${OUTPUT_DIR}"

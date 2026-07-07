@@ -1,5 +1,87 @@
 # Development Log
 
+## 2026-06-29 17:55 AEST
+
+### Document postprocessing methods
+
+1. Summary of what changed
+- Added concise `Method` workflows for GraphML graph generation and vessel
+  feature extraction.
+
+2. Files modified
+- `docs/postprocessing.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Documented the existing implementation without changing interfaces or
+  behavior.
+
+4. Assumptions
+- The code in `skelhub/postprocessing/graphgen/` and
+  `skelhub/postprocessing/feature/` is the source of truth.
+
+5. Limitations
+- The method summaries describe the current workflows rather than their Voreen
+  provenance or mathematical derivation.
+
+6. Tests run
+- Documentation structure and subsection word counts were checked locally.
+
+7. Remaining risks or recommended next steps
+- None; this is a documentation-only change.
+
+## 2026-06-05 23:51 AEST
+
+### Refactor graphviz module import structure
+
+1. Summary of what changed
+- Preserved the existing PyVista graph viewer implementation in `skelhub/visualization/_graph_viewer_impl.py`.
+- Replaced `skelhub/visualization/graph_viewer.py` with a compatibility facade that re-exports all previous top-level names, including private helpers.
+- Added focused visualization modules for constants, models, loading, session state, scene rendering, layout, camera behavior, controls, interaction, and launcher entrypoints.
+- Added focused refactor API tests covering legacy imports, package exports, loaders, session behavior, and CLI graphviz dispatch.
+
+2. Files added, removed, or modified
+- Added `skelhub/visualization/_graph_viewer_impl.py`.
+- Added `skelhub/visualization/constants.py`.
+- Added `skelhub/visualization/models.py`.
+- Added `skelhub/visualization/loading.py`.
+- Added `skelhub/visualization/session.py`.
+- Added `skelhub/visualization/scene.py`.
+- Added `skelhub/visualization/layout.py`.
+- Added `skelhub/visualization/camera.py`.
+- Added `skelhub/visualization/controls.py`.
+- Added `skelhub/visualization/interaction.py`.
+- Added `skelhub/visualization/launcher.py`.
+- Modified `skelhub/visualization/graph_viewer.py`.
+- Added `tests/test_graph_viewer_refactor_api.py`.
+- Modified `docs/architecture.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept `skelhub.visualization.graph_viewer` as the stable legacy facade so existing direct imports continue to work.
+- Used grouped module re-exports over the preserved runtime implementation to avoid changing UI rendering, camera, loading, or interaction behavior during this maintainability refactor.
+- Added no new dependencies and did not alter CLI arguments, defaults, labels, validation messages, or viewer behavior.
+
+4. Assumptions
+- Compatibility includes all names currently importable from `skelhub.visualization.graph_viewer`, including private helper names.
+- A conservative mechanical split is preferable here because the graph viewer has dense cross-calls between layout, controls, interaction, rendering, and camera code.
+
+5. Limitations
+- The focused modules currently provide organized import surfaces over the preserved runtime implementation; future work can move function bodies module-by-module once behavior tests and desktop smoke coverage are stronger.
+- Manual desktop verification is still required for the interactive PyVista window because the current environment does not have the project runtime dependencies installed.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py skelhub/cli/main.py skelhub/api.py`
+- `python -m py_compile skelhub/visualization/*.py skelhub/cli/main.py skelhub/api.py tests/test_graph_viewer_refactor_api.py`
+- `/usr/bin/python3.12 -m py_compile skelhub/visualization/*.py skelhub/cli/main.py skelhub/api.py tests/test_graph_viewer_refactor_api.py`
+- `python -m pytest tests/test_graph_viewer_refactor_api.py -q` could not run because the local Python 3.13 pytest installation fails before collection (`AttributeError: __spec__` in `py/_vendored_packages/apipkg`).
+- `python -m skelhub graphviz --help` could not run because `numpy` is not installed in the active Python environment.
+- Direct Python import smoke checks could not run because importing `skelhub` also fails before visualization imports with missing `numpy`.
+
+7. Remaining risks or recommended next steps
+- Run `python -m pytest tests/test_graph_viewer_refactor_api.py -q` in an environment with working pytest and project dependencies installed.
+- Run `python -m skelhub graphviz --help` and manually smoke-test empty, GraphML, NIfTI, double-view, overlay, import, close, reset, fit preview, interactive selection, and camera sync workflows in a desktop-capable environment.
+
 ## 2026-06-03 23:42 AEST
 
 ### Fix overlay Interactive selected-node highlight

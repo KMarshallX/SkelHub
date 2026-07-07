@@ -36,6 +36,24 @@ node CSV records graph node IDs, voxel positions, and node degrees.
 
 ## Graph Generation
 
+### Method
+
+- Load the skeleton NIfTI and reject an empty or non-3D volume. Voxels greater
+  than zero are treated as skeleton foreground.
+- Count each foreground voxel's 26-neighbors: at most one makes an endpoint,
+  two makes a regular voxel, and three or more makes a branch voxel.
+- Form 26-connected components for each class and order every regular component
+  as a centerline path using voxel adjacency.
+- Create one node per endpoint or branch component, then connect neighboring
+  nodes through regular paths. Closed regular components become synthetic
+  self-loops; an otherwise-isolated node touching another node receives an
+  empty-path edge.
+- Write an undirected GraphML graph. Nodes store their supporting voxels, mean
+  voxel position, affine-transformed world position, kind, and border status;
+  edges store ordered centerline voxels and world-space points.
+
+### Usage
+
 Generate GraphML from a binary skeleton NIfTI:
 
 ```bash
@@ -58,6 +76,28 @@ skelhub graphgen -i skeleton.nii.gz -o vessel.graphml
 ```
 
 ## Feature Extraction
+
+### Method
+
+- Load binary 3D foreground and skeleton volumes; require equal shapes and
+  affines, and require every skeleton voxel to lie inside the foreground.
+- Parse and validate graphgen or Laplacian GraphML IDs, node voxel positions,
+  and edge `centerline_voxels`. These paths remain authoritative; path voxels
+  outside the supplied skeleton produce a warning.
+- Run the measurements in voxel space and again using the foreground NIfTI
+  voxel sizes. In each space, assign foreground voxels to their nearest edge
+  path, remove assigned components not anchored to that path, and flood any
+  resulting unlabeled regions from neighboring assignments.
+- For each edge, sum the polyline distance from its first node through its
+  centerline to its second node. Curveness is this length divided by endpoint
+  distance.
+- Estimate radius statistics from assigned vessel-surface distances to each
+  centerline sample, with a half-voxel correction (or half the mean voxel size
+  in image space). Empty paths yield `NaN` radii.
+- Write edge measurements and endpoint degrees to one CSV, and node voxel
+  positions and degrees to another.
+
+### Usage
 
 Extract Voreen-style vessel branch and node features:
 
