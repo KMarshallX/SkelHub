@@ -20,6 +20,23 @@ from skelhub.core import list_backends
 from skelhub.evaluation import format_evaluation_report, write_evaluation_json
 
 
+class _SkelHubHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
+    """Show defaults for optional arguments without labelling required inputs."""
+
+    def _get_help_string(self, action: argparse.Action) -> str:
+        if action.required:
+            return action.help or ""
+        return super()._get_help_string(action)
+
+
+class _SkelHubArgumentParser(argparse.ArgumentParser):
+    """Argument parser that includes configured defaults in help output."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs.setdefault("formatter_class", _SkelHubHelpFormatter)
+        super().__init__(*args, **kwargs)
+
+
 def _add_run_common_arguments(run_parser: argparse.ArgumentParser) -> None:
     """Add arguments shared by every skeletonization backend."""
     run_parser.add_argument("--algorithm", required=True, choices=list_backends(), help="Backend to execute.")
@@ -303,8 +320,12 @@ def _selected_run_algorithm(argv: Sequence[str] | None) -> str | None:
 
 def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
     """Build the top-level CLI parser."""
-    parser = argparse.ArgumentParser(prog="skelhub", description="Unified skeletonization framework CLI.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = _SkelHubArgumentParser(prog="skelhub", description="Unified skeletonization framework CLI.")
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        parser_class=_SkelHubArgumentParser,
+    )
 
     run_parser = subparsers.add_parser("run", help="Run a skeletonization backend.")
     _add_run_common_arguments(run_parser)

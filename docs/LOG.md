@@ -1,5 +1,82 @@
 # Development Log
 
+## 2026-07-21 16:14 AEST
+
+### Document MCP parameter tuning effects
+
+1. Summary of what changed
+- Expanded every entry under `MCP Backend` > `Parameters` in
+  `docs/algorithms.md` with its larger/smaller or enabled/disabled tuning
+  effects immediately after the default value.
+- Clarified the behavioral difference between the categorical `max_fdt` and
+  `topmost` root methods.
+
+2. Files modified
+- `docs/algorithms.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Documented behavior from the current MCP implementation without changing its
+  configuration schema or runtime behavior.
+
+4. Assumptions
+- Array-axis orientation is dataset-dependent, so `topmost` is described in
+  array coordinates rather than as a universal anatomical superior direction.
+
+5. Limitations
+- Tuning effects describe expected tradeoffs; exact skeleton changes remain
+  dependent on object geometry, image quality, and foreground connectivity.
+
+6. Tests run
+- Cross-checked descriptions against MCP root selection, branch acceptance,
+  dilation, iteration limiting, component filtering, and output merging code.
+- Local documentation audit confirmed all seven MCP parameter entries include
+  defaults and tuning behavior.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
+## 2026-07-21 16:04 AEST
+
+### Show configured defaults in all CLI help
+
+1. Summary of what changed
+- Updated the top-level SkelHub CLI and every subcommand parser to append each
+  optional argument's configured default to its `--help` description.
+- Applied the same formatter to dynamically selected `skelhub run` backend
+  arguments.
+
+2. Files modified
+- `skelhub/cli/main.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Centralized help formatting in one private `ArgumentParser` subclass so new
+  subcommands inherit the behavior automatically.
+
+4. Assumptions
+- Required arguments do not need a displayed default because argparse does not
+  use their implicit `None` value when they are omitted.
+- Optional `None` and boolean defaults should be displayed because they describe
+  real command behavior when the option is omitted.
+
+5. Limitations
+- Defaults are shown for the backend selected by `--algorithm`; `skelhub run
+  --help` without an algorithm continues to show only the common run options.
+
+6. Tests run
+- Local parser audit covering `evaluate`, `graphgen`, `feature`, `graphviz`,
+  and `run` help for all six registered backends.
+- `python -m skelhub evaluate --help`
+- `python -m skelhub run --algorithm l1_skeleton --help`
+- `python -m py_compile skelhub/cli/main.py`
+- `python -m pytest -q` (`6 passed`)
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
 ## 2026-07-21 14:26 AEST
 
 ### Fix graphviz drop-event filename handling
