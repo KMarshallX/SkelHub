@@ -1,5 +1,47 @@
 # Development Log
 
+## 2026-07-21 14:26 AEST
+
+### Fix graphviz drop-event filename handling
+
+1. Summary of what changed
+- Updated `skelhub graphviz` to consume the `vtkStringArray` call-data payload
+  carried by VTK `DropFilesEvent` notifications.
+- Kept the previous caller-based filename extraction as a compatibility
+  fallback and retained support for `.graphml`, `.nii`, and `.nii.gz`.
+- Used focused local tests for filename extraction and observer dispatch.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Modified `docs/visualization.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Registered the callback on the underlying VTK interactor so VTK's Python
+  `calldata_type` annotation is preserved instead of being hidden by the
+  PyVista observer wrapper.
+- Kept drop handling within the visualization interaction layer and reused the
+  existing standardized visualization-file loader.
+
+4. Assumptions
+- VTK `DropFilesEvent` supplies a `vtkStringArray` when the active desktop
+  backend supports operating-system file drops.
+
+5. Limitations
+- Standalone VTK/PyVista backends that do not emit operating-system drop events
+  still require the existing `Import` button.
+- A live desktop drop cannot be exercised in the headless test environment.
+
+6. Tests run
+- `python -m pytest tests/test_graph_visualization_drop.py -q` (`2 passed`)
+- `python -m pytest -q` (`6 passed`)
+- `python -m py_compile skelhub/visualization/_graph_viewer_impl.py tests/test_graph_visualization_drop.py`
+- `python -m skelhub graphviz --help`
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Confirm one live file drop on each supported desktop backend when available.
+
 ## 2026-07-07 12:30 AEST
 
 ### Add batch feature extraction script

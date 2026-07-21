@@ -2632,18 +2632,24 @@ def _view_at_display_position(plotter: Any, session: GraphViewerSession, x_pos: 
     return "a" if x_pos < scene_right / 2 else "b"
 
 
-def _extract_dropped_paths(caller: Any) -> list[str]:
+def _extract_dropped_paths(source: Any) -> list[str]:
+    if source is None:
+        return []
+    if hasattr(source, "GetNumberOfValues") and hasattr(source, "GetValue"):
+        return [str(source.GetValue(index)) for index in range(source.GetNumberOfValues())]
+    if isinstance(source, (list, tuple)):
+        return [str(name) for name in source]
     for method_name in ("GetFileNames", "GetDroppedFileNames"):
-        if hasattr(caller, method_name):
-            names = getattr(caller, method_name)()
+        if hasattr(source, method_name):
+            names = getattr(source, method_name)()
             if names is None:
                 continue
             if hasattr(names, "GetNumberOfValues"):
-                return [names.GetValue(index) for index in range(names.GetNumberOfValues())]
+                return [str(names.GetValue(index)) for index in range(names.GetNumberOfValues())]
             if isinstance(names, (list, tuple)):
                 return [str(name) for name in names]
-    if hasattr(caller, "GetEventInformation"):
-        info = caller.GetEventInformation()
+    if hasattr(source, "GetEventInformation"):
+        info = source.GetEventInformation()
         if info:
             return str(info).splitlines()
     return []
@@ -2655,21 +2661,32 @@ def install_drop_observer(
     *,
     pv_module: Any | None = None,
 ) -> bool:
-    """Install a best-effort VTK drop-file observer on the PyVista interactor."""
+    """Install a VTK drop-file observer and preserve its filename payload."""
     interactor = getattr(plotter, "iren", None)
     if interactor is None:
         return False
 
-    def _on_drop(caller: Any, _event: str) -> None:
+    raw_interactor = getattr(interactor, "interactor", interactor)
+    if hasattr(raw_interactor, "AddObserver"):
+        from vtkmodules.util.misc import calldata_type
+        from vtkmodules.vtkCommonCore import VTK_OBJECT
+
+        @calldata_type(VTK_OBJECT)
+        def _on_drop(caller: Any, _event: str, call_data: Any) -> None:
+            paths = _extract_dropped_paths(call_data) or _extract_dropped_paths(caller)
+            if paths:
+                handle_dropped_visualization_paths(plotter, session, paths, pv_module=pv_module)
+
+        raw_interactor.AddObserver("DropFilesEvent", _on_drop)
+        return True
+
+    def _on_legacy_drop(caller: Any, _event: str) -> None:
         paths = _extract_dropped_paths(caller)
         if paths:
             handle_dropped_visualization_paths(plotter, session, paths, pv_module=pv_module)
 
     if hasattr(interactor, "add_observer"):
-        interactor.add_observer("DropFilesEvent", _on_drop)
-        return True
-    if hasattr(interactor, "AddObserver"):
-        interactor.AddObserver("DropFilesEvent", _on_drop)
+        interactor.add_observer("DropFilesEvent", _on_legacy_drop)
         return True
     return False
 
