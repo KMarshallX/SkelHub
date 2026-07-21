@@ -1,5 +1,50 @@
 # Development Log
 
+## 2026-07-07 12:30 AEST
+
+### Add batch feature extraction script
+
+1. Summary of what changed
+- Added `scripts/run_featext.sh` to recursively match foreground NIfTI,
+  skeleton NIfTI, and GraphML inputs and call `skelhub feature` for each set.
+- Added flat edge/node CSV output naming, verbose progress, environment and
+  directory validation, and fail-fast handling for ambiguous or invalid sets.
+- Documented the script and added shell-level subprocess coverage.
+
+2. Files added or modified
+- Added `scripts/run_featext.sh`.
+- Added `tests/test_run_featext.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept feature calculation in the existing unified `skelhub feature` CLI; the
+  new script only handles batch discovery, matching, and orchestration.
+- Preferred exact foreground/skeleton stem matches before unique containing
+  matches, then required an exact skeleton/GraphML stem match.
+- Rejected duplicate foreground stems because flat output directories would
+  otherwise overwrite results within one batch.
+
+4. Assumptions
+- Feature analysis outputs are the CSV files produced by `skelhub feature`, not
+  `.xlsx` workbooks.
+- Existing destination CSVs may be replaced.
+- Either an activated conda environment or Python virtual environment is valid.
+
+5. Limitations
+- Matching is global by basename stem and does not use relative directories.
+- Processing is sequential and fail-fast, so an error can leave outputs from
+  earlier image sets in place.
+
+6. Tests run
+- `bash -n scripts/run_featext.sh`
+- `python -m pytest tests/test_run_featext.py -q` (`4 passed`)
+- `shellcheck scripts/run_featext.sh` was not run because `shellcheck` is not
+  installed in the current environment.
+
+7. Remaining risks or recommended next steps
+- Run `shellcheck scripts/run_featext.sh` when the tool is available.
+
 ## 2026-06-29 17:55 AEST
 
 ### Document postprocessing methods

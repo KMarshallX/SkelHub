@@ -58,6 +58,43 @@ If the output directory does not exist, the script prints a notice and creates
 it. If the path cannot be created or does not resolve to a directory, it prints
 a warning and halts.
 
+## `run_featext.sh`
+
+Batch-extracts edge and node feature CSVs from matched foreground NIfTI,
+skeleton NIfTI, and GraphML files. All three input directories are searched
+recursively, while output CSVs are written directly into the two output
+directories.
+
+```bash
+./scripts/run_featext.sh \
+  --foreground-dir ./test_data/foregrounds \
+  --skel-dir ./test_outputs/skeletons \
+  --graph-dir ./test_outputs/graphs \
+  --edge-op-dir ./test_outputs/features/edges \
+  --node-op-dir ./test_outputs/features/nodes \
+  --verbose
+```
+
+Required:
+
+- `--foreground-dir`, `-fd`: directory searched for foreground `.nii` and `.nii.gz` files.
+- `--skel-dir`, `-sd`: directory searched for skeleton `.nii` and `.nii.gz` files.
+- `--graph-dir`, `-gd`: directory searched for `.graphml` files; it may be the same as `--skel-dir`.
+- `--edge-op-dir`, `-eo`: destination for `<foreground-stem>_edge.csv` files.
+- `--node-op-dir`, `-no`: destination for `<foreground-stem>_node.csv` files.
+
+Optional:
+
+- `--verbose`, `-v`: show matched paths and batch progress, and pass `--verbose` to `skelhub feature`.
+
+For each foreground stem, the script prefers one exact skeleton stem match.
+If there is no exact match, exactly one skeleton stem must contain the
+foreground stem. The selected skeleton must then have exactly one GraphML with
+the same stem. Matching is global across the directory trees. Missing or
+ambiguous matches, duplicate foreground stems, and failed feature commands halt
+the batch immediately with a nonzero exit status. Missing output directories
+are created automatically; existing output CSVs may be replaced.
+
 ## `run_eval.sh`
 
 Batch-evaluates predicted skeleton NIfTI files against reference skeletons.
