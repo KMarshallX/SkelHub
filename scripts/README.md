@@ -6,6 +6,27 @@ with SkelHub available in the execution environment. `run_algo.sh` and
 required dependencies are missing. Older wrappers may still activate the local
 `Tools/SkelHub/.venv` before calling SkelHub commands or Python helpers.
 
+## `checker.sh`
+
+Checks whether all nonzero skeleton voxels are confined to nonzero voxels in a
+foreground volume. Both inputs must be `.nii` or `.nii.gz` files with identical
+shapes.
+
+```bash
+./scripts/checker.sh \
+  --foreground ./foreground.nii.gz \
+  --skeleton ./skeleton.nii.gz
+```
+
+Required:
+
+- `--foreground`, `-f`: foreground NIfTI volume.
+- `--skeleton`, `-s`: skeleton NIfTI volume.
+
+The script prints only `Yes` or `No` to stdout. If either input contains values
+other than zero and one, its sorted unique non-binary values are reported to
+stderr and all nonzero values are still included in the confinement check.
+
 ## `run_algo.sh`
 
 Batch-runs one SkelHub skeletonization backend over every `.nii` or `.nii.gz`

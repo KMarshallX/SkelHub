@@ -1,5 +1,49 @@
 # Development Log
 
+## 2026-07-21 17:25 AEST
+
+### Add foreground confinement checker
+
+1. Summary of what changed
+- Added `scripts/checker.sh` to check whether every nonzero skeleton voxel is
+  located in a nonzero foreground voxel.
+- Added argument, extension, file, dependency, NIfTI loading, and shape
+  validation.
+- Added reporting for sorted unique values other than zero and one while still
+  treating every nonzero value as foreground or skeleton.
+
+2. Files added or modified
+- Added `scripts/checker.sh`.
+- Added `tests/test_checker.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the checker as an isolated helper script and used the project's existing
+  NumPy and NiBabel dependencies for NIfTI access.
+- Reserved stdout for the final `Yes` or `No`; diagnostics and non-binary value
+  reports use stderr.
+
+4. Assumptions
+- Voxel confinement is an index-wise comparison, so matching shapes are
+  required but affine equivalence is not.
+- A `No` result is a successful check and therefore exits with status zero;
+  invalid inputs exit with status two.
+
+5. Limitations
+- The script does not resample volumes or reconcile differing spatial metadata.
+
+6. Tests run
+- `bash -n scripts/checker.sh`
+- `python -m pytest tests/test_checker.py -q` (`4 passed`), covering confined
+  and escaping skeletons, non-binary value reporting and inclusion, and
+  mismatched shapes.
+- `python -m pytest -q` (`10 passed`).
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
 ## 2026-07-21 16:14 AEST
 
 ### Document MCP parameter tuning effects
