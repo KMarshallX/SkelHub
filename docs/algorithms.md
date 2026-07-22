@@ -104,13 +104,13 @@ skelhub run --algorithm mcp --input input.nii.gz --output out.nii.gz \
 
 ### Parameters
 
-- `--root-method {max_fdt,topmost}`: choose each object's root voxel. Default: `max_fdt`.
-- `--threshold-scale FLOAT`: multiply the branch-significance threshold. Default: `1.0`.
-- `--dilation-factor FLOAT`: scale the FDT-based dilation radius. Default: `2.0`.
-- `--max-iterations INT`: cap outer skeleton-growth iterations per object. Default: `200`.
-- `--min-object-size INT`: ignore smaller connected components. Default: `50`.
-- `--label-objects`: write connected-component labels instead of binary `1` values.
-- `--verbose`: print progress and runtime summaries.
+- `--root-method {max_fdt,topmost}`: choose each object's root voxel. Default:`max_fdt`. `max_fdt` starts from the foreground voxel with the greatest distance-transform value and usually favors a thick, well-centered root;`topmost` starts from the uppermost foreground-center maximal-ball voxel and is useful when the first array axis has a meaningful anatomical direction. Changing the root can change branch discovery order and the resulting tree.
+- `--threshold-scale FLOAT`: multiply the branch-significance threshold. Default: `1.0`. Larger values reject more low-significance branches, usually producing a sparser skeleton with fewer noise spurs and less work, but may omit real short or weak branches. Smaller values accept more branches, increasing sensitivity and skeleton density at the cost of more spurs and runtime.
+- `--dilation-factor FLOAT`: scale the FDT-based dilation radius. Default:`2.0`. Larger values mark a wider foreground region as covered around the root and each accepted path, usually reducing later branches and iterations but potentially suppressing nearby valid branches. Smaller values mark a narrower region, preserving more candidate branches and detail while increasing runtime and the risk of redundant or noisy branches.
+- `--max-iterations INT`: cap outer skeleton-growth iterations per object. Default: `200`. Larger values allow more opportunities to cover complex objects and can improve completeness, but increase worst-case runtime. Smaller values finish sooner but can return a partial skeleton when the cap is reached; `0` prevents branch-growth iterations after root initialization.
+- `--min-object-size INT`: ignore smaller connected components. Default: `50`. Larger values remove more small components, reducing noise and runtime but potentially discarding small vessels. Smaller values retain more components and detail while increasing sensitivity to isolated noise and processing cost; `0` keeps every non-empty component.
+- `--label-objects`: write connected-component labels instead of binary `1` values. Default: disabled. Enabling it preserves the skeleton geometry but writes each object's component label; leaving it disabled produces a binary skeleton.
+- `--verbose`: print progress and runtime summaries. Default: disabled. Enabling it adds logging without changing skeletonization results; leaving it disabled keeps command output concise.
 
 ### Notes and Limits
 

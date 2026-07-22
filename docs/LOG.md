@@ -1,5 +1,294 @@
 # Development Log
 
+## 2026-07-22 22:38 AEST
+
+### Split crop patch output directories
+
+1. Summary of what changed
+- Updated `scripts/crop_escaping_graph_patches.py` so `--nif-path` stores only
+  cropped foreground NIfTI patches.
+- Added `--skel-path` and made it required when `--input-skel` is provided.
+- Added `--img-path` and made it required when `--input-img` is provided, so
+  image crops no longer share the foreground directory.
+- Added yellow terminal warnings before creating missing output directories and
+  clear failures if a directory cannot be created.
+
+2. Files modified
+- `scripts/crop_escaping_graph_patches.py`
+- `scripts/README.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept foreground, skeleton, image, and graph patch outputs in separate
+  directory roles.
+- Implemented directory validation inside the Python helper because it owns the
+  parsed output paths and writes the patch files.
+
+4. Assumptions
+- `--input-img` should follow the same separated-output rule as `--input-skel`
+  because `--nif-path` is now foreground-only.
+
+5. Limitations
+- Directory creation warnings are emitted only when patches need to be written;
+  runs with no escaping graph nodes still exit before creating output paths.
+
+6. Tests run
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- Lightweight parser/directory smoke test with stubbed optional imaging
+  dependencies, covering required `--skel-path`, required `--img-path`, and
+  yellow warning directory creation.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
+## 2026-07-22 22:28 AEST
+
+### Use conda environment for crop patch wrapper
+
+1. Summary of what changed
+- Removed the hard requirement for `scripts/crop_escaping_graph_patches.sh` to
+  source the repository `.venv`.
+- Added validation that the currently active conda environment has `python` and
+  the crop helper's required packages before running.
+- Added a clear missing-package report for `igraph`, `nibabel`, `numpy`, and
+  `scipy`.
+
+2. Files modified
+- `scripts/crop_escaping_graph_patches.sh`
+- `scripts/README.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept dependency validation in the shell wrapper so the Python helper remains
+  focused on cropping and graph processing.
+- Checked only the packages imported directly by
+  `crop_escaping_graph_patches.py`.
+
+4. Assumptions
+- The intended execution path is an activated conda environment, matching the
+  newer SkelHub helper scripts.
+
+5. Limitations
+- The wrapper verifies imports, not exact package versions.
+
+6. Tests run
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `env CONDA_PREFIX=/tmp/skelhub-test-conda CONDA_DEFAULT_ENV=skelhub-test ./scripts/crop_escaping_graph_patches.sh --help`, confirming missing packages are listed before exit in the current shell.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
+## 2026-07-21 17:25 AEST
+
+### Add foreground confinement checker
+
+1. Summary of what changed
+- Added `scripts/checker.sh` to check whether every nonzero skeleton voxel is
+  located in a nonzero foreground voxel.
+- Added argument, extension, file, dependency, NIfTI loading, and shape
+  validation.
+- Added reporting for sorted unique values other than zero and one while still
+  treating every nonzero value as foreground or skeleton.
+
+2. Files added or modified
+- Added `scripts/checker.sh`.
+- Added `tests/test_checker.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the checker as an isolated helper script and used the project's existing
+  NumPy and NiBabel dependencies for NIfTI access.
+- Reserved stdout for the final `Yes` or `No`; diagnostics and non-binary value
+  reports use stderr.
+
+4. Assumptions
+- Voxel confinement is an index-wise comparison, so matching shapes are
+  required but affine equivalence is not.
+- A `No` result is a successful check and therefore exits with status zero;
+  invalid inputs exit with status two.
+
+5. Limitations
+- The script does not resample volumes or reconcile differing spatial metadata.
+
+6. Tests run
+- `bash -n scripts/checker.sh`
+- `python -m pytest tests/test_checker.py -q` (`4 passed`), covering confined
+  and escaping skeletons, non-binary value reporting and inclusion, and
+  mismatched shapes.
+- `python -m pytest -q` (`10 passed`).
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
+## 2026-07-21 16:14 AEST
+
+### Document MCP parameter tuning effects
+
+1. Summary of what changed
+- Expanded every entry under `MCP Backend` > `Parameters` in
+  `docs/algorithms.md` with its larger/smaller or enabled/disabled tuning
+  effects immediately after the default value.
+- Clarified the behavioral difference between the categorical `max_fdt` and
+  `topmost` root methods.
+
+2. Files modified
+- `docs/algorithms.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Documented behavior from the current MCP implementation without changing its
+  configuration schema or runtime behavior.
+
+4. Assumptions
+- Array-axis orientation is dataset-dependent, so `topmost` is described in
+  array coordinates rather than as a universal anatomical superior direction.
+
+5. Limitations
+- Tuning effects describe expected tradeoffs; exact skeleton changes remain
+  dependent on object geometry, image quality, and foreground connectivity.
+
+6. Tests run
+- Cross-checked descriptions against MCP root selection, branch acceptance,
+  dilation, iteration limiting, component filtering, and output merging code.
+- Local documentation audit confirmed all seven MCP parameter entries include
+  defaults and tuning behavior.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
+## 2026-07-21 16:04 AEST
+
+### Show configured defaults in all CLI help
+
+1. Summary of what changed
+- Updated the top-level SkelHub CLI and every subcommand parser to append each
+  optional argument's configured default to its `--help` description.
+- Applied the same formatter to dynamically selected `skelhub run` backend
+  arguments.
+
+2. Files modified
+- `skelhub/cli/main.py`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Centralized help formatting in one private `ArgumentParser` subclass so new
+  subcommands inherit the behavior automatically.
+
+4. Assumptions
+- Required arguments do not need a displayed default because argparse does not
+  use their implicit `None` value when they are omitted.
+- Optional `None` and boolean defaults should be displayed because they describe
+  real command behavior when the option is omitted.
+
+5. Limitations
+- Defaults are shown for the backend selected by `--algorithm`; `skelhub run
+  --help` without an algorithm continues to show only the common run options.
+
+6. Tests run
+- Local parser audit covering `evaluate`, `graphgen`, `feature`, `graphviz`,
+  and `run` help for all six registered backends.
+- `python -m skelhub evaluate --help`
+- `python -m skelhub run --algorithm l1_skeleton --help`
+- `python -m py_compile skelhub/cli/main.py`
+- `python -m pytest -q` (`6 passed`)
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
+## 2026-07-21 14:26 AEST
+
+### Fix graphviz drop-event filename handling
+
+1. Summary of what changed
+- Updated `skelhub graphviz` to consume the `vtkStringArray` call-data payload
+  carried by VTK `DropFilesEvent` notifications.
+- Kept the previous caller-based filename extraction as a compatibility
+  fallback and retained support for `.graphml`, `.nii`, and `.nii.gz`.
+- Used focused local tests for filename extraction and observer dispatch.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Modified `docs/visualization.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Registered the callback on the underlying VTK interactor so VTK's Python
+  `calldata_type` annotation is preserved instead of being hidden by the
+  PyVista observer wrapper.
+- Kept drop handling within the visualization interaction layer and reused the
+  existing standardized visualization-file loader.
+
+4. Assumptions
+- VTK `DropFilesEvent` supplies a `vtkStringArray` when the active desktop
+  backend supports operating-system file drops.
+
+5. Limitations
+- Standalone VTK/PyVista backends that do not emit operating-system drop events
+  still require the existing `Import` button.
+- A live desktop drop cannot be exercised in the headless test environment.
+
+6. Tests run
+- `python -m pytest tests/test_graph_visualization_drop.py -q` (`2 passed`)
+- `python -m pytest -q` (`6 passed`)
+- `python -m py_compile skelhub/visualization/_graph_viewer_impl.py tests/test_graph_visualization_drop.py`
+- `python -m skelhub graphviz --help`
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Confirm one live file drop on each supported desktop backend when available.
+
+## 2026-07-07 12:30 AEST
+
+### Add batch feature extraction script
+
+1. Summary of what changed
+- Added `scripts/run_featext.sh` to recursively match foreground NIfTI,
+  skeleton NIfTI, and GraphML inputs and call `skelhub feature` for each set.
+- Added flat edge/node CSV output naming, verbose progress, environment and
+  directory validation, and fail-fast handling for ambiguous or invalid sets.
+- Documented the script and added shell-level subprocess coverage.
+
+2. Files added or modified
+- Added `scripts/run_featext.sh`.
+- Added `tests/test_run_featext.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept feature calculation in the existing unified `skelhub feature` CLI; the
+  new script only handles batch discovery, matching, and orchestration.
+- Preferred exact foreground/skeleton stem matches before unique containing
+  matches, then required an exact skeleton/GraphML stem match.
+- Rejected duplicate foreground stems because flat output directories would
+  otherwise overwrite results within one batch.
+
+4. Assumptions
+- Feature analysis outputs are the CSV files produced by `skelhub feature`, not
+  `.xlsx` workbooks.
+- Existing destination CSVs may be replaced.
+- Either an activated conda environment or Python virtual environment is valid.
+
+5. Limitations
+- Matching is global by basename stem and does not use relative directories.
+- Processing is sequential and fail-fast, so an error can leave outputs from
+  earlier image sets in place.
+
+6. Tests run
+- `bash -n scripts/run_featext.sh`
+- `python -m pytest tests/test_run_featext.py -q` (`4 passed`)
+- `shellcheck scripts/run_featext.sh` was not run because `shellcheck` is not
+  installed in the current environment.
+
+7. Remaining risks or recommended next steps
+- Run `shellcheck scripts/run_featext.sh` when the tool is available.
+
 ## 2026-06-29 17:55 AEST
 
 ### Document postprocessing methods

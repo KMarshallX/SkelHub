@@ -145,7 +145,10 @@ camera for later file switches. Switching to `Double View` forces `Sync Camera`
 on. With synchronization enabled, camera orbit, wheel travel, reset, and fit
 operations in the active viewport are copied to the other populated viewport.
 
-Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz` when the desktop VTK/PyVista backend exposes file drops.
+Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz`. SkelHub reads the
+`vtkStringArray` filename payload from VTK's `DropFilesEvent`; availability of
+the operating-system drop event still depends on the desktop VTK/PyVista
+backend. Use `Import` when that backend does not expose file drops.
 
 For GraphML and NIfTI files, the mouse wheel moves the camera toward or away
 from the active object's displayed center instead of changing scene
