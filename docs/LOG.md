@@ -1,5 +1,43 @@
 # Development Log
 
+## 2026-07-22 22:28 AEST
+
+### Use conda environment for crop patch wrapper
+
+1. Summary of what changed
+- Removed the hard requirement for `scripts/crop_escaping_graph_patches.sh` to
+  source the repository `.venv`.
+- Added validation that the currently active conda environment has `python` and
+  the crop helper's required packages before running.
+- Added a clear missing-package report for `igraph`, `nibabel`, `numpy`, and
+  `scipy`.
+
+2. Files modified
+- `scripts/crop_escaping_graph_patches.sh`
+- `scripts/README.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept dependency validation in the shell wrapper so the Python helper remains
+  focused on cropping and graph processing.
+- Checked only the packages imported directly by
+  `crop_escaping_graph_patches.py`.
+
+4. Assumptions
+- The intended execution path is an activated conda environment, matching the
+  newer SkelHub helper scripts.
+
+5. Limitations
+- The wrapper verifies imports, not exact package versions.
+
+6. Tests run
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `env CONDA_PREFIX=/tmp/skelhub-test-conda CONDA_DEFAULT_ENV=skelhub-test ./scripts/crop_escaping_graph_patches.sh --help`, confirming missing packages are listed before exit in the current shell.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None.
+
 ## 2026-07-21 17:25 AEST
 
 ### Add foreground confinement checker

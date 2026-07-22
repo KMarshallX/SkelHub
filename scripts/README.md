@@ -3,7 +3,9 @@
 Helper scripts in this directory assume they are run from an installed checkout
 with SkelHub available in the execution environment. `run_algo.sh` and
 `run_graphgen.sh` use the currently activated conda environment and halt if
-required dependencies are missing. Older wrappers may still activate the local
+required dependencies are missing. `crop_escaping_graph_patches.sh` also uses
+the active conda environment and reports any missing Python packages before
+running. Older wrappers may still activate the local
 `Tools/SkelHub/.venv` before calling SkelHub commands or Python helpers.
 
 ## `checker.sh`
@@ -168,6 +170,9 @@ Optional:
 - `--input-img`: crop a matching original/intensity NIfTI by the same boxes.
 - `--input-skel`: crop a matching skeleton NIfTI by the same boxes.
 - `--input-graph2`: crop a second GraphML by the same boxes.
+
+The wrapper requires an active conda environment with `igraph`, `nibabel`,
+`numpy`, and `scipy`. Missing packages are listed before the helper exits.
 
 Foreground patches are masked to contain only the affected component. Optional
 image and skeleton patches are raw bbox crops. NIfTI patch affines include the
