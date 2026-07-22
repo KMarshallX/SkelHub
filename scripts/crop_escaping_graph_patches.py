@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import sys
 from typing import Iterable
 
 import igraph as ig
@@ -16,6 +17,8 @@ from scipy import ndimage
 
 
 CONNECTIVITY_26 = np.ones((3, 3, 3), dtype=np.uint8)
+YELLOW = "\033[33m"
+RESET = "\033[0m"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,16 +65,27 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-fore", required=True, help="Input foreground NIfTI used for checks and CCA.")
     parser.add_argument("--input-graph", required=True, help="Input GraphML checked for escaping nodes.")
-    parser.add_argument("--nif-path", required=True, help="Output directory for cropped NIfTI patches.")
+    parser.add_argument("--nif-path", required=True, help="Output directory for cropped foreground NIfTI patches.")
     parser.add_argument(
         "--grapa-path",
         required=True,
         help="Output directory for cropped GraphML patches. Spelling is intentional.",
     )
     parser.add_argument("--input-img", help="Optional original/intensity NIfTI cropped by the same bboxes.")
+    parser.add_argument("--img-path", help="Output directory for cropped image NIfTI patches.")
     parser.add_argument("--input-skel", help="Optional skeleton NIfTI cropped by the same bboxes.")
+    parser.add_argument("--skel-path", help="Output directory for cropped skeleton NIfTI patches.")
     parser.add_argument("--input-graph2", help="Optional additional GraphML cropped by the same bboxes.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.input_img and not args.img_path:
+        parser.error("--img-path is required when --input-img is provided.")
+    if args.img_path and not args.input_img:
+        parser.error("--img-path may only be used when --input-img is provided.")
+    if args.input_skel and not args.skel_path:
+        parser.error("--skel-path is required when --input-skel is provided.")
+    if args.skel_path and not args.input_skel:
+        parser.error("--skel-path may only be used when --input-skel is provided.")
+    return args
 
 
 def _require_file(path: str | Path, *, label: str) -> Path:
@@ -79,6 +93,26 @@ def _require_file(path: str | Path, *, label: str) -> Path:
     if not resolved.is_file():
         raise FileNotFoundError(f"{label} does not exist or is not a file: {resolved}")
     return resolved
+
+
+def ensure_output_dir(path: str | Path, *, label: str) -> Path:
+    output_dir = Path(path).expanduser()
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            raise NotADirectoryError(f"{label} exists but is not a directory: {output_dir}")
+        return output_dir
+
+    print(
+        f"{YELLOW}Warning: {label} does not exist; creating: {output_dir}{RESET}",
+        file=sys.stderr,
+    )
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Unable to create {label}: {output_dir}") from exc
+    if not output_dir.is_dir():
+        raise NotADirectoryError(f"{label} is not a valid directory after creation: {output_dir}")
+    return output_dir
 
 
 def load_nifti(path: str | Path, *, label: str) -> LoadedNifti:
@@ -403,20 +437,20 @@ def main() -> int:
     print(f"components_with_escaping_nodes={len(affected_labels)}")
     print("escaping_component_labels=" + ",".join(str(label) for label in affected_labels))
 
-    output_nifti_dir = Path(args.nif_path).expanduser()
-    output_graph_dir = Path(args.grapa_path).expanduser()
-    output_nifti_dir.mkdir(parents=True, exist_ok=True)
-    output_graph_dir.mkdir(parents=True, exist_ok=True)
+    foreground_output_dir = ensure_output_dir(args.nif_path, label="--nif-path")
+    graph_output_dir = ensure_output_dir(args.grapa_path, label="--grapa-path")
 
-    optional_niftis: list[tuple[str, LoadedNifti]] = []
+    optional_niftis: list[tuple[str, LoadedNifti, Path]] = []
     if args.input_img:
         image = load_nifti(args.input_img, label="--input-img")
         validate_matching_shape(image, foreground, label="--input-img")
-        optional_niftis.append(("image", image))
+        image_output_dir = ensure_output_dir(args.img_path, label="--img-path")
+        optional_niftis.append(("image", image, image_output_dir))
     if args.input_skel:
         skeleton = load_nifti(args.input_skel, label="--input-skel")
         validate_matching_shape(skeleton, foreground, label="--input-skel")
-        optional_niftis.append(("skeleton", skeleton))
+        skeleton_output_dir = ensure_output_dir(args.skel_path, label="--skel-path")
+        optional_niftis.append(("skeleton", skeleton, skeleton_output_dir))
 
     optional_graphs: list[tuple[str, ig.Graph, str]] = [("graph", graph, "--input-graph")]
     if args.input_graph2:
@@ -427,18 +461,20 @@ def main() -> int:
     raw_nifti_outputs = []
     graph_outputs = []
     for crop in crops:
-        foreground_outputs.append(_write_foreground_patch(foreground, labeled, crop, output_nifti_dir))
-        for prefix, source in optional_niftis:
-            raw_nifti_outputs.append(_write_raw_nifti_patch(source, crop, output_nifti_dir, prefix))
+        foreground_outputs.append(_write_foreground_patch(foreground, labeled, crop, foreground_output_dir))
+        for prefix, source, output_dir in optional_niftis:
+            raw_nifti_outputs.append(_write_raw_nifti_patch(source, crop, output_dir, prefix))
         for prefix, source_graph, graph_label in optional_graphs:
-            graph_outputs.append(write_graph_patch(source_graph, crop, output_graph_dir, prefix, graph_label=graph_label))
+            graph_outputs.append(write_graph_patch(source_graph, crop, graph_output_dir, prefix, graph_label=graph_label))
 
     print(f"foreground_patches_written={len(foreground_outputs)}")
     if optional_niftis:
         print(f"optional_nifti_patches_written={len(raw_nifti_outputs)}")
     print(f"graph_patches_written={len(graph_outputs)}")
-    print(f"nifti_output_dir={output_nifti_dir}")
-    print(f"graph_output_dir={output_graph_dir}")
+    print(f"foreground_output_dir={foreground_output_dir}")
+    for prefix, _, output_dir in optional_niftis:
+        print(f"{prefix}_output_dir={output_dir}")
+    print(f"graph_output_dir={graph_output_dir}")
     return 0
 
 

@@ -1,5 +1,48 @@
 # Development Log
 
+## 2026-07-22 22:38 AEST
+
+### Split crop patch output directories
+
+1. Summary of what changed
+- Updated `scripts/crop_escaping_graph_patches.py` so `--nif-path` stores only
+  cropped foreground NIfTI patches.
+- Added `--skel-path` and made it required when `--input-skel` is provided.
+- Added `--img-path` and made it required when `--input-img` is provided, so
+  image crops no longer share the foreground directory.
+- Added yellow terminal warnings before creating missing output directories and
+  clear failures if a directory cannot be created.
+
+2. Files modified
+- `scripts/crop_escaping_graph_patches.py`
+- `scripts/README.md`
+- `docs/LOG.md`
+
+3. Architecture decisions made
+- Kept foreground, skeleton, image, and graph patch outputs in separate
+  directory roles.
+- Implemented directory validation inside the Python helper because it owns the
+  parsed output paths and writes the patch files.
+
+4. Assumptions
+- `--input-img` should follow the same separated-output rule as `--input-skel`
+  because `--nif-path` is now foreground-only.
+
+5. Limitations
+- Directory creation warnings are emitted only when patches need to be written;
+  runs with no escaping graph nodes still exit before creating output paths.
+
+6. Tests run
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- Lightweight parser/directory smoke test with stubbed optional imaging
+  dependencies, covering required `--skel-path`, required `--img-path`, and
+  yellow warning directory creation.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
 ## 2026-07-22 22:28 AEST
 
 ### Use conda environment for crop patch wrapper

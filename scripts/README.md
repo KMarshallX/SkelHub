@@ -148,13 +148,14 @@ Useful options:
 
 Finds GraphML nodes whose rounded `voxel_pos` falls outside a foreground NIfTI.
 If escaping nodes are found, it writes one component-specific foreground patch
-and one cropped GraphML patch per affected connected component.
+and one cropped GraphML patch per affected connected component. Optional image
+and skeleton inputs are cropped to separate output directories.
 
 ```bash
 ./scripts/crop_escaping_graph_patches.sh \
   --input-fore ./test_data/exvivo/foreground.nii.gz \
   --input-graph ./test_outputs/exvivo/original.graphml \
-  --nif-path ./test_data/exvivo/patches \
+  --nif-path ./test_data/exvivo/foreground_patches \
   --grapa-path ./test_outputs/exvivo/patch_graphs
 ```
 
@@ -162,17 +163,23 @@ Required:
 
 - `--input-fore`: foreground NIfTI used for confinement checks and connected components.
 - `--input-graph`: primary GraphML checked for escaping nodes.
-- `--nif-path`: output directory for cropped NIfTI patches.
+- `--nif-path`: output directory for cropped foreground NIfTI patches.
 - `--grapa-path`: output directory for cropped GraphML patches.
 
 Optional:
 
 - `--input-img`: crop a matching original/intensity NIfTI by the same boxes.
+- `--img-path`: output directory for cropped image NIfTI patches; required with `--input-img`.
 - `--input-skel`: crop a matching skeleton NIfTI by the same boxes.
+- `--skel-path`: output directory for cropped skeleton NIfTI patches; required with `--input-skel`.
 - `--input-graph2`: crop a second GraphML by the same boxes.
 
 The wrapper requires an active conda environment with `igraph`, `nibabel`,
 `numpy`, and `scipy`. Missing packages are listed before the helper exits.
+
+If `--nif-path`, `--img-path`, `--skel-path`, or `--grapa-path` does not exist,
+the helper prints a yellow terminal warning and creates it. If creation fails,
+the process fails.
 
 Foreground patches are masked to contain only the affected component. Optional
 image and skeleton patches are raw bbox crops. NIfTI patch affines include the
