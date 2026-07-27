@@ -5,23 +5,26 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  checker.sh --foreground FOREGROUND_NIFTI --skeleton SKELETON_NIFTI
+  checker.sh --foreground FOREGROUND_NIFTI --skeleton SKELETON_NIFTI [--connectivity {6,18,26}]
 
 Required arguments:
-  -f, --foreground    Foreground volume (.nii or .nii.gz)
-  -s, --skeleton      Skeleton volume (.nii or .nii.gz)
+  -f, --foreground         Foreground volume (.nii or .nii.gz)
+  -s, --skeleton           Skeleton volume (.nii or .nii.gz)
 
 Options:
-  -h, --help          Show this help message
+  -c, --connectivity       Connected-component connectivity: 6, 18, or 26
+                           (default: 26)
+  -h, --help               Show this help message
 
 Every nonzero voxel is treated as foreground or skeleton. Non-binary values
-are reported to stderr. The final confinement result is printed to stdout:
-"Yes" when every skeleton voxel is inside the foreground, otherwise "No".
+are reported to stderr. The confinement result and foreground and skeleton
+connected-component counts are printed to stdout.
 EOF
 }
 
 FOREGROUND=""
 SKELETON=""
+CONNECTIVITY=26
 
 while (($# > 0)); do
     case "$1" in
@@ -43,6 +46,15 @@ while (($# > 0)); do
             SKELETON="$2"
             shift 2
             ;;
+        -c|--connectivity)
+            if (($# < 2)); then
+                echo "Error: $1 requires one of: 6, 18, 26." >&2
+                usage >&2
+                exit 2
+            fi
+            CONNECTIVITY="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -60,6 +72,15 @@ if [[ -z "${FOREGROUND}" || -z "${SKELETON}" ]]; then
     usage >&2
     exit 2
 fi
+
+case "${CONNECTIVITY}" in
+    6|18|26) ;;
+    *)
+        echo "Error: --connectivity must be one of: 6, 18, 26." >&2
+        usage >&2
+        exit 2
+        ;;
+esac
 
 validate_nifti() {
     local label="$1"
@@ -83,7 +104,7 @@ if ! command -v python >/dev/null 2>&1; then
     exit 2
 fi
 
-python - "${FOREGROUND}" "${SKELETON}" <<'PY'
+python - "${FOREGROUND}" "${SKELETON}" "${CONNECTIVITY}" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -92,6 +113,7 @@ from pathlib import Path
 try:
     import nibabel as nib
     import numpy as np
+    from scipy import ndimage
 except ImportError as exc:
     print(f"Error: missing Python dependency: {exc.name}", file=sys.stderr)
     raise SystemExit(2) from exc
@@ -116,6 +138,7 @@ def report_nonbinary(values: np.ndarray, label: str) -> None:
 
 foreground_path = Path(sys.argv[1])
 skeleton_path = Path(sys.argv[2])
+connectivity = int(sys.argv[3])
 foreground = load_voxels(foreground_path, "foreground")
 skeleton = load_voxels(skeleton_path, "skeleton")
 
@@ -127,9 +150,24 @@ if foreground.shape != skeleton.shape:
     )
     raise SystemExit(2)
 
+if foreground.ndim != 3:
+    print(
+        f"Error: foreground and skeleton must be 3D volumes, got {foreground.ndim}D.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
 report_nonbinary(foreground, "Foreground")
 report_nonbinary(skeleton, "Skeleton")
 
+connectivity_rank = {6: 1, 18: 2, 26: 3}[connectivity]
+structure = ndimage.generate_binary_structure(rank=3, connectivity=connectivity_rank)
+_, foreground_component_count = ndimage.label(foreground != 0, structure=structure)
+_, skeleton_component_count = ndimage.label(skeleton != 0, structure=structure)
+
 escaping_voxels = (skeleton != 0) & (foreground == 0)
-print("No" if np.any(escaping_voxels) else "Yes")
+contained = "No" if np.any(escaping_voxels) else "Yes"
+print(f"Are all skeleton voxels contained within foreground: {contained}")
+print(f"Foreground connected-components number: {foreground_component_count}")
+print(f"Skeleton connected-components number: {skeleton_component_count}")
 PY

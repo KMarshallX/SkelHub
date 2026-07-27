@@ -1,5 +1,43 @@
 # Development Log
 
+## 2026-07-27 19:34 AEST
+
+### Report connectivity-aware component counts
+
+1. Summary of what changed
+- Added `--connectivity` / `-c` to `scripts/checker.sh`, accepting 6, 18, or 26
+  and defaulting to 26.
+- Added foreground and skeleton connected-component counts to the checker
+  report using the selected connectivity.
+- Expanded checker regression coverage and usage documentation.
+
+2. Files added or modified
+- Modified `.gitignore` to include the checker regression test.
+- Modified `scripts/checker.sh`.
+- Modified `tests/test_checker.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Used SciPy's 3D binary neighborhood structures for standard 6-, 18-, and
+  26-connectivity and applied the same structure to both volumes.
+
+4. Assumptions
+- Checker inputs are 3D volumes because the supported connectivity choices are
+  defined for 3D voxel neighborhoods.
+
+5. Limitations
+- The checker does not resample volumes or reconcile differing spatial
+  metadata.
+
+6. Tests run
+- `bash -n scripts/checker.sh`
+- `python -m pytest -q tests/test_checker.py` (`7 passed`)
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
 ## 2026-07-27 15:19 AEST
 
 ### Rasterize escaping Laplacian graph patches

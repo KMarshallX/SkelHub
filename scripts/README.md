@@ -17,7 +17,8 @@ shapes.
 ```bash
 ./scripts/checker.sh \
   --foreground ./foreground.nii.gz \
-  --skeleton ./skeleton.nii.gz
+  --skeleton ./skeleton.nii.gz \
+  --connectivity 26
 ```
 
 Required:
@@ -25,9 +26,16 @@ Required:
 - `--foreground`, `-f`: foreground NIfTI volume.
 - `--skeleton`, `-s`: skeleton NIfTI volume.
 
-The script prints only `Yes` or `No` to stdout. If either input contains values
-other than zero and one, its sorted unique non-binary values are reported to
-stderr and all nonzero values are still included in the confinement check.
+Optional:
+
+- `--connectivity`, `-c`: connectivity used to count foreground and skeleton
+  components; one of `6`, `18`, or `26` (default: `26`).
+
+The script prints whether all skeleton voxels are within the foreground,
+followed by the connected-component count for each volume. If either input
+contains values other than zero and one, its sorted unique non-binary values
+are reported to stderr and all nonzero values are still included in both the
+confinement check and component count.
 
 ## `run_algo.sh`
 
