@@ -53,6 +53,11 @@ TOOLS_BUTTON_FONT_SIZE = 10
 TOOLS_MENU_FONT_SIZE = 10
 VIEW_LAYOUT_MENU_ROW_HEIGHT = 22
 VIEW_LAYOUT_MENU_MAX_ROWS = 6
+DROPDOWN_LABEL_WIDTH = 72
+DROPDOWN_CHARACTER_WIDTH = 6
+MARQUEE_CHARACTER_WIDTH = 8
+MARQUEE_GAP = "   "
+MARQUEE_INTERVAL_MS = 180
 HEADER_HEIGHT_FRACTION = 0.05
 HEADER_COLOR = (0.733, 0.765, 0.780)  # #BBC3C7
 HEADER_BORDER_COLOR = (0.949, 0.949, 0.306)  # #F2F24E
@@ -270,6 +275,16 @@ class UIHitbox:
 
 
 @dataclass(slots=True)
+class MarqueeText:
+    """One clipped filename rendered as a moving text window."""
+
+    actor: Any
+    prefix: str
+    filename: str
+    visible_characters: int
+
+
+@dataclass(slots=True)
 class GraphViewerSession:
     """Mutable state for an interactive graph viewer session."""
 
@@ -306,6 +321,12 @@ class GraphViewerSession:
     interactive_overlay_target_menu_open: bool = False
     interactive_overlay_target: OverlayTarget = "base"
     overlay_renderer: Any | None = None
+    header_marquee_texts: list[MarqueeText] = field(default_factory=list)
+    dropdown_marquee_texts: dict[str, MarqueeText] = field(default_factory=dict)
+    dropdown_hover_key: str | None = None
+    header_marquee_step: int = 0
+    dropdown_marquee_step: int = 0
+    marquee_timer_id: int | None = None
 
     def __post_init__(self) -> None:
         _validate_options(self.options)
@@ -1129,6 +1150,7 @@ def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
 def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
     """Render compact header bars above each viewport in double/overlay mode."""
     _remove_actor_list(plotter, session.header_actors)
+    session.header_marquee_texts.clear()
     if session.layout_mode == "double":
         _render_double_view_headers(plotter, session)
     elif session.layout_mode == "overlay":
@@ -1174,22 +1196,48 @@ def _render_overlay_header(plotter: Any, session: GraphViewerSession) -> None:
     base = session._safe_file(view.base_file_index)
     overlay = session._safe_file(view.overlay_file_index)
 
-    base_text = _loaded_file_label(base) if base else "\u2014"
-    overlay_text = _loaded_file_label(overlay) if overlay else "\u2014"
-    prefix = "Overlay View  |  Base: "
-    mid = "  |  Overlay: "
-    full = prefix + base_text + mid + overlay_text
-    available_px = scene_right_px - 20
-    max_chars = max(10, available_px // 8)
-    if len(full) > max_chars:
-        fixed_len = len(prefix) + len(mid)
-        name_budget = max(4, (max_chars - fixed_len) // 2)
-        base_text = base_text[: name_budget - 1] + "\u2026"
-        overlay_text = overlay_text[: name_budget - 1] + "\u2026"
-    text = prefix + base_text + mid + overlay_text
+    base_prefix = "Overlay View  |  Base: "
+    overlay_prefix = "Overlay: "
+    if base is not None:
+        base_prefix += f"{_kind_label(base.kind)} "
+    if overlay is not None:
+        overlay_prefix += f"{_kind_label(overlay.kind)} "
+    base_filename = base.path.name if base is not None else "\u2014"
+    overlay_filename = overlay.path.name if overlay is not None else "\u2014"
+    line_capacity = max(4, (scene_right_px - 20) // MARQUEE_CHARACTER_WIDTH)
+    base_capacity = max(4, line_capacity - len(base_prefix))
+    overlay_capacity = max(4, line_capacity - len(overlay_prefix))
+    lines = (
+        base_prefix + _marquee_window(base_filename, base_capacity, session.header_marquee_step),
+        overlay_prefix + _marquee_window(overlay_filename, overlay_capacity, session.header_marquee_step),
+    )
 
-    _draw_header_cell(plotter, session, 0, window_height - header_px,
-                      scene_right_px, header_px, text, True, HEADER_BORDER_WIDTH)
+    text_actors = _draw_header_cell(
+        plotter,
+        session,
+        0,
+        window_height - header_px,
+        scene_right_px,
+        header_px,
+        lines,
+        True,
+        HEADER_BORDER_WIDTH,
+    )
+    for actor, prefix, filename, capacity in zip(
+        text_actors,
+        (base_prefix, overlay_prefix),
+        (base_filename, overlay_filename),
+        (base_capacity, overlay_capacity),
+    ):
+        if len(filename) > capacity:
+            session.header_marquee_texts.append(
+                MarqueeText(
+                    actor=actor,
+                    prefix=prefix,
+                    filename=filename,
+                    visible_characters=capacity,
+                )
+            )
 
 
 def _draw_header_cell(
@@ -1199,10 +1247,10 @@ def _draw_header_cell(
     y: int,
     width: int,
     height: int,
-    text: str,
+    text: str | Sequence[str],
     is_active: bool,
     border_w: int,
-) -> None:
+) -> list[Any]:
     if is_active:
         session.header_actors.append(
             _add_overlay_rect(plotter, x=x, y=y, width=width, height=height,
@@ -1217,9 +1265,25 @@ def _draw_header_cell(
             _add_overlay_rect(plotter, x=x, y=y, width=width, height=height,
                               color=HEADER_COLOR, opacity=1.0))
         text_color = "#4a4a4a"
-    session.header_actors.append(
-        _add_overlay_text(plotter, text, x=x + 10, y=y + height // 2,
-                          font_size=HEADER_FONT_SIZE, color=text_color))
+    lines = (text,) if isinstance(text, str) else tuple(text)
+    row_height = height / max(1, len(lines))
+    text_actors: list[Any] = []
+    for line_index, line in enumerate(lines):
+        line_center_y = round(y + height - (line_index + 0.5) * row_height)
+        text_actor = _add_overlay_text(
+            plotter,
+            line,
+            x=x + 10,
+            y=line_center_y,
+            font_size=HEADER_FONT_SIZE,
+            color=text_color,
+        )
+        text_property = _text_actor_property(text_actor)
+        if text_property is not None and hasattr(text_property, "SetVerticalJustificationToCentered"):
+            text_property.SetVerticalJustificationToCentered()
+        session.header_actors.append(text_actor)
+        text_actors.append(text_actor)
+    return text_actors
 
 
 def _ensure_overlay_renderer(plotter: Any, session: GraphViewerSession) -> Any | None:
@@ -1278,6 +1342,60 @@ def _text_actor_property(actor: Any) -> Any | None:
     if hasattr(actor, "prop") and hasattr(actor.prop, "GetTextProperty"):
         return actor.prop.GetTextProperty()
     return None
+
+
+def _set_text_actor_input(actor: Any, text: str) -> bool:
+    """Update a VTK/PyVista text actor without rebuilding its UI panel."""
+    if hasattr(actor, "SetInput"):
+        actor.SetInput(str(text))
+        return True
+    if hasattr(actor, "set_text"):
+        actor.set_text(str(text))
+        return True
+    return False
+
+
+def _marquee_window(text: str, visible_characters: int, step: int) -> str:
+    """Return a fixed-width cyclic window into overflowing text."""
+    visible_characters = max(1, int(visible_characters))
+    if len(text) <= visible_characters:
+        return text
+    cycle = text + MARQUEE_GAP
+    start = max(0, int(step)) % len(cycle)
+    repetitions = (start + visible_characters) // len(cycle) + 2
+    return (cycle * repetitions)[start : start + visible_characters]
+
+
+def _ellipsize_text(text: str, visible_characters: int) -> str:
+    """Fit static text to a character budget."""
+    visible_characters = max(1, int(visible_characters))
+    if len(text) <= visible_characters:
+        return text
+    if visible_characters <= 3:
+        return "." * visible_characters
+    return text[: visible_characters - 3] + "..."
+
+
+def _render_marquee_text(marquee: MarqueeText, step: int) -> bool:
+    return _set_text_actor_input(
+        marquee.actor,
+        marquee.prefix + _marquee_window(marquee.filename, marquee.visible_characters, step),
+    )
+
+
+def _advance_filename_marquees(plotter: Any, session: GraphViewerSession) -> bool:
+    """Advance continuously animated headers and the currently hovered menu row."""
+    session.header_marquee_step += 1
+    changed = False
+    for marquee in session.header_marquee_texts:
+        changed = _render_marquee_text(marquee, session.header_marquee_step) or changed
+    hovered = session.dropdown_marquee_texts.get(session.dropdown_hover_key or "")
+    if hovered is not None:
+        session.dropdown_marquee_step += 1
+        changed = _render_marquee_text(hovered, session.dropdown_marquee_step) or changed
+    if changed and hasattr(plotter, "render"):
+        plotter.render()
+    return changed
 
 
 def _add_actor2d(plotter: Any, actor: Any) -> None:
@@ -2724,6 +2842,41 @@ def update_file_list_hover(plotter: Any, session: GraphViewerSession, x_pos: int
     return True
 
 
+def update_dropdown_menu_hover(
+    plotter: Any,
+    session: GraphViewerSession,
+    x_pos: int,
+    y_pos: int,
+) -> bool:
+    """Start marquee motion only for the overflowing dropdown row under the pointer."""
+    hovered_key: str | None = None
+    for hitbox in reversed(session.command_hitboxes):
+        if (
+            hitbox.name.startswith("dropdown-row-")
+            and hitbox.contains(x_pos, y_pos)
+            and hitbox.value in session.dropdown_marquee_texts
+        ):
+            hovered_key = hitbox.value
+            break
+    if hovered_key == session.dropdown_hover_key:
+        return False
+
+    previous = session.dropdown_marquee_texts.get(session.dropdown_hover_key or "")
+    if previous is not None:
+        _set_text_actor_input(
+            previous.actor,
+            previous.prefix + _ellipsize_text(previous.filename, previous.visible_characters),
+        )
+    session.dropdown_hover_key = hovered_key
+    session.dropdown_marquee_step = 0
+    current = session.dropdown_marquee_texts.get(hovered_key or "")
+    if current is not None:
+        _render_marquee_text(current, 0)
+    if (previous is not None or current is not None) and hasattr(plotter, "render"):
+        plotter.render()
+    return previous is not None or current is not None
+
+
 def _inside_tools_panel(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> bool:
     if not session.tools_panel_visible:
         return False
@@ -3291,6 +3444,7 @@ def install_ui_mouse_observers(
                 _set_event_handled("MouseMoveEvent", True)
                 return
             update_file_list_hover(plotter, session, *position)
+            update_dropdown_menu_hover(plotter, session, *position)
 
     def _on_left_click(caller: Any, _event: str) -> None:
         _set_event_handled("LeftButtonPressEvent", False)
@@ -3349,6 +3503,13 @@ def install_ui_mouse_observers(
     def _on_interaction(_caller: Any, _event: str) -> None:
         _sync_camera_to_other_views(plotter, session)
 
+    def _on_marquee_timer(caller: Any, _event: str) -> None:
+        if session.marquee_timer_id is not None and hasattr(caller, "GetTimerEventId"):
+            event_timer_id = int(caller.GetTimerEventId())
+            if event_timer_id > 0 and event_timer_id != session.marquee_timer_id:
+                return
+        _advance_filename_marquees(plotter, session)
+
     def _add_cancellable_observer(event_name: str, callback: Any) -> None:
         try:
             observer_id = native_interactor.AddObserver(event_name, callback, 1.0)
@@ -3370,6 +3531,12 @@ def install_ui_mouse_observers(
         interactor.add_observer("LeftButtonReleaseEvent", _on_left_release)
         interactor.add_observer("KeyPressEvent", _on_key_press)
         interactor.add_observer("InteractionEvent", _on_interaction)
+        interactor.add_observer("TimerEvent", _on_marquee_timer)
+        if session.marquee_timer_id is None:
+            if hasattr(interactor, "create_timer"):
+                session.marquee_timer_id = int(interactor.create_timer(MARQUEE_INTERVAL_MS))
+            elif hasattr(native_interactor, "CreateRepeatingTimer"):
+                session.marquee_timer_id = int(native_interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
         return True
     if hasattr(interactor, "AddObserver"):
         interactor.AddObserver("ConfigureEvent", _on_resize)
@@ -3380,6 +3547,9 @@ def install_ui_mouse_observers(
         interactor.AddObserver("LeftButtonReleaseEvent", _on_left_release)
         interactor.AddObserver("KeyPressEvent", _on_key_press)
         interactor.AddObserver("InteractionEvent", _on_interaction)
+        interactor.AddObserver("TimerEvent", _on_marquee_timer)
+        if session.marquee_timer_id is None and hasattr(interactor, "CreateRepeatingTimer"):
+            session.marquee_timer_id = int(interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
         return True
     return False
 
@@ -3551,9 +3721,11 @@ def _layout_mode_label(mode: ViewLayoutMode) -> str:
     return {"single": "Single View", "double": "Double View", "overlay": "Overlay View"}[mode]
 
 
-def _loaded_file_label(loaded_file: LoadedVisualizationFile, *, max_length: int = 24) -> str:
+def _loaded_file_label(loaded_file: LoadedVisualizationFile, *, max_length: int | None = None) -> str:
     label = f"{_kind_label(loaded_file.kind)} {loaded_file.path.name}"
-    return label if len(label) <= max_length else label[: max_length - 3] + "..."
+    if max_length is None:
+        return label
+    return _ellipsize_text(label, max_length)
 
 
 def _view_dropdown_label(session: GraphViewerSession, view_id: ViewID) -> str:
@@ -3596,8 +3768,8 @@ def _add_dropdown_button(
             color="#d7dde5" if enabled else "#7d8590",
         )
     )
-    field_x = x + 92
-    field_width = width - 92
+    field_x = x + DROPDOWN_LABEL_WIDTH
+    field_width = width - DROPDOWN_LABEL_WIDTH
     session.command_button_actors.append(
         _add_overlay_rect(
             plotter,
@@ -3609,8 +3781,27 @@ def _add_dropdown_button(
             opacity=0.94,
         )
     )
+    value_capacity = max(4, (field_width - 24) // DROPDOWN_CHARACTER_WIDTH)
+    visible_value = _ellipsize_text(value, value_capacity)
     session.command_button_actors.append(
-        _add_overlay_text(plotter, f"{value} v", x=field_x + 8, y=y + 7, font_size=TOOLS_TEXT_FONT_SIZE, color=text_color)
+        _add_overlay_text(
+            plotter,
+            visible_value,
+            x=field_x + 8,
+            y=y + 7,
+            font_size=TOOLS_TEXT_FONT_SIZE,
+            color=text_color,
+        )
+    )
+    session.command_button_actors.append(
+        _add_overlay_text(
+            plotter,
+            "v",
+            x=field_x + field_width - 14,
+            y=y + 7,
+            font_size=TOOLS_TEXT_FONT_SIZE,
+            color=text_color,
+        )
     )
     if enabled:
         session.command_hitboxes.append(
@@ -3636,8 +3827,8 @@ def _add_dropdown_menu(
     width: int,
     rows: Sequence[tuple[str, str, int | None, ViewID | None]],
 ) -> None:
-    field_x = x + 92
-    field_width = width - 92
+    field_x = x + DROPDOWN_LABEL_WIDTH
+    field_width = width - DROPDOWN_LABEL_WIDTH
     for row_index, (label, action, index, view_id) in enumerate(rows[:VIEW_LAYOUT_MENU_MAX_ROWS]):
         row_y = y - VIEW_LAYOUT_MENU_ROW_HEIGHT * (row_index + 1)
         menu_x = field_x
@@ -3656,16 +3847,25 @@ def _add_dropdown_menu(
                 opacity=0.98,
             )
         )
-        session.command_button_actors.append(
-            _add_overlay_text(
-                plotter,
-                label,
-                x=menu_x + 8,
-                y=menu_y + 6,
-                font_size=TOOLS_MENU_FONT_SIZE,
-                color="white",
-            )
+        row_key = f"{action}:{index}:{view_id}:{row_index}"
+        visible_characters = max(4, (field_width - 16) // DROPDOWN_CHARACTER_WIDTH)
+        visible_label = _ellipsize_text(label, visible_characters)
+        text_actor = _add_overlay_text(
+            plotter,
+            visible_label,
+            x=menu_x + 8,
+            y=menu_y + 6,
+            font_size=TOOLS_MENU_FONT_SIZE,
+            color="white",
         )
+        session.command_button_actors.append(text_actor)
+        if len(label) > visible_characters:
+            session.dropdown_marquee_texts[row_key] = MarqueeText(
+                actor=text_actor,
+                prefix="",
+                filename=label,
+                visible_characters=visible_characters,
+            )
         session.command_hitboxes.append(
             UIHitbox(
                 name=f"dropdown-row-{action}-{row_index}",
@@ -3676,6 +3876,7 @@ def _add_dropdown_menu(
                 action=action,
                 index=index,
                 view_id=view_id,
+                value=row_key,
             )
         )
 
@@ -3988,6 +4189,8 @@ def render_command_buttons(plotter: Any, session: GraphViewerSession) -> None:
     """Draw session and camera controls in the visible Tools panel."""
     _remove_actor_list(plotter, session.command_button_actors)
     session.command_hitboxes.clear()
+    session.dropdown_marquee_texts.clear()
+    session.dropdown_hover_key = None
     if not session.tools_panel_visible:
         return
 

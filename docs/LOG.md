@@ -1,5 +1,59 @@
 # Development Log
 
+## 2026-07-27 19:59 AEST
+
+### Improve graphviz overlay filename visibility
+
+1. Summary of what changed
+- Split the overlay top bar into separate Base and Overlay filename lines.
+- Added continuous scrolling for overflowing top-bar filenames.
+- Added hover-only scrolling for overflowing filenames in open file dropdown
+  rows.
+- Expanded filename text to use the available width of the View Layout
+  selectors and their matching menu rows.
+- Vertically centered both overlay-header text rows inside the bordered top
+  bar.
+
+2. Files added or modified
+- Modified `.gitignore`.
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Modified the visualization facade modules for constants, layout, session,
+  and interaction helpers.
+- Added `tests/test_graphviz_filename_marquee.py`.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Updated existing 2D text actors from one shared repeating UI timer so
+  filename motion does not rebuild visualization geometry or the full Tools
+  panel.
+- Used VTK vertical text justification for header alignment and separated the
+  dropdown arrow from the filename so it does not reduce the visible label.
+- Kept marquee state in the viewer session and confined all behavior to the
+  visualization subsystem.
+
+4. Assumptions
+- “Rolling” means cyclic leftward marquee motion.
+- Dropdown animation applies to overflowing rows in an open file-selection
+  menu; closed selector fields remain ellipsized.
+
+5. Limitations
+- Overflow detection uses the viewer's existing conservative character-width
+  estimate rather than font-specific pixel measurement.
+- Desktop visual review is still recommended on the target VTK backend.
+
+6. Tests run
+- `python -m pytest -q` (`23 passed`)
+- `python -m py_compile skelhub/visualization/_graph_viewer_impl.py
+  skelhub/visualization/constants.py skelhub/visualization/layout.py
+  skelhub/visualization/session.py skelhub/visualization/interaction.py
+  skelhub/visualization/controls.py`
+- `git diff --check`
+- Off-screen VTK smoke renders for the two-line overlay header and widened
+  open Base-file menu, including vertical-boundary inspection.
+
+7. Remaining risks or recommended next steps
+- Confirm the 180 ms scroll speed feels comfortable on the target display.
+
 ## 2026-07-27 19:34 AEST
 
 ### Report connectivity-aware component counts

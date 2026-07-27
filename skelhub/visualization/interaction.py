@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ._graph_viewer_impl import (
     _all_hitboxes,
+    _advance_filename_marquees,
     _begin_camera_orbit_drag,
     _begin_node_id_edit,
     _begin_tools_scroll_drag,
@@ -56,11 +57,13 @@ from ._graph_viewer_impl import (
     switch_previous_graph,
     toggle_camera_sync,
     toggle_interactive,
+    update_dropdown_menu_hover,
     update_file_list_hover,
 )
 
 __all__ = [
     "_all_hitboxes",
+    "_advance_filename_marquees",
     "_begin_camera_orbit_drag",
     "_begin_node_id_edit",
     "_begin_tools_scroll_drag",
@@ -113,5 +116,6 @@ __all__ = [
     "switch_previous_graph",
     "toggle_camera_sync",
     "toggle_interactive",
+    "update_dropdown_menu_hover",
     "update_file_list_hover",
 ]
