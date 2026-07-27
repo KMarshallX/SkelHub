@@ -1,5 +1,98 @@
 # Development Log
 
+## 2026-07-27 15:19 AEST
+
+### Rasterize escaping Laplacian graph patches
+
+1. Summary of what changed
+- Added `--rasterization` to `crop_escaping_graph_patches.sh`.
+- Reintroduced `--skel-path` only as the required destination for enabled
+  graph-patch rasterization; `--input-skel` remains removed.
+- Rasterized both primary and optional secondary GraphML patches with the same
+  graph rule used for Laplacian `--output`.
+- Added parser and two-graph end-to-end regression coverage.
+
+2. Files added or modified
+- Modified `.gitignore`.
+- Modified `scripts/crop_escaping_graph_patches.sh`.
+- Modified `scripts/crop_escaping_graph_patches.py`.
+- Modified `scripts/README.md`.
+- Modified `tests/test_crop_escaping_graph_patches.py`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused `GeometricGraph` and `rasterize_graph_26conn` from the Laplacian
+  backend instead of duplicating its interpolation and connectivity rules.
+- Rasterized in the original component bbox, matching Laplacian backend
+  clipping, then embedded the result in the buffered patch space.
+- Used `graph_...nii.gz` and `graph2_...nii.gz` prefixes to keep rasterized
+  outputs paired unambiguously with their GraphML patches.
+
+4. Assumptions
+- Input GraphML files use the Laplacian schema with JSON `voxel_pos` and
+  positive integer `component_label` vertex attributes.
+- `--input-graph2`, when provided, should be rasterized alongside
+  `--input-graph`.
+
+5. Limitations
+- Rasterization is specifically the Laplacian backend rule; arbitrary GraphML
+  schemas are not supported.
+- Runs without escaping primary-graph nodes still return before creating any
+  patch output directories.
+
+6. Tests run
+- `pytest -q tests/test_crop_escaping_graph_patches.py`
+- Real-data equivalence check against the component-label-1 crop of the
+  Laplacian `--output`.
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- Wrapper `--help` smoke test.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- External callers that enable `--rasterization` must provide `--skel-path`.
+
+## 2026-07-27 15:06 AEST
+
+### Remove skeleton cropping from escaping-graph patches
+
+1. Summary of what changed
+- Removed skeleton NIfTI patch cropping from
+  `scripts/crop_escaping_graph_patches.py`.
+- Removed the `--input-skel` and `--skel-path` command-line options.
+- Updated the script documentation and added regression coverage for the
+  removed options.
+
+2. Files added or modified
+- Modified `.gitignore` to include the new focused regression test.
+- Modified `scripts/crop_escaping_graph_patches.py`.
+- Modified `scripts/README.md`.
+- Added `tests/test_crop_escaping_graph_patches.py`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Retained raw bounding-box NIfTI cropping only for the optional intensity
+  image workflow.
+- Removed the old options instead of keeping deprecated aliases, so unsupported
+  skeleton-cropping requests fail during argument parsing.
+
+4. Assumptions
+- Existing callers using `--input-skel` or `--skel-path` should be updated
+  rather than supported through a compatibility period.
+
+5. Limitations
+- The helper does not produce any skeleton patch output.
+
+6. Tests run
+- `pytest -q tests/test_crop_escaping_graph_patches.py`
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- External scripts outside this repository that pass either removed option must
+  remove those arguments.
+
 ## 2026-07-22 22:38 AEST
 
 ### Split crop patch output directories

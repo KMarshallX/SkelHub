@@ -23,8 +23,10 @@ import importlib.util
 required_packages = {
     "igraph": "igraph",
     "nibabel": "nibabel",
+    "networkx": "networkx",
     "numpy": "numpy",
     "scipy": "scipy",
+    "skelhub": "skelhub",
 }
 
 missing = [

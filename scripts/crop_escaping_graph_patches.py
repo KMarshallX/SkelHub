@@ -15,6 +15,9 @@ import nibabel as nib
 import numpy as np
 from scipy import ndimage
 
+from skelhub.algorithms.laplacian.graph import GeometricGraph
+from skelhub.algorithms.laplacian.rasterize import rasterize_graph_26conn
+
 
 CONNECTIVITY_26 = np.ones((3, 3, 3), dtype=np.uint8)
 YELLOW = "\033[33m"
@@ -73,18 +76,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input-img", help="Optional original/intensity NIfTI cropped by the same bboxes.")
     parser.add_argument("--img-path", help="Output directory for cropped image NIfTI patches.")
-    parser.add_argument("--input-skel", help="Optional skeleton NIfTI cropped by the same bboxes.")
-    parser.add_argument("--skel-path", help="Output directory for cropped skeleton NIfTI patches.")
     parser.add_argument("--input-graph2", help="Optional additional GraphML cropped by the same bboxes.")
+    parser.add_argument(
+        "--rasterization",
+        action="store_true",
+        help="Rasterize every cropped graph with the SkelHub Laplacian rasterizer.",
+    )
+    parser.add_argument("--skel-path", help="Output directory for rasterized graph NIfTI patches.")
     args = parser.parse_args()
     if args.input_img and not args.img_path:
         parser.error("--img-path is required when --input-img is provided.")
     if args.img_path and not args.input_img:
         parser.error("--img-path may only be used when --input-img is provided.")
-    if args.input_skel and not args.skel_path:
-        parser.error("--skel-path is required when --input-skel is provided.")
-    if args.skel_path and not args.input_skel:
-        parser.error("--skel-path may only be used when --input-skel is provided.")
+    if args.rasterization and not args.skel_path:
+        parser.error("--skel-path is required when --rasterization is provided.")
+    if args.skel_path and not args.rasterization:
+        parser.error("--skel-path may only be used when --rasterization is provided.")
     return args
 
 
@@ -250,6 +257,10 @@ def _bbox_start(bbox: tuple[slice, slice, slice]) -> np.ndarray:
     return np.asarray([int(axis.start or 0) for axis in bbox], dtype=float)
 
 
+def _bbox_shape(bbox: tuple[slice, slice, slice]) -> tuple[int, int, int]:
+    return tuple(int(axis.stop or 0) - int(axis.start or 0) for axis in bbox)  # type: ignore[return-value]
+
+
 def _bbox_name(bbox: tuple[slice, slice, slice]) -> str:
     return (
         f"x{int(bbox[0].start or 0)}-{int(bbox[0].stop or 0)}"
@@ -395,11 +406,58 @@ def crop_graph(graph: ig.Graph, crop: ComponentCrop, *, graph_label: str) -> ig.
     return cropped
 
 
-def write_graph_patch(graph: ig.Graph, crop: ComponentCrop, output_dir: Path, prefix: str, *, graph_label: str) -> Path:
+def write_graph_patch(
+    graph: ig.Graph,
+    crop: ComponentCrop,
+    output_dir: Path,
+    prefix: str,
+    *,
+    graph_label: str,
+) -> tuple[Path, ig.Graph]:
     output_dir.mkdir(parents=True, exist_ok=True)
     cropped = crop_graph(graph, crop, graph_label=graph_label)
     output_path = output_dir / _patch_filename(prefix, crop, ".graphml")
     cropped.write_graphml(str(output_path))
+    return output_path, cropped
+
+
+def rasterize_graph_patch(graph: ig.Graph, crop: ComponentCrop) -> np.ndarray:
+    """Rasterize a cropped Laplacian graph into the buffered patch space."""
+    component_start = _bbox_start(crop.bbox)
+    positions = [
+        _load_json_point(vertex["voxel_pos"], label=f"node {vertex.index} voxel_pos") - component_start
+        for vertex in graph.vs
+    ]
+    geometric_graph = GeometricGraph(nodes_pos=positions, edges=graph.get_edgelist())
+    component_skeleton = rasterize_graph_26conn(geometric_graph, _bbox_shape(crop.bbox))
+
+    patch = np.zeros(_bbox_shape(crop.buffered_bbox), dtype=np.uint8)
+    insertion = tuple(
+        slice(
+            int(component_axis.start or 0) - int(buffered_axis.start or 0),
+            int(component_axis.stop or 0) - int(buffered_axis.start or 0),
+        )
+        for component_axis, buffered_axis in zip(crop.bbox, crop.buffered_bbox, strict=True)
+    )
+    patch[insertion] = component_skeleton
+    return patch
+
+
+def write_rasterized_graph_patch(
+    graph: ig.Graph,
+    foreground: LoadedNifti,
+    crop: ComponentCrop,
+    output_dir: Path,
+    prefix: str,
+) -> Path:
+    """Write one graph patch rasterized with the Laplacian backend rule."""
+    output_path = output_dir / _patch_filename(prefix, crop, ".nii.gz")
+    write_nifti_patch(
+        foreground,
+        rasterize_graph_patch(graph, crop).astype(foreground.data.dtype, copy=False),
+        crop.buffered_bbox,
+        output_path,
+    )
     return output_path
 
 
@@ -439,6 +497,11 @@ def main() -> int:
 
     foreground_output_dir = ensure_output_dir(args.nif_path, label="--nif-path")
     graph_output_dir = ensure_output_dir(args.grapa_path, label="--grapa-path")
+    skeleton_output_dir = (
+        ensure_output_dir(args.skel_path, label="--skel-path")
+        if args.rasterization
+        else None
+    )
 
     optional_niftis: list[tuple[str, LoadedNifti, Path]] = []
     if args.input_img:
@@ -446,11 +509,6 @@ def main() -> int:
         validate_matching_shape(image, foreground, label="--input-img")
         image_output_dir = ensure_output_dir(args.img_path, label="--img-path")
         optional_niftis.append(("image", image, image_output_dir))
-    if args.input_skel:
-        skeleton = load_nifti(args.input_skel, label="--input-skel")
-        validate_matching_shape(skeleton, foreground, label="--input-skel")
-        skeleton_output_dir = ensure_output_dir(args.skel_path, label="--skel-path")
-        optional_niftis.append(("skeleton", skeleton, skeleton_output_dir))
 
     optional_graphs: list[tuple[str, ig.Graph, str]] = [("graph", graph, "--input-graph")]
     if args.input_graph2:
@@ -460,21 +518,43 @@ def main() -> int:
     foreground_outputs = []
     raw_nifti_outputs = []
     graph_outputs = []
+    rasterized_graph_outputs = []
     for crop in crops:
         foreground_outputs.append(_write_foreground_patch(foreground, labeled, crop, foreground_output_dir))
         for prefix, source, output_dir in optional_niftis:
             raw_nifti_outputs.append(_write_raw_nifti_patch(source, crop, output_dir, prefix))
         for prefix, source_graph, graph_label in optional_graphs:
-            graph_outputs.append(write_graph_patch(source_graph, crop, graph_output_dir, prefix, graph_label=graph_label))
+            graph_output, cropped_graph = write_graph_patch(
+                source_graph,
+                crop,
+                graph_output_dir,
+                prefix,
+                graph_label=graph_label,
+            )
+            graph_outputs.append(graph_output)
+            if skeleton_output_dir is not None:
+                rasterized_graph_outputs.append(
+                    write_rasterized_graph_patch(
+                        cropped_graph,
+                        foreground,
+                        crop,
+                        skeleton_output_dir,
+                        prefix,
+                    )
+                )
 
     print(f"foreground_patches_written={len(foreground_outputs)}")
     if optional_niftis:
         print(f"optional_nifti_patches_written={len(raw_nifti_outputs)}")
     print(f"graph_patches_written={len(graph_outputs)}")
+    if skeleton_output_dir is not None:
+        print(f"rasterized_graph_patches_written={len(rasterized_graph_outputs)}")
     print(f"foreground_output_dir={foreground_output_dir}")
     for prefix, _, output_dir in optional_niftis:
         print(f"{prefix}_output_dir={output_dir}")
     print(f"graph_output_dir={graph_output_dir}")
+    if skeleton_output_dir is not None:
+        print(f"skeleton_output_dir={skeleton_output_dir}")
     return 0
 
 
