@@ -1,5 +1,51 @@
 # Development Log
 
+## 2026-07-29 15:50 AEST
+
+### Add local vessel-node PCA report
+
+1. Summary of what changed
+- Added `scripts/run_localPCA.sh` for local PCA of a quoted GraphML node list.
+- Added separate world-coordinate and voxel-coordinate scatter matrices and
+  descending eigendecomposition reports.
+- Added input validation and non-fatal degeneracy warnings.
+- Documented the script interface and numerical convention.
+
+2. Files added or modified
+- Added `scripts/run_localPCA.sh` and `scripts/run_local_pca.py`.
+- Added `tests/test_run_local_pca.py`.
+- Modified `scripts/README.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the shell entrypoint thin and placed GraphML parsing and numerical work
+  in a testable Python helper.
+- Used `C = sum((x - mean) (x - mean)^T)` directly, without division by `N` or
+  `N-1`.
+- Used `numpy.linalg.eigh` for the symmetric scatter matrix and reversed its
+  ascending output to report the largest eigenvalue first.
+
+4. Assumptions
+- World coordinates are stored as node attributes `X`, `Y`, and `Z`.
+- Voxel coordinates are stored as a three-value JSON array in `voxel_pos`.
+- Selected nodes do not need to form a connected subgraph.
+
+5. Limitations
+- Raw `numpy.linalg.eigh` eigenvectors are already unit length, so raw and
+  explicitly normalized vectors normally match.
+- Eigenvector signs are arbitrary and are not made deterministic.
+
+6. Tests run
+- `bash -n scripts/run_localPCA.sh`
+- `python -m py_compile scripts/run_local_pca.py tests/test_run_local_pca.py`
+- `python -m pytest -q tests/test_run_local_pca.py` (`5 passed`)
+- `python -m pytest -q` (`28 passed`)
+- Reference-data smoke run with `component_0001_my_0729.graphml` and nodes
+  `[n190, n191, n248]`.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
 ## 2026-07-27 19:59 AEST
 
 ### Improve graphviz overlay filename visibility

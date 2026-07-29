@@ -126,6 +126,37 @@ ambiguous matches, duplicate foreground stems, and failed feature commands halt
 the batch immediately with a nonzero exit status. Missing output directories
 are created automatically; existing output CSVs may be replaced.
 
+## `run_localPCA.sh`
+
+Computes local principal components for a selected cluster of GraphML vessel
+nodes. World coordinates (`X`, `Y`, `Z`) and voxel coordinates (`voxel_pos`)
+are processed and reported separately.
+
+```bash
+./scripts/run_localPCA.sh \
+  --input ./test_data/exvivo/July/oof/stef_out/component_0001_my_0729.graphml \
+  --node_cluster '[n190, n191, n248]'
+```
+
+Required:
+
+- `--input`, `-i`: readable, valid, non-empty `.graphml` vessel graph.
+- `--node_cluster`, `-c`: one quoted bracketed list containing at least three
+  unique node IDs. Every requested ID must occur exactly once in the graph.
+
+For each coordinate system, the script centers the selected points and builds
+the unnormalised scatter matrix
+`C = sum((x - mean) (x - mean)^T)`. It does not divide `C` by `N` or `N-1`.
+The report includes the centroid, matrix, eigenvalues in descending order, each
+raw eigensolver eigenvector, and its normalized unit vector. NumPy's symmetric
+eigensolver normally returns unit vectors already, so the raw and normalized
+vectors generally match. Eigenvector signs are arbitrary.
+
+Collinear or coplanar point clusters produce a warning but are still processed.
+Effectively repeated eigenvalues also produce a warning because their
+corresponding principal directions are underdetermined. Connectivity among the
+selected nodes is not required.
+
 ## `run_eval.sh`
 
 Batch-evaluates predicted skeleton NIfTI files against reference skeletons.
