@@ -1,18 +1,58 @@
 # Development Log
 
+## 2026-07-29 16:59 AEST
+
+### Report local PCA eigenvalue ratios
+
+1. Summary of what changed
+- Added `lambda_1/lambda_2`, `lambda_2/lambda_3`, and
+  `lambda_1/lambda_3` to both coordinate-system reports.
+- Reported a ratio as `inf` when its denominator is zero or numerically near
+  zero.
+- Updated references after the shell entrypoint was renamed to
+  `run_local_pca.sh`.
+
+2. Files added or modified
+- Modified `scripts/run_local_pca.py`.
+- Modified `tests/test_run_local_pca.py`.
+- Modified `scripts/README.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused the PCA report's scale-relative numerical-rank tolerance to identify
+  effectively zero ratio denominators.
+
+4. Assumptions
+- `lambda_1`, `lambda_2`, and `lambda_3` refer to eigenvalues in descending
+  order.
+
+5. Limitations
+- Very small nonzero denominator eigenvalues within the numerical tolerance
+  are intentionally represented as `inf`.
+
+6. Tests run
+- `bash -n scripts/run_local_pca.sh`
+- `python -m py_compile scripts/run_local_pca.py tests/test_run_local_pca.py`
+- `python -m pytest -q` (`28 passed`)
+- Reference-data smoke run confirming finite `lambda_1/lambda_2` and `inf`
+  for ratios divided by the numerically zero `lambda_3`.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
 ## 2026-07-29 15:50 AEST
 
 ### Add local vessel-node PCA report
 
 1. Summary of what changed
-- Added `scripts/run_localPCA.sh` for local PCA of a quoted GraphML node list.
+- Added `scripts/run_local_pca.sh` for local PCA of a quoted GraphML node list.
 - Added separate world-coordinate and voxel-coordinate scatter matrices and
   descending eigendecomposition reports.
 - Added input validation and non-fatal degeneracy warnings.
 - Documented the script interface and numerical convention.
 
 2. Files added or modified
-- Added `scripts/run_localPCA.sh` and `scripts/run_local_pca.py`.
+- Added `scripts/run_local_pca.sh` and `scripts/run_local_pca.py`.
 - Added `tests/test_run_local_pca.py`.
 - Modified `scripts/README.md` and `docs/LOG.md`.
 
@@ -35,7 +75,7 @@
 - Eigenvector signs are arbitrary and are not made deterministic.
 
 6. Tests run
-- `bash -n scripts/run_localPCA.sh`
+- `bash -n scripts/run_local_pca.sh`
 - `python -m py_compile scripts/run_local_pca.py tests/test_run_local_pca.py`
 - `python -m pytest -q tests/test_run_local_pca.py` (`5 passed`)
 - `python -m pytest -q` (`28 passed`)

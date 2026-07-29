@@ -126,14 +126,14 @@ ambiguous matches, duplicate foreground stems, and failed feature commands halt
 the batch immediately with a nonzero exit status. Missing output directories
 are created automatically; existing output CSVs may be replaced.
 
-## `run_localPCA.sh`
+## `run_local_pca.sh`
 
 Computes local principal components for a selected cluster of GraphML vessel
 nodes. World coordinates (`X`, `Y`, `Z`) and voxel coordinates (`voxel_pos`)
 are processed and reported separately.
 
 ```bash
-./scripts/run_localPCA.sh \
+./scripts/run_local_pca.sh \
   --input ./test_data/exvivo/July/oof/stef_out/component_0001_my_0729.graphml \
   --node_cluster '[n190, n191, n248]'
 ```
@@ -150,7 +150,10 @@ the unnormalised scatter matrix
 The report includes the centroid, matrix, eigenvalues in descending order, each
 raw eigensolver eigenvector, and its normalized unit vector. NumPy's symmetric
 eigensolver normally returns unit vectors already, so the raw and normalized
-vectors generally match. Eigenvector signs are arbitrary.
+vectors generally match. It also reports `lambda_1/lambda_2`,
+`lambda_2/lambda_3`, and `lambda_1/lambda_3`. A ratio is reported as `inf` when
+its denominator is zero or numerically near zero. Eigenvector signs are
+arbitrary.
 
 Collinear or coplanar point clusters produce a warning but are still processed.
 Effectively repeated eigenvalues also produce a warning because their

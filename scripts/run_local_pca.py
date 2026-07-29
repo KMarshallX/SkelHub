@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
             "nodes using both world and voxel coordinates."
         ),
         epilog=(
-            "Example: run_localPCA.sh --input graph.graphml "
+            "Example: run_local_pca.sh --input graph.graphml "
             "--node_cluster '[n190, n191, n248]'"
         ),
     )
@@ -268,6 +268,18 @@ def _format_vector(values: np.ndarray) -> str:
     )
 
 
+def _format_ratio(
+    numerator: float,
+    denominator: float,
+    *,
+    zero_tolerance: float,
+) -> str:
+    """Format an eigenvalue ratio, using inf for a numerically zero denominator."""
+    if abs(denominator) <= zero_tolerance:
+        return "inf"
+    return f"{numerator / denominator:.12g}"
+
+
 def print_report(label: str, coordinate_names: str, points: np.ndarray) -> None:
     """Print one coordinate system's scatter matrix, warnings, and eigenpairs."""
     (
@@ -300,6 +312,19 @@ def print_report(label: str, coordinate_names: str, points: np.ndarray) -> None:
         print(
             "     Normalised eigenvector (unit vector): "
             f"{_format_vector(normalized_eigenvectors[:, index])}"
+        )
+
+    zero_tolerance = float(np.max(np.abs(eigenvalues))) * 1.0e-10
+    print("Eigenvalue ratios:")
+    for numerator_index, denominator_index in ((0, 1), (1, 2), (0, 2)):
+        ratio = _format_ratio(
+            float(eigenvalues[numerator_index]),
+            float(eigenvalues[denominator_index]),
+            zero_tolerance=zero_tolerance,
+        )
+        print(
+            f"  lambda_{numerator_index + 1}/lambda_{denominator_index + 1}: "
+            f"{ratio}"
         )
 
 
