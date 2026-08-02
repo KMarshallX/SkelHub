@@ -1,5 +1,61 @@
 # Development Log
 
+## 2026-08-02 18:00 AEST
+
+### Preserve continuous Laplacian graph-original edge paths
+
+1. Summary of what changed
+- Added `centerline_voxel_points` to every edge in Laplacian
+  `--graph_original` GraphML.
+- Stored unrounded, unclipped float samples along each straight source-to-target
+  segment, including both exact node positions.
+- Kept cleaned `--graph_output`, discrete `centerline_voxels`, and NIfTI
+  rasterization behavior unchanged.
+
+2. Files added or modified
+- Modified `skelhub/algorithms/laplacian/graphml.py` and
+  `skelhub/algorithms/laplacian/backend.py`.
+- Added local regression coverage in `tests/test_laplacian_graphml.py`; the
+  repository's existing test-ignore policy was not changed.
+- Modified `docs/algorithms.md`, `docs/postprocessing.md`,
+  `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Made continuous-path export an explicit writer option enabled only for
+  `graph_original`, because both Laplacian GraphML outputs share one writer.
+- Used straight per-edge geometry as the canonical contracted-graph
+  representation; quadratic Bezier interpolation remains a separate NIfTI
+  rasterization rule.
+- Sampled a non-degenerate edge with
+  `ceil(max(abs(end - start))) + 1` points and stored a zero-length edge as one
+  point.
+
+4. Assumptions
+- Edge order runs from the exported source node to the exported target node.
+- JSON float arrays provide adequate round-trip precision for GraphML edge
+  metadata.
+
+5. Limitations
+- `centerline_voxel_points` is voxel-space only and does not add world-space
+  edge samples.
+- Feature extraction continues to use discrete `centerline_voxels`.
+- The continuous straight path intentionally differs from the quadratic-Bezier
+  rule used around degree-2 nodes when rasterizing the skeleton NIfTI.
+
+6. Tests run
+- `python -m py_compile skelhub/algorithms/laplacian/graphml.py skelhub/algorithms/laplacian/backend.py tests/test_laplacian_graphml.py`
+- `python -m pytest -q tests/test_laplacian_graphml.py tests/test_crop_escaping_graph_patches.py`
+  (`8 passed`)
+- `python -m pytest -q` (`31 passed`)
+- CLI smoke run using `tests/fixtures/straight_tube.nii.gz` with both GraphML
+  outputs, confirming the new field is present only in `graph_original` and
+  preserves float endpoints after an igraph GraphML round trip.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Add affine-transformed `centerline_points` later only if world-space edge
+  paths become part of the shared GraphML contract.
+
 ## 2026-07-29 16:59 AEST
 
 ### Report local PCA eigenvalue ratios

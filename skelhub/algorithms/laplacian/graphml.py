@@ -19,8 +19,33 @@ def _json_value(value) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
-def write_laplacian_graphml(graph, output_path: str | Path, affine: np.ndarray, shape: tuple[int, int, int]) -> ig.Graph:
-    """Write a cleaned Laplacian graph with world coordinates and voxel metadata."""
+def _continuous_edge_points(start, end) -> list[tuple[float, float, float]]:
+    """Sample a straight edge in voxel space without rounding or clipping."""
+    start_point = np.asarray(start, dtype=float)
+    end_point = np.asarray(end, dtype=float)
+    delta = end_point - start_point
+    span = float(np.max(np.abs(delta)))
+    if span == 0.0:
+        return [tuple(float(value) for value in start_point)]
+
+    steps = max(1, int(np.ceil(span)))
+    points = [
+        start_point + delta * (step / steps)
+        for step in range(steps + 1)
+    ]
+    points[-1] = end_point
+    return [tuple(float(value) for value in point) for point in points]
+
+
+def write_laplacian_graphml(
+    graph,
+    output_path: str | Path,
+    affine: np.ndarray,
+    shape: tuple[int, int, int],
+    *,
+    include_centerline_voxel_points: bool = False,
+) -> ig.Graph:
+    """Write a Laplacian graph with world coordinates and voxel metadata."""
     if graph.number_of_nodes() == 0:
         raise ValueError("Cannot write GraphML for an empty Laplacian graph.")
 
@@ -51,6 +76,9 @@ def write_laplacian_graphml(graph, output_path: str | Path, affine: np.ndarray, 
         output.add_edges(edges)
         for edge_id, ((u, v), edge) in enumerate(zip(graph.GetEdges(), output.es)):
             voxels = _edge_voxels(graph.nodes[u]["pos"], graph.nodes[v]["pos"], shape)
+            if include_centerline_voxel_points:
+                points = _continuous_edge_points(graph.nodes[u]["pos"], graph.nodes[v]["pos"])
+                edge["centerline_voxel_points"] = _json_value(points)
             edge["laplacian_edge_id"] = int(edge_id)
             edge["source_laplacian_id"] = int(u)
             edge["target_laplacian_id"] = int(v)

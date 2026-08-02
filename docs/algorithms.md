@@ -49,7 +49,7 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 ### Parameters
 
 - `--graph_output PATH`: write the cleaned graph after `post_node_cleaning()`. Default: `None`. Supplying a path creates an aggregate GraphML for all processed components; omitting it skips this export.
-- `--graph_original PATH`: write the refined graph before `post_node_cleaning()`. Default: `None`. Supplying a path creates the aggregate GraphML used for rasterizing the standard NIfTI output; omitting it skips this export.
+- `--graph_original PATH`: write the refined graph before `post_node_cleaning()`. Default: `None`. Supplying a path creates the aggregate GraphML used for rasterizing the standard NIfTI output; omitting it skips this export. Each exported edge includes `centerline_voxel_points`, a JSON array of unrounded, unclipped float voxel coordinates sampled along the straight source-to-target segment. The sampling includes both exact node positions and uses `ceil(max(abs(end - start))) + 1` points for a non-degenerate edge; a zero-length edge stores one point.
 - `--speed_param FLOAT`: contraction anchoring weight for each node's current position. Default: `0.05`. Larger values resist movement and can make contraction more conservative or slower; smaller values allow stronger movement toward the graph constraints and can collapse geometry more aggressively.
 - `--dist_param FLOAT`: weight for distance-normalized neighbor smoothing in the Laplacian system. Default: `0.5`. Larger values increase neighbor-position smoothing and straightening; smaller values reduce this smoothing influence.
 - `--med_param FLOAT`: weight for medial/radius-guided neighbor attraction. Default: `0.5`. Larger values make local radius information more influential during contraction; smaller values make contraction depend less on the distance-transform radius field.
@@ -70,6 +70,7 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 - Foreground input is decomposed into 26-connected components before Laplacian contraction; each component is processed independently and merged into the final outputs.
 - The standard NIfTI output is rasterized from `graph_original`.
 - Degree-2 chains use quadratic Bezier interpolation before 26-connected voxel path filling.
+- The `graph_original` GraphML keeps straight continuous edge samples in `centerline_voxel_points`. This field describes the graph's native per-edge geometry; it does not replace the separate quadratic-Bezier rule used to rasterize the NIfTI output.
 - If one component reaches the Laplacian contraction iteration cap, SkelHub warns and continues with that component's latest contracted graph.
 - `--graph_output` writes one aggregate cleaned graph; `--graph_original` writes one aggregate refined graph used for rasterization.
 

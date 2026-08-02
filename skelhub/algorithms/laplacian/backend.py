@@ -196,7 +196,13 @@ class LaplacianBackend:
 
         graph_original_path = None
         if config.graph_original and original_graph is not None:
-            write_laplacian_graphml(original_graph, config.graph_original, volume.affine, binary.shape)
+            write_laplacian_graphml(
+                original_graph,
+                config.graph_original,
+                volume.affine,
+                binary.shape,
+                include_centerline_voxel_points=True,
+            )
             graph_original_path = str(config.graph_original)
 
         output_voxels = int(np.count_nonzero(skeleton))
