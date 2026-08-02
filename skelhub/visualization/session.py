@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ._graph_viewer_impl import (
     GraphViewerSession,
+    MarqueeText,
     ViewState,
     _overlay_appearance_target,
     _overlay_graph_layer_flags,
@@ -14,6 +15,7 @@ from ._graph_viewer_impl import (
 
 __all__ = [
     "GraphViewerSession",
+    "MarqueeText",
     "ViewState",
     "_overlay_appearance_target",
     "_overlay_graph_layer_flags",

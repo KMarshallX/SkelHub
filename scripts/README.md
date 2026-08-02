@@ -17,7 +17,8 @@ shapes.
 ```bash
 ./scripts/checker.sh \
   --foreground ./foreground.nii.gz \
-  --skeleton ./skeleton.nii.gz
+  --skeleton ./skeleton.nii.gz \
+  --connectivity 26
 ```
 
 Required:
@@ -25,9 +26,16 @@ Required:
 - `--foreground`, `-f`: foreground NIfTI volume.
 - `--skeleton`, `-s`: skeleton NIfTI volume.
 
-The script prints only `Yes` or `No` to stdout. If either input contains values
-other than zero and one, its sorted unique non-binary values are reported to
-stderr and all nonzero values are still included in the confinement check.
+Optional:
+
+- `--connectivity`, `-c`: connectivity used to count foreground and skeleton
+  components; one of `6`, `18`, or `26` (default: `26`).
+
+The script prints whether all skeleton voxels are within the foreground,
+followed by the connected-component count for each volume. If either input
+contains values other than zero and one, its sorted unique non-binary values
+are reported to stderr and all nonzero values are still included in both the
+confinement check and component count.
 
 ## `run_algo.sh`
 
@@ -118,6 +126,40 @@ ambiguous matches, duplicate foreground stems, and failed feature commands halt
 the batch immediately with a nonzero exit status. Missing output directories
 are created automatically; existing output CSVs may be replaced.
 
+## `run_local_pca.sh`
+
+Computes local principal components for a selected cluster of GraphML vessel
+nodes. World coordinates (`X`, `Y`, `Z`) and voxel coordinates (`voxel_pos`)
+are processed and reported separately.
+
+```bash
+./scripts/run_local_pca.sh \
+  --input ./test_data/exvivo/July/oof/stef_out/component_0001_my_0729.graphml \
+  --node_cluster '[n190, n191, n248]'
+```
+
+Required:
+
+- `--input`, `-i`: readable, valid, non-empty `.graphml` vessel graph.
+- `--node_cluster`, `-c`: one quoted bracketed list containing at least three
+  unique node IDs. Every requested ID must occur exactly once in the graph.
+
+For each coordinate system, the script centers the selected points and builds
+the unnormalised scatter matrix
+`C = sum((x - mean) (x - mean)^T)`. It does not divide `C` by `N` or `N-1`.
+The report includes the centroid, matrix, eigenvalues in descending order, each
+raw eigensolver eigenvector, and its normalized unit vector. NumPy's symmetric
+eigensolver normally returns unit vectors already, so the raw and normalized
+vectors generally match. It also reports `lambda_1/lambda_2`,
+`lambda_2/lambda_3`, and `lambda_1/lambda_3`. A ratio is reported as `inf` when
+its denominator is zero or numerically near zero. Eigenvector signs are
+arbitrary.
+
+Collinear or coplanar point clusters produce a warning but are still processed.
+Effectively repeated eigenvalues also produce a warning because their
+corresponding principal directions are underdetermined. Connectivity among the
+selected nodes is not required.
+
 ## `run_eval.sh`
 
 Batch-evaluates predicted skeleton NIfTI files against reference skeletons.
@@ -148,15 +190,17 @@ Useful options:
 
 Finds GraphML nodes whose rounded `voxel_pos` falls outside a foreground NIfTI.
 If escaping nodes are found, it writes one component-specific foreground patch
-and one cropped GraphML patch per affected connected component. Optional image
-and skeleton inputs are cropped to separate output directories.
+and one cropped GraphML patch per affected connected component. An optional
+image input can be cropped to a separate output directory.
 
 ```bash
 ./scripts/crop_escaping_graph_patches.sh \
   --input-fore ./test_data/exvivo/foreground.nii.gz \
   --input-graph ./test_outputs/exvivo/original.graphml \
   --nif-path ./test_data/exvivo/foreground_patches \
-  --grapa-path ./test_outputs/exvivo/patch_graphs
+  --grapa-path ./test_outputs/exvivo/patch_graphs \
+  --rasterization \
+  --skel-path ./test_outputs/exvivo/rasterized_patches
 ```
 
 Required:
@@ -170,17 +214,29 @@ Optional:
 
 - `--input-img`: crop a matching original/intensity NIfTI by the same boxes.
 - `--img-path`: output directory for cropped image NIfTI patches; required with `--input-img`.
-- `--input-skel`: crop a matching skeleton NIfTI by the same boxes.
-- `--skel-path`: output directory for cropped skeleton NIfTI patches; required with `--input-skel`.
 - `--input-graph2`: crop a second GraphML by the same boxes.
+- `--rasterization`: rasterize every cropped GraphML patch using the Laplacian
+  backend's standard NIfTI-output rule.
+- `--skel-path`: output directory for rasterized graph NIfTI patches; required
+  with `--rasterization` and invalid without it.
 
 The wrapper requires an active conda environment with `igraph`, `nibabel`,
-`numpy`, and `scipy`. Missing packages are listed before the helper exits.
+`networkx`, `numpy`, `scipy`, and SkelHub. Missing packages are listed before
+the helper exits.
 
-If `--nif-path`, `--img-path`, `--skel-path`, or `--grapa-path` does not exist,
+If `--nif-path`, `--img-path`, `--grapa-path`, or an enabled `--skel-path`
+does not exist,
 the helper prints a yellow terminal warning and creates it. If creation fails,
 the process fails.
 
 Foreground patches are masked to contain only the affected component. Optional
-image and skeleton patches are raw bbox crops. NIfTI patch affines include the
-crop offset, while cropped GraphML coordinates remain in full-volume space.
+image patches are raw bbox crops. NIfTI patch affines include the crop offset,
+while cropped GraphML coordinates remain in full-volume space.
+
+Rasterization follows `skelhub run --algorithm laplacian`: nodes and edges are
+rasterized from graph `voxel_pos` values, degree-2 chains use quadratic Bezier
+interpolation, and sampled paths are filled with 26-connected voxels. The
+component is rasterized within its original foreground bbox and embedded in the
+buffered patch. Outputs use the same prefix as their GraphML source:
+`graph_component_label_....nii.gz` for `--input-graph` and
+`graph2_component_label_....nii.gz` for `--input-graph2`.

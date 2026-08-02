@@ -1,5 +1,276 @@
 # Development Log
 
+## 2026-07-29 16:59 AEST
+
+### Report local PCA eigenvalue ratios
+
+1. Summary of what changed
+- Added `lambda_1/lambda_2`, `lambda_2/lambda_3`, and
+  `lambda_1/lambda_3` to both coordinate-system reports.
+- Reported a ratio as `inf` when its denominator is zero or numerically near
+  zero.
+- Updated references after the shell entrypoint was renamed to
+  `run_local_pca.sh`.
+
+2. Files added or modified
+- Modified `scripts/run_local_pca.py`.
+- Modified `tests/test_run_local_pca.py`.
+- Modified `scripts/README.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused the PCA report's scale-relative numerical-rank tolerance to identify
+  effectively zero ratio denominators.
+
+4. Assumptions
+- `lambda_1`, `lambda_2`, and `lambda_3` refer to eigenvalues in descending
+  order.
+
+5. Limitations
+- Very small nonzero denominator eigenvalues within the numerical tolerance
+  are intentionally represented as `inf`.
+
+6. Tests run
+- `bash -n scripts/run_local_pca.sh`
+- `python -m py_compile scripts/run_local_pca.py tests/test_run_local_pca.py`
+- `python -m pytest -q` (`28 passed`)
+- Reference-data smoke run confirming finite `lambda_1/lambda_2` and `inf`
+  for ratios divided by the numerically zero `lambda_3`.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
+## 2026-07-29 15:50 AEST
+
+### Add local vessel-node PCA report
+
+1. Summary of what changed
+- Added `scripts/run_local_pca.sh` for local PCA of a quoted GraphML node list.
+- Added separate world-coordinate and voxel-coordinate scatter matrices and
+  descending eigendecomposition reports.
+- Added input validation and non-fatal degeneracy warnings.
+- Documented the script interface and numerical convention.
+
+2. Files added or modified
+- Added `scripts/run_local_pca.sh` and `scripts/run_local_pca.py`.
+- Added `tests/test_run_local_pca.py`.
+- Modified `scripts/README.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept the shell entrypoint thin and placed GraphML parsing and numerical work
+  in a testable Python helper.
+- Used `C = sum((x - mean) (x - mean)^T)` directly, without division by `N` or
+  `N-1`.
+- Used `numpy.linalg.eigh` for the symmetric scatter matrix and reversed its
+  ascending output to report the largest eigenvalue first.
+
+4. Assumptions
+- World coordinates are stored as node attributes `X`, `Y`, and `Z`.
+- Voxel coordinates are stored as a three-value JSON array in `voxel_pos`.
+- Selected nodes do not need to form a connected subgraph.
+
+5. Limitations
+- Raw `numpy.linalg.eigh` eigenvectors are already unit length, so raw and
+  explicitly normalized vectors normally match.
+- Eigenvector signs are arbitrary and are not made deterministic.
+
+6. Tests run
+- `bash -n scripts/run_local_pca.sh`
+- `python -m py_compile scripts/run_local_pca.py tests/test_run_local_pca.py`
+- `python -m pytest -q tests/test_run_local_pca.py` (`5 passed`)
+- `python -m pytest -q` (`28 passed`)
+- Reference-data smoke run with `component_0001_my_0729.graphml` and nodes
+  `[n190, n191, n248]`.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
+## 2026-07-27 19:59 AEST
+
+### Improve graphviz overlay filename visibility
+
+1. Summary of what changed
+- Split the overlay top bar into separate Base and Overlay filename lines.
+- Added continuous scrolling for overflowing top-bar filenames.
+- Added hover-only scrolling for overflowing filenames in open file dropdown
+  rows.
+- Expanded filename text to use the available width of the View Layout
+  selectors and their matching menu rows.
+- Vertically centered both overlay-header text rows inside the bordered top
+  bar.
+
+2. Files added or modified
+- Modified `.gitignore`.
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Modified the visualization facade modules for constants, layout, session,
+  and interaction helpers.
+- Added `tests/test_graphviz_filename_marquee.py`.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Updated existing 2D text actors from one shared repeating UI timer so
+  filename motion does not rebuild visualization geometry or the full Tools
+  panel.
+- Used VTK vertical text justification for header alignment and separated the
+  dropdown arrow from the filename so it does not reduce the visible label.
+- Kept marquee state in the viewer session and confined all behavior to the
+  visualization subsystem.
+
+4. Assumptions
+- “Rolling” means cyclic leftward marquee motion.
+- Dropdown animation applies to overflowing rows in an open file-selection
+  menu; closed selector fields remain ellipsized.
+
+5. Limitations
+- Overflow detection uses the viewer's existing conservative character-width
+  estimate rather than font-specific pixel measurement.
+- Desktop visual review is still recommended on the target VTK backend.
+
+6. Tests run
+- `python -m pytest -q` (`23 passed`)
+- `python -m py_compile skelhub/visualization/_graph_viewer_impl.py
+  skelhub/visualization/constants.py skelhub/visualization/layout.py
+  skelhub/visualization/session.py skelhub/visualization/interaction.py
+  skelhub/visualization/controls.py`
+- `git diff --check`
+- Off-screen VTK smoke renders for the two-line overlay header and widened
+  open Base-file menu, including vertical-boundary inspection.
+
+7. Remaining risks or recommended next steps
+- Confirm the 180 ms scroll speed feels comfortable on the target display.
+
+## 2026-07-27 19:34 AEST
+
+### Report connectivity-aware component counts
+
+1. Summary of what changed
+- Added `--connectivity` / `-c` to `scripts/checker.sh`, accepting 6, 18, or 26
+  and defaulting to 26.
+- Added foreground and skeleton connected-component counts to the checker
+  report using the selected connectivity.
+- Expanded checker regression coverage and usage documentation.
+
+2. Files added or modified
+- Modified `.gitignore` to include the checker regression test.
+- Modified `scripts/checker.sh`.
+- Modified `tests/test_checker.py`.
+- Modified `scripts/README.md`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Used SciPy's 3D binary neighborhood structures for standard 6-, 18-, and
+  26-connectivity and applied the same structure to both volumes.
+
+4. Assumptions
+- Checker inputs are 3D volumes because the supported connectivity choices are
+  defined for 3D voxel neighborhoods.
+
+5. Limitations
+- The checker does not resample volumes or reconcile differing spatial
+  metadata.
+
+6. Tests run
+- `bash -n scripts/checker.sh`
+- `python -m pytest -q tests/test_checker.py` (`7 passed`)
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- None identified.
+
+## 2026-07-27 15:19 AEST
+
+### Rasterize escaping Laplacian graph patches
+
+1. Summary of what changed
+- Added `--rasterization` to `crop_escaping_graph_patches.sh`.
+- Reintroduced `--skel-path` only as the required destination for enabled
+  graph-patch rasterization; `--input-skel` remains removed.
+- Rasterized both primary and optional secondary GraphML patches with the same
+  graph rule used for Laplacian `--output`.
+- Added parser and two-graph end-to-end regression coverage.
+
+2. Files added or modified
+- Modified `.gitignore`.
+- Modified `scripts/crop_escaping_graph_patches.sh`.
+- Modified `scripts/crop_escaping_graph_patches.py`.
+- Modified `scripts/README.md`.
+- Modified `tests/test_crop_escaping_graph_patches.py`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused `GeometricGraph` and `rasterize_graph_26conn` from the Laplacian
+  backend instead of duplicating its interpolation and connectivity rules.
+- Rasterized in the original component bbox, matching Laplacian backend
+  clipping, then embedded the result in the buffered patch space.
+- Used `graph_...nii.gz` and `graph2_...nii.gz` prefixes to keep rasterized
+  outputs paired unambiguously with their GraphML patches.
+
+4. Assumptions
+- Input GraphML files use the Laplacian schema with JSON `voxel_pos` and
+  positive integer `component_label` vertex attributes.
+- `--input-graph2`, when provided, should be rasterized alongside
+  `--input-graph`.
+
+5. Limitations
+- Rasterization is specifically the Laplacian backend rule; arbitrary GraphML
+  schemas are not supported.
+- Runs without escaping primary-graph nodes still return before creating any
+  patch output directories.
+
+6. Tests run
+- `pytest -q tests/test_crop_escaping_graph_patches.py`
+- Real-data equivalence check against the component-label-1 crop of the
+  Laplacian `--output`.
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- Wrapper `--help` smoke test.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- External callers that enable `--rasterization` must provide `--skel-path`.
+
+## 2026-07-27 15:06 AEST
+
+### Remove skeleton cropping from escaping-graph patches
+
+1. Summary of what changed
+- Removed skeleton NIfTI patch cropping from
+  `scripts/crop_escaping_graph_patches.py`.
+- Removed the `--input-skel` and `--skel-path` command-line options.
+- Updated the script documentation and added regression coverage for the
+  removed options.
+
+2. Files added or modified
+- Modified `.gitignore` to include the new focused regression test.
+- Modified `scripts/crop_escaping_graph_patches.py`.
+- Modified `scripts/README.md`.
+- Added `tests/test_crop_escaping_graph_patches.py`.
+- Modified `docs/LOG.md`.
+
+3. Architecture decisions made
+- Retained raw bounding-box NIfTI cropping only for the optional intensity
+  image workflow.
+- Removed the old options instead of keeping deprecated aliases, so unsupported
+  skeleton-cropping requests fail during argument parsing.
+
+4. Assumptions
+- Existing callers using `--input-skel` or `--skel-path` should be updated
+  rather than supported through a compatibility period.
+
+5. Limitations
+- The helper does not produce any skeleton patch output.
+
+6. Tests run
+- `pytest -q tests/test_crop_escaping_graph_patches.py`
+- `bash -n scripts/crop_escaping_graph_patches.sh`
+- `python -m py_compile scripts/crop_escaping_graph_patches.py`
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- External scripts outside this repository that pass either removed option must
+  remove those arguments.
+
 ## 2026-07-22 22:38 AEST
 
 ### Split crop patch output directories

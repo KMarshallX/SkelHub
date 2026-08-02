@@ -83,7 +83,7 @@ The panel starts hidden.
 
 The tools panel can:
 
-- switch between `Single View` and `Double View` layout modes
+- switch between `Single View`, `Double View`, and `Overlay View` layout modes
 - enable or disable world-coordinate camera synchronization across loaded files
 - enable GraphML Interactive mode and inspect selected node `X`/`Y`/`Z`, node id, and node degree
 - import more files
@@ -103,6 +103,15 @@ or any loaded file. Clicking inside a viewport makes that viewport active,
 and the Tools panel edits only that active viewport. `Import` loads a file
 into the global loaded-file list and assigns it to the active viewport;
 `Close` clears only the active viewport assignment in double-view mode.
+
+`Overlay View` draws a Base file and an Overlay file in the same viewport.
+Its top bar displays the two filenames on separate full-width lines. A
+filename that is wider than its line scrolls continuously so the complete
+name remains discoverable. The Tools-panel Base and Overlay selectors reserve
+more width for their filenames, matching the usable width of the open menu
+rows. An overflowing filename in an open file menu scrolls only while that
+menu row is hovered. Both top-bar rows are vertically centered within the
+header boundary.
 
 For GraphML rendering, Node and Edge control on-screen point size and line
 width without rebuilding graph geometry. Slider edits commit when the slider
