@@ -1,5 +1,68 @@
 # Development Log
 
+## 2026-08-04 17:41 AEST
+
+### Preserve degree-2 nodes as merged centreline points
+
+1. Summary of what changed
+- Added `scripts/protograph_cleaner.sh` with required `--input/-i` and
+  `--output/-o` arguments plus optional `--verbose/-v` node progress.
+- Contracted maximal degree-2 chains while concatenating their existing float
+  and discrete centreline paths, so every removed node position remains in the
+  merged edge geometry.
+- Added an interactive overwrite prompt and atomic output replacement.
+- Preserved distinct parallel paths rather than collapsing edges that share
+  retained endpoints.
+
+2. Files added or modified
+- Added `skelhub/postprocessing/protograph_cleaner.py`,
+  `scripts/protograph_cleaner.sh`, and local regression coverage in
+  `tests/test_protograph_cleaner.py`; the repository's existing test-ignore
+  policy was not changed.
+- Modified `README.md`, `scripts/README.md`, `docs/architecture.md`,
+  `docs/postprocessing.md`, `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept GraphML transformation and validation in the postprocessing layer and
+  made the requested Bash script a thin active-environment launcher.
+- Used igraph's multigraph support so two vessel paths with the same endpoints
+  remain distinct.
+- Regenerated merged edge IDs and component-local edge indices while retaining
+  unchanged endpoint-node and consistent component metadata.
+- Wrote to a temporary sibling file before replacing the destination, so a
+  cleaning or GraphML-write failure cannot leave a partial requested output.
+
+4. Assumptions
+- `voxel_pos` is the node position contract and `centerline_voxel_points`
+  contains an ordered JSON path whose endpoints match its incident nodes.
+- If present, `centerline_voxels` is an ordered integer path with the same
+  endpoint convention.
+- Removed-node radius and identifier values are not required as point metadata;
+  only their positions are retained, as requested.
+
+5. Limitations
+- Input must be undirected and contain at least one degree-2 node.
+- A closed component made entirely from degree-2 nodes retains one anchor and
+  becomes a self-loop because GraphML cannot store an edge without a node.
+- Downstream tools must support GraphML parallel edges to retain every path.
+- Loading and writing use igraph's in-memory GraphML representation.
+
+6. Tests run
+- `bash -n scripts/protograph_cleaner.sh`
+- `python -m py_compile skelhub/postprocessing/protograph_cleaner.py tests/test_protograph_cleaner.py`
+- `python -m pytest -q tests/test_protograph_cleaner.py` (`5 passed`)
+- `python -m pytest -q` (`36 passed`)
+- Full-file smoke run on
+  `test_data/exvivo/Aug/skel_vessyn_aug_protograph.graphml`, including GraphML
+  round-trip and centreline integrity checks.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Consumers that assume a simple graph should be checked before using cleaner
+  output containing parallel paths.
+- Add a unified `skelhub` CLI command later if this helper becomes a primary
+  postprocessing workflow rather than a focused script.
+
 ## 2026-08-02 18:00 AEST
 
 ### Preserve continuous Laplacian graph-original edge paths

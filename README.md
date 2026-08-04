@@ -112,7 +112,8 @@ SkelHub/
 │   ├── preprocessing/
 │   ├── postprocessing/
 │   │   ├── graphgen/
-│   │   └── feature/
+│   │   ├── feature/
+│   │   └── protograph_cleaner.py
 │   ├── visualization/
 │   └── datasets/
 ├── tests/
@@ -126,6 +127,9 @@ Key locations:
 - `skelhub.evaluation` contains the voxel-based evaluator.
 - `skelhub.postprocessing.graphgen` converts skeleton NIfTI volumes into GraphML.
 - `skelhub.postprocessing.feature` writes Voreen-style edge and node CSV features from vessel foreground, skeleton, and compatible GraphML inputs.
+- `skelhub.postprocessing.protograph_cleaner` contracts degree-2 GraphML nodes
+  into ordered centreline paths; `scripts/protograph_cleaner.sh` exposes the
+  workflow through the active Python environment.
 - `skelhub.visualization` powers `skelhub graphviz`.
 
 ## Structured Output
