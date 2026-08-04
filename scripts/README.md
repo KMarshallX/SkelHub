@@ -15,6 +15,12 @@ former node position remains as one interior point in the merged edge path,
 and separate paths between the same pair of retained nodes remain separate
 parallel edges.
 
+The precise `centerline_voxel_points` and node `voxel_pos` fields are the input
+geometry. Existing `centerline_voxels` are ignored because separated graphs may
+contain truncated or empty integer paths. Every output edge receives a newly
+generated, non-empty, 26-connected `centerline_voxels` path and an updated
+`num_centerline_voxels` value.
+
 ```bash
 ./scripts/protograph_cleaner.sh \
   --input ./test_data/exvivo/Aug/skel_vessyn_aug_protograph.graphml \

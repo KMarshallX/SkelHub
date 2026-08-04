@@ -97,14 +97,20 @@ skelhub graphgen -i skeleton.nii.gz -o vessel.graphml
   centreline point.
 - Preserve distinct paths that connect the same retained node pair as parallel
   GraphML edges.
-- Preserve `centerline_voxels` when supplied, regenerate centreline counts and
-  edge IDs, and retain component labels when they agree along the merged path.
+- Treat the precise `centerline_voxel_points` and node `voxel_pos` values as
+  authoritative. Existing `centerline_voxels` may be truncated or empty and
+  are not used as input geometry.
+- Regenerate non-empty, 26-connected `centerline_voxels`, centreline counts,
+  and edge IDs, and retain component labels when they agree along the merged
+  path.
 - For a closed component containing only degree-2 nodes, retain one anchor node
   and represent the complete centreline as a self-loop. GraphML cannot
   represent an edge without any endpoint node.
 
 Removed-node radius and ID values are intentionally not copied onto the merged
-edge. Their voxel-space positions are the retained point data.
+edge. Their voxel-space positions are the retained point data. Regenerated
+integer paths describe the GraphML geometry and are not checked against a
+separate NIfTI volume.
 
 ### Usage
 

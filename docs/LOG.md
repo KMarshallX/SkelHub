@@ -1,5 +1,55 @@
 # Development Log
 
+## 2026-08-04 23:07 AEST
+
+### Rebuild cleaner voxel paths from precise GraphML geometry
+
+1. Summary of what changed
+- Made node `voxel_pos` and edge `centerline_voxel_points` the authoritative
+  geometry for proto-graph cleaning.
+- Stopped validating or concatenating input `centerline_voxels`, allowing
+  separated GraphML with truncated or empty discrete paths to be cleaned.
+- Regenerated a non-empty, 26-connected integer path and updated
+  `num_centerline_voxels` for every output edge.
+
+2. Files added or modified
+- Modified `skelhub/postprocessing/protograph_cleaner.py`.
+- Extended local ignored coverage in `tests/test_protograph_cleaner.py`; the
+  existing `.gitignore` policy was not changed.
+- Modified `scripts/README.md`, `docs/postprocessing.md`,
+  `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept precise GraphML geometry authoritative because graph-separation tools
+  can insert boundary nodes while retaining only part of an old integer path.
+- Rebuilt discrete output from each fully merged precise polyline so downstream
+  GraphML readers still receive compatible integer path fields.
+- Filled rounded gaps locally with straight 26-connected steps without adding
+  a NIfTI dependency to this GraphML-only workflow.
+
+4. Assumptions
+- Every `centerline_voxel_points` path includes the exact positions of its two
+  incident nodes in either direction.
+- Regenerated integer paths should represent GraphML geometry; agreement with a
+  separate NIfTI is intentionally outside this cleaner's current scope.
+
+5. Limitations
+- The cleaner still rejects inconsistent precise endpoints because there is no
+  trustworthy geometry from which to repair them.
+- Regenerated integer voxels are rounded without volume-bound clipping because
+  the command does not receive an image shape.
+
+6. Tests run
+- `python -m py_compile skelhub/postprocessing/protograph_cleaner.py tests/test_protograph_cleaner.py`
+- `python -m pytest -q tests/test_protograph_cleaner.py` (`6 passed`)
+- `python -m pytest -q` (`37 passed`)
+- Full `inf_left.graphml` smoke run and output integrity audit.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Add optional NIfTI-aware validation later only if graph/image agreement
+  becomes part of this script's scope.
+
 ## 2026-08-04 17:41 AEST
 
 ### Preserve degree-2 nodes as merged centreline points

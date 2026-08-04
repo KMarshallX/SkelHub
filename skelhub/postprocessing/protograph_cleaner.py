@@ -43,8 +43,7 @@ def _load_json_path(
     value: object,
     *,
     label: str,
-    integer: bool,
-) -> list[tuple[float, float, float]] | list[tuple[int, int, int]]:
+) -> list[tuple[float, float, float]]:
     try:
         raw = json.loads(str(value))
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -56,11 +55,6 @@ def _load_json_path(
     if not np.isfinite(points).all():
         raise ValueError(f"{label} must contain only finite coordinates.")
 
-    if integer:
-        rounded = np.rint(points)
-        if not np.allclose(points, rounded, rtol=0.0, atol=1e-8):
-            raise ValueError(f"{label} must contain integer voxel coordinates.")
-        return [tuple(int(value) for value in point) for point in rounded]
     return [tuple(float(value) for value in point) for point in points]
 
 
@@ -91,18 +85,14 @@ def _oriented_path(
     start: int,
     end: int,
     positions: Sequence[np.ndarray],
-    *,
-    attribute: str,
-    integer: bool,
-) -> list[tuple[float, float, float]] | list[tuple[int, int, int]]:
+) -> list[tuple[float, float, float]]:
     edge = graph.es[edge_id]
     points = _load_json_path(
-        edge[attribute],
-        label=f"edge {edge_id} {attribute}",
-        integer=integer,
+        edge["centerline_voxel_points"],
+        label=f"edge {edge_id} centerline_voxel_points",
     )
-    expected_start = np.rint(positions[start]) if integer else positions[start]
-    expected_end = np.rint(positions[end]) if integer else positions[end]
+    expected_start = positions[start]
+    expected_end = positions[end]
     first = np.asarray(points[0], dtype=float)
     last = np.asarray(points[-1], dtype=float)
 
@@ -115,7 +105,7 @@ def _oriented_path(
     ):
         return list(reversed(points))
     raise ValueError(
-        f"Edge {edge_id} {attribute} endpoints do not match its incident node positions."
+        f"Edge {edge_id} centerline_voxel_points endpoints do not match its incident node positions."
     )
 
 
@@ -170,11 +160,8 @@ def _concatenate_chain_path(
     graph: ig.Graph,
     chain: _Chain,
     positions: Sequence[np.ndarray],
-    *,
-    attribute: str,
-    integer: bool,
-) -> list[tuple[float, float, float]] | list[tuple[int, int, int]]:
-    merged: list[tuple[float, float, float]] | list[tuple[int, int, int]] = []
+) -> list[tuple[float, float, float]]:
+    merged: list[tuple[float, float, float]] = []
     for path_index, edge_id in enumerate(chain.edges):
         points = _oriented_path(
             graph,
@@ -182,8 +169,6 @@ def _concatenate_chain_path(
             chain.nodes[path_index],
             chain.nodes[path_index + 1],
             positions,
-            attribute=attribute,
-            integer=integer,
         )
         if not merged:
             merged.extend(points)
@@ -192,6 +177,44 @@ def _concatenate_chain_path(
             raise ValueError(f"Edge paths do not meet within chain at node {chain.nodes[path_index]}.")
         merged.extend(points[1:])
     return merged
+
+
+def _rounded_segment(
+    start: Sequence[float],
+    end: Sequence[float],
+) -> list[tuple[int, int, int]]:
+    """Return a 26-connected integer line between two precise points."""
+    start_voxel = np.rint(np.asarray(start, dtype=float)).astype(int)
+    end_voxel = np.rint(np.asarray(end, dtype=float)).astype(int)
+    delta = end_voxel - start_voxel
+    steps = int(np.max(np.abs(delta)))
+    if steps == 0:
+        return [tuple(int(value) for value in start_voxel)]
+
+    points: list[tuple[int, int, int]] = []
+    for index in range(steps + 1):
+        point = np.rint(start_voxel + delta * (index / steps)).astype(int)
+        voxel = tuple(int(value) for value in point)
+        if not points or points[-1] != voxel:
+            points.append(voxel)
+    return points
+
+
+def _discrete_path_from_continuous(
+    points: Sequence[Sequence[float]],
+) -> list[tuple[int, int, int]]:
+    """Regenerate a 26-connected voxel path from authoritative float geometry."""
+    if len(points) == 1:
+        return _rounded_segment(points[0], points[0])
+
+    voxels: list[tuple[int, int, int]] = []
+    for start, end in zip(points[:-1], points[1:]):
+        segment = _rounded_segment(start, end)
+        if voxels and voxels[-1] == segment[0]:
+            voxels.extend(segment[1:])
+        else:
+            voxels.extend(segment)
+    return voxels
 
 
 def _common_chain_attribute(graph: ig.Graph, chain: _Chain, attribute: str) -> object:
@@ -262,27 +285,14 @@ def clean_protograph_graph(
             graph,
             chain,
             positions,
-            attribute="centerline_voxel_points",
-            integer=False,
         )
         for chain in chains
     ]
     output.es["centerline_voxel_points"] = [_json_points(path) for path in continuous_paths]
 
-    has_discrete_paths = "centerline_voxels" in edge_attributes
-    if has_discrete_paths:
-        discrete_paths = [
-            _concatenate_chain_path(
-                graph,
-                chain,
-                positions,
-                attribute="centerline_voxels",
-                integer=True,
-            )
-            for chain in chains
-        ]
-        output.es["centerline_voxels"] = [_json_points(path) for path in discrete_paths]
-        output.es["num_centerline_voxels"] = [len(path) for path in discrete_paths]
+    discrete_paths = [_discrete_path_from_continuous(path) for path in continuous_paths]
+    output.es["centerline_voxels"] = [_json_points(path) for path in discrete_paths]
+    output.es["num_centerline_voxels"] = [len(path) for path in discrete_paths]
 
     for attribute in ("component_index", "component_label"):
         if attribute in edge_attributes:
