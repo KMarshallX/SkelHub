@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ._graph_viewer_impl import (
     CameraState,
+    EdgeGeometry,
     GraphVisualizationData,
     GraphVisualizationError,
     GraphVisualizationOptions,
@@ -16,6 +17,7 @@ from ._graph_viewer_impl import (
 
 __all__ = [
     "CameraState",
+    "EdgeGeometry",
     "GraphVisualizationData",
     "GraphVisualizationError",
     "GraphVisualizationOptions",

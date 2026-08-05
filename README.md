@@ -19,7 +19,8 @@ Current status:
 - Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
 - CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`
 - Evaluation: voxel-based v1 metrics for paired 3D binary skeleton volumes
-- Visualization: PyVista-based viewer for GraphML graphs and binary NIfTI volumes
+- Visualization: PyVista-based viewer for GraphML graphs with selectable straight,
+  continuous-centreline, or voxel-path edges, plus binary NIfTI volumes
 
 SkelHub is organized around four layers:
 

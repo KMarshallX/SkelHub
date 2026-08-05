@@ -1,5 +1,117 @@
 # Development Log
 
+## 2026-08-05 14:37 AEST
+
+### Auto-dismiss graphviz error banners
+
+1. Summary of what changed
+- Made the red graphviz error banner disappear automatically five seconds
+  after it is shown.
+- Restarted the five-second timeout whenever a newer message replaces the
+  current banner.
+- Repainted the viewer immediately when an elapsed banner is removed.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `interaction.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused the existing repeating UI timer instead of creating another timer or
+  background thread.
+- Used a monotonic deadline so system clock changes cannot extend or shorten a
+  banner's lifetime.
+
+4. Assumptions
+- Viewer controls install the existing repeating UI timer during normal
+  interactive startup.
+- Five seconds begins when `_set_error()` creates or replaces the banner.
+
+5. Limitations
+- Expiry is checked on the 180 ms UI timer interval, so visual removal can
+  occur up to one timer tick after the exact five-second deadline.
+- The banner disappears immediately; no fade animation was added.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_filename_marquee.py tests/test_graphviz_edge_geometry.py tests/test_graph_visualization_drop.py` (`18 passed`)
+- `python -m pytest -q` (`48 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually confirm the five-second timing in a desktop viewer because GUI
+  event-loop scheduling can vary slightly under load.
+
+## 2026-08-05 13:29 AEST
+
+### Add selectable GraphML edge geometry to graphviz
+
+1. Summary of what changed
+- Added `Straight`, `Continuous`, and `Voxel Path` edge rendering modes under
+  the viewer's Appearance controls, between the optional overlay `Target` and
+  `Node Size` controls.
+- Rendered continuous float centreline points and discrete voxel-centre paths
+  as world-space polylines while preserving straight endpoint rendering as the
+  default.
+- Added `--edge_geometry straight|continuous|voxel` to `skelhub graphviz` and
+  the corresponding Python API argument.
+- Disabled unavailable or malformed curved modes and exposed their validation
+  reason instead of silently falling back.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and the focused
+  visualization facade modules for loading, models, constants, scene,
+  session, controls, and package exports.
+- Modified `skelhub/api.py` and `skelhub/cli/main.py`.
+- Added local ignored regression coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `README.md`, `docs/API.md`, `docs/architecture.md`,
+  `docs/visualization.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept `X/Y/Z` as the displayed node geometry and normalized both optional
+  voxel-space edge paths into the same world coordinate system during load.
+- Inferred one affine from all valid node `voxel_pos` and `X/Y/Z` pairs, then
+  required a full-rank fit with a small residual before enabling curved modes.
+- Stored geometry selection per view and per overlay graph layer through the
+  existing appearance options; the overlay `Target` controls which graph is
+  edited.
+- Used stored points directly as polylines without spline smoothing, preserving
+  source geometry and keeping the renderer lightweight.
+
+4. Assumptions
+- Compatible GraphML stores `voxel_pos`, `centerline_voxel_points`, and
+  `centerline_voxels` as JSON arrays of finite three-dimensional points.
+- One affine consistently relates every node's voxel and world coordinates.
+- A voxel-path view means a line through stored voxel centres, not voxel cubes.
+
+5. Limitations
+- GraphML does not yet store the source affine explicitly, so curved modes are
+  unavailable when node correspondences do not determine a unique affine.
+- Mode availability currently requires every edge path in the selected
+  attribute to parse successfully.
+- No spline interpolation is applied; `Continuous` shows the stored piecewise
+  polyline exactly.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py skelhub/api.py skelhub/cli/main.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graph_visualization_drop.py tests/test_graphviz_filename_marquee.py` (`16 passed`)
+- `python -m pytest -q` (`46 passed`)
+- `python -m skelhub graphviz --help`
+- Off-screen PyVista smoke render of `inf_right.graphml` in `continuous` mode
+  (`786` nodes, `547` edges, two graph actors).
+
+7. Remaining risks or recommended next steps
+- Store the original 4x4 affine as graph-level metadata in future GraphML
+  exports to support small or coplanar graphs without inference.
+- Manually check the dropdown interaction and line appearance in a desktop
+  viewer on representative large graphs.
+- The requested `inf_left.graphml` could not be used for the final smoke test
+  because its current line 8852 contains malformed XML (`<data key=rend</data>`);
+  it loaded earlier in the investigation before that malformed content was
+  observed. The sibling `inf_right.graphml` passed the curved-render smoke test.
+
 ## 2026-08-04 23:07 AEST
 
 ### Rebuild cleaner voxel paths from precise GraphML geometry

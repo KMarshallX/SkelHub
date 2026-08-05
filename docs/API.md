@@ -121,7 +121,12 @@ launch_graph_viewer_from_path(
     "pred.graphml",
     edge_thickness=1.0,
     node_size=2.5,
+    edge_geometry="continuous",
 )
 ```
+
+`edge_geometry` accepts `"straight"` (default), `"continuous"`, or
+`"voxel"`. Curved modes require compatible GraphML voxel-path attributes and
+node voxel/world coordinate pairs.
 
 For result fields, see [Structured Output](StructuredOutput.md).
