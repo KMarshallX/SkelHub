@@ -8,6 +8,42 @@ the active conda environment and reports any missing Python packages before
 running. Older wrappers may still activate the local
 `Tools/SkelHub/.venv` before calling SkelHub commands or Python helpers.
 
+## `protograph_cleaner.sh`
+
+Contracts every degree-2 GraphML node into its adjacent centreline edges. The
+former node position remains as one interior point in the merged edge path,
+and separate paths between the same pair of retained nodes remain separate
+parallel edges.
+
+The precise `centerline_voxel_points` and node `voxel_pos` fields are the input
+geometry. Existing `centerline_voxels` are ignored because separated graphs may
+contain truncated or empty integer paths. Every output edge receives a newly
+generated, non-empty, 26-connected `centerline_voxels` path and an updated
+`num_centerline_voxels` value.
+
+```bash
+./scripts/protograph_cleaner.sh \
+  --input ./test_data/exvivo/Aug/skel_vessyn_aug_protograph.graphml \
+  --output ./scripts/test.graphml \
+  --verbose
+```
+
+Required:
+
+- `--input`, `-i`: readable `.graphml` with `voxel_pos`, edge
+  `centerline_voxel_points`, and at least one degree-2 node.
+- `--output`, `-o`: destination `.graphml` path. Missing parent directories
+  are created.
+
+Optional:
+
+- `--verbose`, `-v`: show a progress bar over all input nodes and print graph
+  counts after cleaning.
+
+The script uses `python` from the active environment and checks for `igraph`,
+NumPy, and SkelHub; it does not activate `.venv`. If the output exists, the
+script prompts for confirmation. Only `y` or `yes` replaces the file.
+
 ## `checker.sh`
 
 Checks whether all nonzero skeleton voxels are confined to nonzero voxels in a

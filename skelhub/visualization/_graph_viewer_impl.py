@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import importlib
+import json
 from pathlib import Path
 from typing import Any, Literal, Sequence
 import warnings
@@ -16,6 +17,13 @@ import numpy as np
 VisualizationFileKind = Literal["graphml", "nifti"]
 ViewLayoutMode = Literal["single", "double", "overlay"]
 OverlayTarget = Literal["base", "overlay"]
+EdgeGeometry = Literal["straight", "continuous", "voxel"]
+EDGE_GEOMETRY_MODES: tuple[EdgeGeometry, ...] = ("straight", "continuous", "voxel")
+EDGE_GEOMETRY_LABELS: dict[EdgeGeometry, str] = {
+    "straight": "Straight",
+    "continuous": "Continuous",
+    "voxel": "Voxel Path",
+}
 OPACITY_RANGE = (0.0, 1.0)
 OPACITY_SNAP_EPSILON = 0.005
 DEFAULT_BASE_OPACITY = 0.8
@@ -37,7 +45,7 @@ TOOLS_PANEL_WIDTH = 336  # kept for backward reference; runtime width is 25 % of
 TOOLS_PANEL_HEIGHT = 560
 TOOLS_PANEL_MIN_HEIGHT = 220
 TOOLS_PANEL_BOTTOM_MARGIN = 12
-TOOLS_PANEL_CONTENT_HEIGHT = 1080
+TOOLS_PANEL_CONTENT_HEIGHT = 1200
 TOOLS_SCROLLBAR_WIDTH = 10
 TOOLS_SCROLLBAR_GUTTER = 30
 TOOLS_SCROLL_STEP = 42
@@ -52,6 +60,7 @@ TOOLS_TEXT_FONT_SIZE = 11
 TOOLS_BUTTON_FONT_SIZE = 10
 TOOLS_MENU_FONT_SIZE = 10
 VIEW_LAYOUT_MENU_ROW_HEIGHT = 22
+DROPDOWN_MENU_ROW_GAP = 2
 VIEW_LAYOUT_MENU_MAX_ROWS = 6
 DROPDOWN_LABEL_WIDTH = 72
 DROPDOWN_CHARACTER_WIDTH = 6
@@ -98,6 +107,27 @@ class GraphVisualizationData:
     edge_count: int
     source_path: str
     node_ids: tuple[str, ...] = ()
+    continuous_edge_world_paths: tuple[np.ndarray, ...] | None = None
+    voxel_edge_world_paths: tuple[np.ndarray, ...] | None = None
+    voxel_to_world_affine: np.ndarray | None = None
+    edge_geometry_errors: dict[EdgeGeometry, str] = field(default_factory=dict)
+
+    def edge_geometry_error(self, geometry: EdgeGeometry) -> str | None:
+        """Return why an edge geometry is unavailable, if applicable."""
+        if geometry == "straight":
+            return None
+        return self.edge_geometry_errors.get(geometry)
+
+    def supports_edge_geometry(self, geometry: EdgeGeometry) -> bool:
+        """Return whether this graph can render the requested edge geometry."""
+        if geometry == "straight":
+            return True
+        paths = (
+            self.continuous_edge_world_paths
+            if geometry == "continuous"
+            else self.voxel_edge_world_paths
+        )
+        return paths is not None and geometry not in self.edge_geometry_errors
 
 
 @dataclass(slots=True)
@@ -107,6 +137,7 @@ class GraphVisualizationOptions:
     edge_thickness: float = 1.0
     node_size: float = 2.5
     window_title: str = "SkelHub Graph Viewer"
+    edge_geometry: EdgeGeometry = "straight"
 
 
 @dataclass(slots=True)
@@ -318,6 +349,7 @@ class GraphViewerSession:
     view_menu_open: ViewID | None = None
     overlay_menu_open: str | None = None  # "base" or "overlay"
     overlay_target_menu_open: bool = False
+    edge_geometry_menu_open: bool = False
     interactive_overlay_target_menu_open: bool = False
     interactive_overlay_target: OverlayTarget = "base"
     overlay_renderer: Any | None = None
@@ -336,11 +368,13 @@ class GraphViewerSession:
                     edge_thickness=self.options.edge_thickness,
                     node_size=self.options.node_size,
                     window_title=self.options.window_title,
+                    edge_geometry=self.options.edge_geometry,
                 )),
                 "b": ViewState("b", options=GraphVisualizationOptions(
                     edge_thickness=self.options.edge_thickness,
                     node_size=self.options.node_size,
                     window_title=self.options.window_title,
+                    edge_geometry=self.options.edge_geometry,
                 )),
             }
 
@@ -625,6 +659,52 @@ def _overlay_has_both_graph_layers(session: GraphViewerSession) -> bool:
     return base_is_graph and overlay_is_graph
 
 
+def _appearance_graph_and_options(
+    session: GraphViewerSession,
+) -> tuple[GraphVisualizationData | None, GraphVisualizationOptions]:
+    """Return the graph and appearance options targeted by the Tools panel."""
+    view = session.active_view
+    if session.layout_mode == "overlay":
+        target = _overlay_appearance_target(session)
+        active = session.base_file_for_view() if target == "base" else session.overlay_file_for_view()
+        options = view.overlay_options_for_target(target)
+    else:
+        active = session.active_file
+        options = view.options
+    graph_data = (
+        active.data
+        if active is not None and active.kind == "graphml" and isinstance(active.data, GraphVisualizationData)
+        else None
+    )
+    return graph_data, options
+
+
+def _edge_geometry_unavailable_status(session: GraphViewerSession) -> str | None:
+    """Describe disabled curved-edge choices for the current appearance target."""
+    graph_data, _options = _appearance_graph_and_options(session)
+    if graph_data is None:
+        return None
+    messages = []
+    for geometry in ("continuous", "voxel"):
+        reason = graph_data.edge_geometry_error(geometry)
+        if reason:
+            messages.append(f"{EDGE_GEOMETRY_LABELS[geometry]} unavailable: {reason}")
+    return "; ".join(messages) if messages else None
+
+
+def _ensure_edge_geometry_available(
+    graph_data: GraphVisualizationData,
+    options: GraphVisualizationOptions,
+) -> str | None:
+    """Reset a stale unsupported selection and report why it changed."""
+    reason = graph_data.edge_geometry_error(options.edge_geometry)
+    if reason is None and graph_data.supports_edge_geometry(options.edge_geometry):
+        return None
+    label = EDGE_GEOMETRY_LABELS[options.edge_geometry]
+    options.edge_geometry = "straight"
+    return f"{label} unavailable; reset to Straight: {reason or 'path data is unavailable'}"
+
+
 def _overlay_interactive_target(session: GraphViewerSession) -> OverlayTarget:
     base_is_graph, overlay_is_graph = _overlay_graph_layer_flags(session)
     if base_is_graph and overlay_is_graph:
@@ -692,6 +772,136 @@ def _extract_edge_indices(graph: ig.Graph) -> np.ndarray:
     if graph.ecount() == 0:
         return np.empty((0, 2), dtype=int)
     return np.asarray([edge.tuple for edge in graph.es], dtype=int)
+
+
+def _parse_graphml_point(value: object, *, label: str) -> np.ndarray:
+    """Parse one JSON-encoded three-dimensional GraphML point."""
+    try:
+        point = np.asarray(json.loads(str(value)), dtype=float)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} must be a JSON 3D point") from exc
+    if point.shape != (3,) or not np.isfinite(point).all():
+        raise ValueError(f"{label} must contain three finite coordinates")
+    return point
+
+
+def _parse_graphml_path(value: object, *, label: str) -> np.ndarray:
+    """Parse one JSON-encoded GraphML polyline."""
+    try:
+        points = np.asarray(json.loads(str(value)), dtype=float)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} must be a JSON list of 3D points") from exc
+    if points.ndim != 2 or points.shape[1:] != (3,) or len(points) == 0:
+        raise ValueError(f"{label} must contain at least one 3D point")
+    if not np.isfinite(points).all():
+        raise ValueError(f"{label} must contain only finite coordinates")
+    return points
+
+
+def _infer_voxel_to_world_affine(graph: ig.Graph, node_positions: np.ndarray) -> np.ndarray:
+    """Infer an affine from GraphML voxel/world node-coordinate pairs."""
+    if "voxel_pos" not in graph.vs.attribute_names():
+        raise ValueError("node attribute 'voxel_pos' is missing")
+    try:
+        voxel_positions = np.vstack(
+            [
+                _parse_graphml_point(value, label=f"node {index} voxel_pos")
+                for index, value in enumerate(graph.vs["voxel_pos"])
+            ]
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("node attribute 'voxel_pos' could not be parsed") from exc
+
+    design = np.column_stack((voxel_positions, np.ones(graph.vcount(), dtype=float)))
+    if np.linalg.matrix_rank(design) < 4:
+        raise ValueError("node voxel/world pairs do not determine a unique 3D affine")
+    coefficients, *_ = np.linalg.lstsq(design, node_positions, rcond=None)
+    predicted = design @ coefficients
+    max_error = float(np.max(np.abs(predicted - node_positions)))
+    coordinate_scale = max(1.0, float(np.max(np.ptp(node_positions, axis=0))))
+    tolerance = max(1e-6, coordinate_scale * 1e-8)
+    if not np.isfinite(max_error) or max_error > tolerance:
+        raise ValueError(
+            "node 'voxel_pos' and 'X/Y/Z' are not related by one affine "
+            f"(maximum residual {max_error:.6g})"
+        )
+
+    affine = np.eye(4, dtype=float)
+    affine[:3, :] = coefficients.T
+    return affine
+
+
+def _load_edge_world_paths(
+    graph: ig.Graph,
+    *,
+    attribute_name: str,
+    affine: np.ndarray,
+) -> tuple[np.ndarray, ...]:
+    """Load every edge polyline and transform its voxel points to world space."""
+    if attribute_name not in graph.es.attribute_names():
+        raise ValueError(f"edge attribute '{attribute_name}' is missing")
+    paths: list[np.ndarray] = []
+    for edge in graph.es:
+        points = _parse_graphml_path(
+            edge[attribute_name],
+            label=f"edge {edge.index} {attribute_name}",
+        )
+        paths.append(_transform_points(points, affine))
+    return tuple(paths)
+
+
+def _load_optional_edge_geometries(
+    graph: ig.Graph,
+    node_positions: np.ndarray,
+) -> tuple[
+    tuple[np.ndarray, ...] | None,
+    tuple[np.ndarray, ...] | None,
+    np.ndarray | None,
+    dict[EdgeGeometry, str],
+]:
+    """Load optional curved edge paths without rejecting endpoint-only graphs."""
+    errors: dict[EdgeGeometry, str] = {}
+    attributes: dict[EdgeGeometry, str] = {
+        "continuous": "centerline_voxel_points",
+        "voxel": "centerline_voxels",
+    }
+    edge_attributes = set(graph.es.attribute_names())
+    available_attributes = {
+        geometry: attribute_name
+        for geometry, attribute_name in attributes.items()
+        if attribute_name in edge_attributes
+    }
+    for geometry, attribute_name in attributes.items():
+        if attribute_name not in edge_attributes:
+            errors[geometry] = f"edge attribute '{attribute_name}' is missing"
+    if not available_attributes:
+        return None, None, None, errors
+
+    try:
+        affine = _infer_voxel_to_world_affine(graph, node_positions)
+    except ValueError as exc:
+        reason = f"voxel-to-world transform unavailable: {exc}"
+        for geometry in available_attributes:
+            errors[geometry] = reason
+        return None, None, None, errors
+
+    loaded: dict[EdgeGeometry, tuple[np.ndarray, ...] | None] = {
+        "continuous": None,
+        "voxel": None,
+    }
+    for geometry, attribute_name in available_attributes.items():
+        try:
+            loaded[geometry] = _load_edge_world_paths(
+                graph,
+                attribute_name=attribute_name,
+                affine=affine,
+            )
+        except ValueError as exc:
+            errors[geometry] = str(exc)
+
+    return loaded["continuous"], loaded["voxel"], affine, errors
 
 
 def _validate_graph_data(node_positions: np.ndarray, edge_indices: np.ndarray) -> None:
@@ -767,6 +977,10 @@ def load_graph_visualization_data(input_path: str | Path) -> GraphVisualizationD
     node_ids = _extract_node_ids(graph)
     edge_indices = _extract_edge_indices(graph)
     _validate_graph_data(node_positions, edge_indices)
+    continuous_paths, voxel_paths, affine, geometry_errors = _load_optional_edge_geometries(
+        graph,
+        node_positions,
+    )
     return GraphVisualizationData(
         node_positions=node_positions,
         edge_indices=edge_indices,
@@ -774,6 +988,10 @@ def load_graph_visualization_data(input_path: str | Path) -> GraphVisualizationD
         edge_count=graph.ecount(),
         source_path=str(graph_path),
         node_ids=node_ids,
+        continuous_edge_world_paths=continuous_paths,
+        voxel_edge_world_paths=voxel_paths,
+        voxel_to_world_affine=affine,
+        edge_geometry_errors=geometry_errors,
     )
 
 
@@ -854,6 +1072,9 @@ def _validate_options(options: GraphVisualizationOptions) -> None:
         raise GraphVisualizationError("--edge_thickness must be greater than zero.")
     if options.node_size <= 0:
         raise GraphVisualizationError("--node_size must be greater than zero.")
+    if options.edge_geometry not in EDGE_GEOMETRY_MODES:
+        choices = ", ".join(EDGE_GEOMETRY_MODES)
+        raise GraphVisualizationError(f"--edge_geometry must be one of: {choices}.")
 
 
 def _edge_polyline_array(edge_indices: np.ndarray) -> np.ndarray:
@@ -861,6 +1082,43 @@ def _edge_polyline_array(edge_indices: np.ndarray) -> np.ndarray:
         return np.empty(0, dtype=int)
     line_sizes = np.full((edge_indices.shape[0], 1), 2, dtype=int)
     return np.hstack((line_sizes, edge_indices)).ravel()
+
+
+def _edge_path_polydata_arrays(paths: Sequence[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """Flatten independent edge paths into PyVista point and line arrays."""
+    if not paths:
+        return np.empty((0, 3), dtype=float), np.empty(0, dtype=int)
+    point_parts: list[np.ndarray] = []
+    line_parts: list[np.ndarray] = []
+    offset = 0
+    for path in paths:
+        points = np.asarray(path, dtype=float)
+        point_parts.append(points)
+        line_parts.append(
+            np.concatenate(
+                (np.asarray([len(points)], dtype=int), np.arange(offset, offset + len(points), dtype=int))
+            )
+        )
+        offset += len(points)
+    return np.vstack(point_parts), np.concatenate(line_parts)
+
+
+def _edge_render_arrays(
+    graph_data: GraphVisualizationData,
+    geometry: EdgeGeometry,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return world-space points and VTK line connectivity for one edge mode."""
+    if geometry == "straight":
+        return graph_data.node_positions, _edge_polyline_array(graph_data.edge_indices)
+    paths = (
+        graph_data.continuous_edge_world_paths
+        if geometry == "continuous"
+        else graph_data.voxel_edge_world_paths
+    )
+    if paths is None:
+        reason = graph_data.edge_geometry_error(geometry) or "path data is unavailable"
+        raise GraphVisualizationError(f"{EDGE_GEOMETRY_LABELS[geometry]} edge geometry is unavailable: {reason}.")
+    return _edge_path_polydata_arrays(paths)
 
 
 def _add_graph_scene(
@@ -877,10 +1135,11 @@ def _add_graph_scene(
     actors: list[Any] = []
     edge_actor = None
 
-    if graph_data.edge_indices.size:
+    edge_points, edge_lines = _edge_render_arrays(graph_data, options.edge_geometry)
+    if edge_lines.size:
         line_data = pv.PolyData()
-        line_data.points = graph_data.node_positions
-        line_data.lines = _edge_polyline_array(graph_data.edge_indices)
+        line_data.points = edge_points
+        line_data.lines = edge_lines
         edge_actor = plotter.add_mesh(
             line_data,
             color="forestgreen",
@@ -1089,13 +1348,25 @@ def create_graph_viewer_session(
     *,
     edge_thickness: float = 1.0,
     node_size: float = 2.5,
+    edge_geometry: EdgeGeometry = "straight",
 ) -> GraphViewerSession:
     """Create viewer session state and optionally load an initial visualization file."""
     session = GraphViewerSession(
-        options=GraphVisualizationOptions(edge_thickness=edge_thickness, node_size=node_size)
+        options=GraphVisualizationOptions(
+            edge_thickness=edge_thickness,
+            node_size=node_size,
+            edge_geometry=edge_geometry,
+        )
     )
     if input_path is not None:
-        session.load_visualization(input_path)
+        loaded_file = session.load_visualization(input_path)
+        if loaded_file.kind == "graphml" and isinstance(loaded_file.data, GraphVisualizationData):
+            reason = loaded_file.data.edge_geometry_error(edge_geometry)
+            if reason is not None or not loaded_file.data.supports_edge_geometry(edge_geometry):
+                raise GraphVisualizationError(
+                    f"{EDGE_GEOMETRY_LABELS[edge_geometry]} edge geometry is unavailable: "
+                    f"{reason or 'path data is unavailable'}."
+                )
     return session
 
 
@@ -1315,24 +1586,45 @@ def _ensure_overlay_renderer(plotter: Any, session: GraphViewerSession) -> Any |
     return overlay
 
 
-def _remove_actor_list(plotter: Any, actors: list[Any]) -> None:
-    if not actors or not hasattr(plotter, "remove_actor"):
-        actors.clear()
-        return
-    for actor in actors:
-        if actor is None:
-            continue
-        overlay_renderer = getattr(actor, "_skelhub_overlay_renderer", None)
-        if overlay_renderer is not None and hasattr(overlay_renderer, "RemoveActor2D"):
-            try:
-                overlay_renderer.RemoveActor2D(actor)
-                continue
-            except Exception:
-                pass
+def _remove_viewer_actor(
+    plotter: Any,
+    actor: Any,
+    *,
+    overlay_renderer: Any | None = None,
+) -> bool:
+    """Remove an actor from its owning overlay or the active scene renderer."""
+    if actor is None:
+        return False
+    actor_overlay = getattr(actor, "_skelhub_overlay_renderer", None)
+    candidate_overlays = []
+    for candidate in (actor_overlay, overlay_renderer):
+        if candidate is not None and all(candidate is not current for current in candidate_overlays):
+            candidate_overlays.append(candidate)
+    for candidate in candidate_overlays:
         try:
-            plotter.remove_actor(actor, render=False)
-        except TypeError:
-            plotter.remove_actor(actor)
+            if hasattr(candidate, "HasViewProp") and not candidate.HasViewProp(actor):
+                continue
+            if hasattr(candidate, "RemoveViewProp"):
+                candidate.RemoveViewProp(actor)
+            elif hasattr(candidate, "RemoveActor2D"):
+                candidate.RemoveActor2D(actor)
+            else:
+                continue
+            return not hasattr(candidate, "HasViewProp") or not candidate.HasViewProp(actor)
+        except Exception:
+            continue
+    if not hasattr(plotter, "remove_actor"):
+        return False
+    try:
+        result = plotter.remove_actor(actor, render=False)
+    except TypeError:
+        result = plotter.remove_actor(actor)
+    return result is not False
+
+
+def _remove_actor_list(plotter: Any, actors: list[Any]) -> None:
+    for actor in actors:
+        _remove_viewer_actor(plotter, actor)
     actors.clear()
 
 
@@ -1400,16 +1692,24 @@ def _advance_filename_marquees(plotter: Any, session: GraphViewerSession) -> boo
 
 def _add_actor2d(plotter: Any, actor: Any) -> None:
     overlay_renderer = getattr(plotter, "_skelhub_overlay_renderer", None)
-    if overlay_renderer is not None and hasattr(overlay_renderer, "AddActor2D"):
-        overlay_renderer.AddActor2D(actor)
+    if overlay_renderer is not None and (
+        hasattr(overlay_renderer, "AddViewProp") or hasattr(overlay_renderer, "AddActor2D")
+    ):
+        if hasattr(overlay_renderer, "AddViewProp"):
+            overlay_renderer.AddViewProp(actor)
+        else:
+            overlay_renderer.AddActor2D(actor)
         try:
             setattr(actor, "_skelhub_overlay_renderer", overlay_renderer)
         except Exception:
             pass
         return
     renderer = getattr(plotter, "renderer", None)
-    if renderer is not None and hasattr(renderer, "AddActor2D"):
-        renderer.AddActor2D(actor)
+    if renderer is not None and (hasattr(renderer, "AddViewProp") or hasattr(renderer, "AddActor2D")):
+        if hasattr(renderer, "AddViewProp"):
+            renderer.AddViewProp(actor)
+        else:
+            renderer.AddActor2D(actor)
         return
     if hasattr(plotter, "add_actor"):
         try:
@@ -1663,11 +1963,13 @@ def _set_status(plotter: Any, session: GraphViewerSession) -> None:
 
 
 def _set_error(plotter: Any, session: GraphViewerSession, message: str | None) -> None:
-    if session.error_actor is not None and hasattr(plotter, "remove_actor"):
-        try:
-            plotter.remove_actor(session.error_actor, render=False)
-        except TypeError:
-            plotter.remove_actor(session.error_actor)
+    if session.error_actor is not None:
+        if not _remove_viewer_actor(
+            plotter,
+            session.error_actor,
+            overlay_renderer=session.overlay_renderer,
+        ):
+            return
         session.error_actor = None
     if message is None:
         return
@@ -1887,6 +2189,7 @@ def toggle_interactive(plotter: Any, session: GraphViewerSession, *, pv_module: 
 
 def toggle_camera_sync(plotter: Any, session: GraphViewerSession) -> None:
     """Enable or disable shared world-coordinate camera state."""
+    _set_error(plotter, session, None)
     session.camera_sync_enabled = not session.camera_sync_enabled
     if session.camera_sync_enabled:
         _store_shared_camera_state(plotter, session)
@@ -2170,6 +2473,7 @@ def _zoom_active_camera(plotter: Any, session: GraphViewerSession, *, direction:
 
 def fit_active_preview(plotter: Any, session: GraphViewerSession) -> bool:
     """Fit the active object by changing camera distance while preserving orientation."""
+    _set_error(plotter, session, None)
     _select_view_renderer(plotter, session.active_view_id)
     scene = _active_scene_center_and_radius(session)
     camera = getattr(plotter, "camera", None)
@@ -2274,6 +2578,7 @@ def _render_overlay_layers(
         return
 
     pv = _import_pyvista() if pv_module is None else pv_module
+    geometry_statuses: list[str] = []
 
     # Validate alignment
     error_msg = session._validate_overlay_alignment()
@@ -2285,6 +2590,9 @@ def _render_overlay_layers(
         if base.kind == "graphml":
             graph_data = base.data if isinstance(base.data, GraphVisualizationData) else None
             if graph_data is not None:
+                geometry_status = _ensure_edge_geometry_available(graph_data, view.base_options)
+                if geometry_status:
+                    geometry_statuses.append(f"Base: {geometry_status}")
                 actors, edge_a, node_a = _add_graph_scene(
                     plotter, graph_data, view.base_options, opacity=view.base_opacity, pv_module=pv
                 )
@@ -2312,6 +2620,9 @@ def _render_overlay_layers(
         if overlay.kind == "graphml":
             graph_data = overlay.data if isinstance(overlay.data, GraphVisualizationData) else None
             if graph_data is not None:
+                geometry_status = _ensure_edge_geometry_available(graph_data, view.overlay_options)
+                if geometry_status:
+                    geometry_statuses.append(f"Overlay: {geometry_status}")
                 _add_overlay_graph(plotter, graph_data, view.overlay_options, view, opacity, pv)
         else:
             nifti_data = overlay.data if isinstance(overlay.data, NiftiVisualizationData) else None
@@ -2327,6 +2638,7 @@ def _render_overlay_layers(
                     view.graph_actors.append(actor)
                     view.overlay_overlay_nifti_actor = actor
 
+    _set_error(plotter, session, "; ".join(geometry_statuses) if geometry_statuses else None)
     if reset_camera:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session, view.view_id)
@@ -2346,10 +2658,11 @@ def _add_overlay_graph(
     pv: Any,
 ) -> None:
     """Add an overlay graph layer with distinct colors and reduced opacity."""
-    if graph_data.edge_indices.size:
+    edge_points, edge_lines = _edge_render_arrays(graph_data, options.edge_geometry)
+    if edge_lines.size:
         line_data = pv.PolyData()
-        line_data.points = graph_data.node_positions
-        line_data.lines = _edge_polyline_array(graph_data.edge_indices)
+        line_data.points = edge_points
+        line_data.lines = edge_lines
         edge_actor = plotter.add_mesh(
             line_data, color=OVERLAY_GRAPH_EDGE_COLOR,
             line_width=float(options.edge_thickness),
@@ -2378,6 +2691,7 @@ def render_active_graph(
     view_id: ViewID | None = None,
 ) -> None:
     """Render the active session file using committed appearance options."""
+    _set_error(plotter, session, None)
     apply_view_layout(plotter, session)
     render_view_headers(plotter, session)
     view = session.view_state(view_id)
@@ -2407,11 +2721,14 @@ def render_active_graph(
     if active_file.kind == "graphml":
         graph_data = active_file.data if isinstance(active_file.data, GraphVisualizationData) else None
         if graph_data is not None:
+            geometry_status = _ensure_edge_geometry_available(graph_data, view.options)
+            _set_error(plotter, session, geometry_status)
             actors, view.graph_edge_actor, view.graph_node_actor = _add_graph_scene(
                 plotter, graph_data, view.options, pv_module=pv_module
             )
             view.graph_actors.extend(actors)
     else:
+        _set_error(plotter, session, None)
         nifti_data = active_file.data if isinstance(active_file.data, NiftiVisualizationData) else None
         if nifti_data is not None:
             actor = _build_instanced_nifti_actor(nifti_data, pv_module=pv_module)
@@ -2437,8 +2754,14 @@ def render_active_graph(
         plotter.render()
 
 
-def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
-    """Commit preview slider values when relevant and rebuild the active scene."""
+def refresh_active_graph(
+    plotter: Any,
+    session: GraphViewerSession,
+    *,
+    pv_module: Any | None = None,
+    rebuild_geometry: bool = False,
+) -> None:
+    """Commit appearance values and rebuild the scene when geometry changed."""
     if session.layout_mode == "overlay":
         session.apply_preview_options()
         render_active_graph(plotter, session, pv_module=pv_module, reset_camera=False, view_id=session.active_view_id)
@@ -2446,7 +2769,11 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
     if session.active_kind != "nifti":
         session.apply_preview_options()
         graph_data = session.active_graph_data
-        if graph_data is not None and _update_graph_appearance(session, session.active_view_id):
+        if (
+            not rebuild_geometry
+            and graph_data is not None
+            and _update_graph_appearance(session, session.active_view_id)
+        ):
             render_selected_node_highlight(plotter, session, pv_module=pv_module, view_id=session.active_view_id)
             if hasattr(plotter, "render"):
                 plotter.render()
@@ -2456,6 +2783,7 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
 
 def reset_active_view(plotter: Any, session: GraphViewerSession) -> None:
     """Restore the initial camera state for the active graph when available."""
+    _set_error(plotter, session, None)
     _select_view_renderer(plotter, session.active_view_id)
     active_file = session.active_file
     restored = False
@@ -2694,6 +3022,7 @@ def set_layout_mode(
         session.layout_menu_open = False
         render_tools_panel(plotter, session)
         return
+    _set_error(plotter, session, None)
     if mode == "double":
         session.views["a"].file_index = session.active_index
         session.views["b"].file_index = None
@@ -2719,6 +3048,7 @@ def set_layout_mode(
     session.view_menu_open = None
     session.overlay_menu_open = None
     session.overlay_target_menu_open = False
+    session.edge_geometry_menu_open = False
     session.interactive_overlay_target_menu_open = False
     render_visible_views(plotter, session, pv_module=pv_module, reset_camera=False)
 
@@ -2728,6 +3058,7 @@ def set_active_view(plotter: Any, session: GraphViewerSession, view_id: ViewID) 
         return False
     if session.active_view_id == view_id:
         return False
+    _set_error(plotter, session, None)
     session.active_view_id = view_id
     _clear_node_id_edit(session)
     _select_view_renderer(plotter, view_id)
@@ -3261,6 +3592,8 @@ def dispatch_ui_click(
     for hitbox in reversed(_all_hitboxes(session)):
         if not hitbox.contains(x_pos, y_pos):
             continue
+        if hitbox.action == "disabled-dropdown-row":
+            return True
         if hitbox.action == "switch-file" and hitbox.index is not None:
             view_id = hitbox.view_id or session.active_view_id
             set_active_view(plotter, session, view_id)
@@ -3282,6 +3615,7 @@ def dispatch_ui_click(
             session.view_menu_open = None
             session.overlay_menu_open = None
             session.overlay_target_menu_open = False
+            session.edge_geometry_menu_open = False
             session.interactive_overlay_target_menu_open = False
             render_tools_panel(plotter, session)
             if hasattr(plotter, "render"):
@@ -3299,6 +3633,7 @@ def dispatch_ui_click(
             session.layout_menu_open = False
             session.overlay_menu_open = None
             session.overlay_target_menu_open = False
+            session.edge_geometry_menu_open = False
             session.interactive_overlay_target_menu_open = False
             render_tools_panel(plotter, session)
             if hasattr(plotter, "render"):
@@ -3310,6 +3645,7 @@ def dispatch_ui_click(
             session.layout_menu_open = False
             session.view_menu_open = None
             session.overlay_target_menu_open = False
+            session.edge_geometry_menu_open = False
             session.interactive_overlay_target_menu_open = False
             render_tools_panel(plotter, session)
             if hasattr(plotter, "render"):
@@ -3325,6 +3661,7 @@ def dispatch_ui_click(
             return True
         if hitbox.action == "toggle-overlay-target-menu":
             session.overlay_target_menu_open = not session.overlay_target_menu_open
+            session.edge_geometry_menu_open = False
             session.interactive_overlay_target_menu_open = False
             session.layout_menu_open = False
             session.view_menu_open = None
@@ -3336,13 +3673,47 @@ def dispatch_ui_click(
         if hitbox.action == "set-overlay-target":
             session.active_view.overlay_target = "base" if hitbox.index == 0 else "overlay"
             session.overlay_target_menu_open = False
+            session.edge_geometry_menu_open = False
+            _set_error(plotter, session, None)
             render_tools_panel(plotter, session)
             if hasattr(plotter, "render"):
                 plotter.render()
             return True
+        if hitbox.action == "toggle-edge-geometry-menu":
+            session.edge_geometry_menu_open = not session.edge_geometry_menu_open
+            session.layout_menu_open = False
+            session.view_menu_open = None
+            session.overlay_menu_open = None
+            session.overlay_target_menu_open = False
+            session.interactive_overlay_target_menu_open = False
+            _set_error(
+                plotter,
+                session,
+                _edge_geometry_unavailable_status(session) if session.edge_geometry_menu_open else None,
+            )
+            render_tools_panel(plotter, session)
+            if hasattr(plotter, "render"):
+                plotter.render()
+            return True
+        if hitbox.action == "set-edge-geometry" and hitbox.index is not None:
+            geometry = EDGE_GEOMETRY_MODES[hitbox.index]
+            graph_data, options = _appearance_graph_and_options(session)
+            if graph_data is None or not graph_data.supports_edge_geometry(geometry):
+                return True
+            options.edge_geometry = geometry
+            session.edge_geometry_menu_open = False
+            _set_error(plotter, session, None)
+            refresh_active_graph(
+                plotter,
+                session,
+                pv_module=pv_module,
+                rebuild_geometry=True,
+            )
+            return True
         if hitbox.action == "toggle-interactive-overlay-target-menu":
             session.interactive_overlay_target_menu_open = not session.interactive_overlay_target_menu_open
             session.overlay_target_menu_open = False
+            session.edge_geometry_menu_open = False
             session.layout_menu_open = False
             session.view_menu_open = None
             session.overlay_menu_open = None
@@ -3532,11 +3903,7 @@ def install_ui_mouse_observers(
         interactor.add_observer("KeyPressEvent", _on_key_press)
         interactor.add_observer("InteractionEvent", _on_interaction)
         interactor.add_observer("TimerEvent", _on_marquee_timer)
-        if session.marquee_timer_id is None:
-            if hasattr(interactor, "create_timer"):
-                session.marquee_timer_id = int(interactor.create_timer(MARQUEE_INTERVAL_MS))
-            elif hasattr(native_interactor, "CreateRepeatingTimer"):
-                session.marquee_timer_id = int(native_interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
+        _start_marquee_timer(plotter, session)
         return True
     if hasattr(interactor, "AddObserver"):
         interactor.AddObserver("ConfigureEvent", _on_resize)
@@ -3548,10 +3915,31 @@ def install_ui_mouse_observers(
         interactor.AddObserver("KeyPressEvent", _on_key_press)
         interactor.AddObserver("InteractionEvent", _on_interaction)
         interactor.AddObserver("TimerEvent", _on_marquee_timer)
-        if session.marquee_timer_id is None and hasattr(interactor, "CreateRepeatingTimer"):
-            session.marquee_timer_id = int(interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
+        _start_marquee_timer(plotter, session)
         return True
     return False
+
+
+def _start_marquee_timer(plotter: Any, session: GraphViewerSession) -> int | None:
+    """Start the filename-marquee timer once the interactor is ready."""
+    if session.marquee_timer_id is not None and session.marquee_timer_id > 0:
+        return session.marquee_timer_id
+    interactor = getattr(plotter, "iren", None)
+    if interactor is None:
+        session.marquee_timer_id = None
+        return None
+    native_interactor = getattr(interactor, "interactor", interactor)
+    timer_id: Any = None
+    if hasattr(interactor, "create_timer"):
+        timer_id = interactor.create_timer(MARQUEE_INTERVAL_MS)
+    elif hasattr(native_interactor, "CreateRepeatingTimer"):
+        timer_id = native_interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS)
+    try:
+        normalized_timer_id = int(timer_id)
+    except (TypeError, ValueError):
+        normalized_timer_id = 0
+    session.marquee_timer_id = normalized_timer_id if normalized_timer_id > 0 else None
+    return session.marquee_timer_id
 
 
 def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
@@ -3560,6 +3948,11 @@ def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
     panel_x = int(window_width * 0.75)
     panel_top = height - TOOLS_PANEL_TOP_MARGIN
     return panel_x, panel_top, panel_top - _tools_panel_visible_height(plotter)
+
+
+def _dropdown_menu_reserved_height(row_count: int) -> int:
+    """Return vertical space reserved below an open dropdown button."""
+    return max(0, int(row_count)) * (VIEW_LAYOUT_MENU_ROW_HEIGHT + DROPDOWN_MENU_ROW_GAP) + COMMAND_BUTTON_GAP
 
 
 def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, int]:
@@ -3587,10 +3980,23 @@ def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, 
     layout["appearance_header"] = cursor_top - TOOLS_SECTION_HEADER_HEIGHT
     if session.layout_mode == "overlay" and _overlay_has_both_graph_layers(session):
         layout["appearance_target"] = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
-        layout["node_slider"] = layout["appearance_target"] - APPEARANCE_SLIDER_TOP_GAP
+        target_menu_space = (
+            _dropdown_menu_reserved_height(2) if session.overlay_target_menu_open else 0
+        )
+        layout["edge_geometry_dropdown"] = layout["appearance_target"] - row_stride - target_menu_space
     else:
         layout["appearance_target"] = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
-        layout["node_slider"] = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - APPEARANCE_SLIDER_TOP_GAP
+        layout["edge_geometry_dropdown"] = (
+            layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
+        )
+    geometry_menu_space = (
+        _dropdown_menu_reserved_height(len(EDGE_GEOMETRY_MODES))
+        if session.edge_geometry_menu_open
+        else 0
+    )
+    layout["node_slider"] = (
+        layout["edge_geometry_dropdown"] - APPEARANCE_SLIDER_TOP_GAP - geometry_menu_space
+    )
     layout["edge_slider"] = layout["node_slider"] - APPEARANCE_SLIDER_SPACING
 
     if session.layout_mode == "overlay":
@@ -3825,15 +4231,21 @@ def _add_dropdown_menu(
     x: int,
     y: int,
     width: int,
-    rows: Sequence[tuple[str, str, int | None, ViewID | None]],
+    rows: Sequence[
+        tuple[str, str, int | None, ViewID | None]
+        | tuple[str, str, int | None, ViewID | None, bool]
+    ],
 ) -> None:
     field_x = x + DROPDOWN_LABEL_WIDTH
     field_width = width - DROPDOWN_LABEL_WIDTH
-    for row_index, (label, action, index, view_id) in enumerate(rows[:VIEW_LAYOUT_MENU_MAX_ROWS]):
-        row_y = y - VIEW_LAYOUT_MENU_ROW_HEIGHT * (row_index + 1)
+    row_stride = VIEW_LAYOUT_MENU_ROW_HEIGHT + DROPDOWN_MENU_ROW_GAP
+    for row_index, row in enumerate(rows[:VIEW_LAYOUT_MENU_MAX_ROWS]):
+        label, action, index, view_id = row[:4]
+        enabled = bool(row[4]) if len(row) == 5 else True
+        row_y = y - row_stride * (row_index + 1)
         menu_x = field_x
-        menu_y = row_y - 2
-        menu_height = VIEW_LAYOUT_MENU_ROW_HEIGHT + 4
+        menu_y = row_y
+        menu_height = VIEW_LAYOUT_MENU_ROW_HEIGHT
         if not _tools_row_visible(plotter, menu_y, menu_height):
             continue
         session.command_button_actors.append(
@@ -3843,7 +4255,7 @@ def _add_dropdown_menu(
                 y=menu_y,
                 width=field_width,
                 height=menu_height,
-                color=(0.17, 0.21, 0.27),
+                color=(0.17, 0.21, 0.27) if enabled else (0.23, 0.24, 0.26),
                 opacity=0.98,
             )
         )
@@ -3856,7 +4268,7 @@ def _add_dropdown_menu(
             x=menu_x + 8,
             y=menu_y + 6,
             font_size=TOOLS_MENU_FONT_SIZE,
-            color="white",
+            color="white" if enabled else "#7d8590",
         )
         session.command_button_actors.append(text_actor)
         if len(label) > visible_characters:
@@ -3873,7 +4285,7 @@ def _add_dropdown_menu(
                 y=menu_y,
                 width=field_width,
                 height=menu_height,
-                action=action,
+                action=action if enabled else "disabled-dropdown-row",
                 index=index,
                 view_id=view_id,
                 value=row_key,
@@ -4171,6 +4583,24 @@ def render_open_dropdown_menus(plotter: Any, session: GraphViewerSession) -> Non
             ),
         )
 
+    if session.edge_geometry_menu_open:
+        graph_data, _options = _appearance_graph_and_options(session)
+        rows = []
+        for index, geometry in enumerate(EDGE_GEOMETRY_MODES):
+            enabled = graph_data is not None and graph_data.supports_edge_geometry(geometry)
+            label = EDGE_GEOMETRY_LABELS[geometry]
+            if not enabled:
+                label += " (unavailable)"
+            rows.append((label, "set-edge-geometry", index, None, enabled))
+        _add_dropdown_menu(
+            plotter,
+            session,
+            x=inner_x,
+            y=layout["edge_geometry_dropdown"],
+            width=inner_width,
+            rows=rows,
+        )
+
     if session.interactive_overlay_target_menu_open:
         _add_dropdown_menu(
             plotter,
@@ -4452,6 +4882,31 @@ def _render_appearance_slider_row(
         )
 
 
+def _render_edge_geometry_dropdown(
+    plotter: Any,
+    session: GraphViewerSession,
+    *,
+    x: int,
+    y: int,
+    width: int,
+) -> None:
+    """Render the edge-geometry selector for the current appearance target."""
+    graph_data, options = _appearance_graph_and_options(session)
+    if not _tools_row_visible(plotter, y):
+        return
+    _add_dropdown_button(
+        plotter,
+        session,
+        label="Geometry",
+        value=EDGE_GEOMETRY_LABELS[options.edge_geometry],
+        action="toggle-edge-geometry-menu",
+        x=x,
+        y=y,
+        width=width,
+        enabled=graph_data is not None,
+    )
+
+
 def _render_overlay_appearance_sliders(
     plotter: Any,
     session: GraphViewerSession,
@@ -4479,6 +4934,14 @@ def _render_overlay_appearance_sliders(
                 action="toggle-overlay-target-menu",
                 x=inner_x, y=target_y, width=inner_width,
             )
+
+    _render_edge_geometry_dropdown(
+        plotter,
+        session,
+        x=inner_x,
+        y=layout["edge_geometry_dropdown"],
+        width=inner_width,
+    )
 
     _render_appearance_slider_row(
         plotter, session, title="Node Size", option="node",
@@ -4520,7 +4983,7 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession, *, pv_module
         _add_tools_section_header(
             plotter,
             session.command_button_actors,
-            title="Apperance",
+            title="Appearance",
             x=inner_x,
             y=appearance_header_y,
             width=inner_width,
@@ -4533,6 +4996,13 @@ def render_graph_sliders(plotter: Any, session: GraphViewerSession, *, pv_module
         return
 
     enabled = session.active_kind == "graphml"
+    _render_edge_geometry_dropdown(
+        plotter,
+        session,
+        x=inner_x,
+        y=layout["edge_geometry_dropdown"],
+        width=inner_width,
+    )
     _render_appearance_slider_row(
         plotter,
         session,
@@ -4652,6 +5122,7 @@ def _commit_graph_preview_value(
             if np.isclose(float(session.preview_edge_thickness), next_value):
                 return False
             session.set_preview_edge_thickness(next_value)
+    _set_error(plotter, session, None)
     refresh_active_graph(plotter, session, pv_module=pv_module)
     return True
 
@@ -4749,6 +5220,7 @@ def _show_interactive_plotter(plotter: Any, session: GraphViewerSession) -> None
     interactor = getattr(plotter, "iren", None)
     if interactor is not None and hasattr(interactor, "process_events"):
         interactor.process_events()
+    _start_marquee_timer(plotter, session)
     render_tools_panel(plotter, session)
     render_file_panel(plotter, session)
     if hasattr(plotter, "render"):
@@ -4761,10 +5233,16 @@ def launch_graph_viewer(
     *,
     edge_thickness: float = 1.0,
     node_size: float = 2.5,
+    edge_geometry: EdgeGeometry = "straight",
 ) -> int:
     """Launch an interactive PyVista window for an optional GraphML or NIfTI file."""
     pv = _import_pyvista()
-    session = create_graph_viewer_session(input_path, edge_thickness=edge_thickness, node_size=node_size)
+    session = create_graph_viewer_session(
+        input_path,
+        edge_thickness=edge_thickness,
+        node_size=node_size,
+        edge_geometry=edge_geometry,
+    )
     plotter = build_graph_plotter(None, session.options, pv_module=pv)
     render_active_graph(plotter, session, pv_module=pv)
     add_graph_viewer_controls(plotter, session, pv_module=pv)

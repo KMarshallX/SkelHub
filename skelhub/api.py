@@ -98,10 +98,12 @@ def launch_graph_viewer_from_path(
     *,
     edge_thickness: float = 1.0,
     node_size: float = 2.5,
+    edge_geometry: str = "straight",
 ) -> int:
     """Launch the framework visualization flow on an optional GraphML or NIfTI path."""
     return launch_graph_viewer(
         graph_path,
         edge_thickness=edge_thickness,
         node_size=node_size,
+        edge_geometry=edge_geometry,
     )

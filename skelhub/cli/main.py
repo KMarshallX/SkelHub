@@ -398,6 +398,12 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         default=2.5,
         help="Rendered node size in the 3D viewer.",
     )
+    graphviz_parser.add_argument(
+        "--edge_geometry",
+        choices=("straight", "continuous", "voxel"),
+        default="straight",
+        help="GraphML edge geometry: straight endpoints, continuous float centreline, or voxel-centre path.",
+    )
 
     return parser
 
@@ -481,6 +487,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 args.input,
                 edge_thickness=args.edge_thickness,
                 node_size=args.node_size,
+                edge_geometry=args.edge_geometry,
             )
         except GraphVisualizationError as exc:
             parser.exit(status=2, message=f"skelhub graphviz: error: {exc}\n")

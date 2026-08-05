@@ -1,5 +1,506 @@
 # Development Log
 
+## 2026-08-05 15:34 AEST
+
+### Remove graphviz warning actors from their owning renderer
+
+1. Summary of what changed
+- Fixed warning cleanup so red banner actors are removed from SkelHub's
+  dedicated overlay renderer instead of the active scene renderer.
+- Retained the banner reference when removal fails, preventing unreachable
+  onscreen actors from accumulating.
+- Used VTK `AddViewProp` and `RemoveViewProp` when available, with compatibility
+  fallbacks for older VTK versions.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and `controls.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Centralized scene-versus-overlay ownership handling in
+  `_remove_viewer_actor()` and reused it for warning and UI actor-list cleanup.
+- Verified overlay membership after removal before treating cleanup as
+  successful.
+
+4. Assumptions
+- Overlay actors retain their `_skelhub_overlay_renderer` owner marker; the
+  session overlay renderer provides a fallback for warning actors.
+- VTK `HasViewProp()` accurately reports whether a text actor remains attached.
+
+5. Limitations
+- Warning dismissal remains action-based; idle banners intentionally remain
+  until one of the configured viewer actions occurs.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`31 passed`)
+- `python -m pytest -q` (`61 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm banner disappearance in the target desktop renderer, although the
+  off-screen VTK regression now verifies actual overlay membership removal.
+
+## 2026-08-05 15:22 AEST
+
+### Replace timed graphviz warning expiry with action-based cleanup
+
+1. Summary of what changed
+- Removed the five-second warning deadline and warning-expiry timer callback.
+- Cleared the current warning when changing the loaded file or active view,
+  switching Single/Double/Overlay layout, using Reset View, Sync Camera, or Fit
+  Preview, or changing Geometry, Node Size, or Edge Thickness.
+- Retained the repeating timer exclusively for filename marquee animation.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `interaction.py`.
+- Updated local ignored tests in `tests/test_graphviz_edge_geometry.py` and
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept banner ownership centralized in `_set_error()` and invoked its clear
+  path from successful state-changing operations.
+- Preserved new validation errors generated after an action clears the previous
+  banner.
+- Renamed the timer-start helper to describe its remaining marquee-only role.
+
+4. Assumptions
+- “Change loaded file” includes file assignment, active-view changes, previous,
+  next, close, and successful import/drop transitions.
+- Node Size and Edge Thickness clear the banner only when their numeric value
+  actually changes.
+
+5. Limitations
+- A warning remains visible while the viewer is idle until one of the listed
+  actions occurs.
+- Base and Overlay opacity changes were not included because they were not part
+  of the requested warning-clear actions.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`30 passed`)
+- `python -m pytest -q` (`60 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm each action removes the banner in the target desktop viewer backend.
+
+## 2026-08-05 15:12 AEST
+
+### Clear stale graphviz warnings on mesh rebuild
+
+1. Summary of what changed
+- Cleared any existing red warning banner whenever the viewer begins rebuilding
+  its active mesh.
+- Preserved validation warnings produced by the new rebuild, so current
+  malformed or unavailable geometry is still reported.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Placed cleanup at the shared `render_active_graph()` boundary rather than in
+  individual Single, Double, or Overlay rendering branches.
+- Cleared the old banner before rebuild validation so new warnings are not
+  accidentally discarded.
+
+4. Assumptions
+- A warning belonging to the previously rendered scene is stale once a new
+  scene rebuild starts.
+- A warning generated during the new rebuild remains relevant and should stay
+  visible under the existing dismissal behavior.
+
+5. Limitations
+- A banner is only cleared by this fallback when a mesh rebuild occurs; the
+  existing timer remains responsible for dismissal while the scene is idle.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`25 passed`)
+- `python -m pytest -q` (`55 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm banner cleanup during a live desktop Geometry change on the target
+  display backend.
+
+## 2026-08-05 15:05 AEST
+
+### Fix non-overlay Geometry refresh and desktop warning timer
+
+1. Summary of what changed
+- Made Geometry selection rebuild the edge mesh and redraw controls in Single
+  and Double View, matching the working Overlay View behavior.
+- Treated VTK timer ID `0` as a failed pre-initialization attempt and retried
+  the shared UI timer after the desktop render-window interactor is mapped.
+- Preserved five-second red-banner expiry and the existing filename marquee on
+  the same repeating UI timer.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and `interaction.py`.
+- Extended local ignored regression coverage in
+  `tests/test_graphviz_edge_geometry.py` and
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Added an explicit geometry-rebuild flag to the shared graph refresh path,
+  retaining the lightweight actor-property update for size and thickness only.
+- Separated observer installation from idempotent UI-timer startup so observer
+  callbacks are not registered twice when the timer is retried after mapping.
+
+4. Assumptions
+- A positive VTK timer ID denotes successful timer creation; ID `0` or a
+  non-numeric result means the timer has not started.
+- PyVista initializes the desktop interactor during the first non-blocking
+  `show()` call, as observed with the installed viewer stack.
+
+5. Limitations
+- Geometry changes reconstruct the selected graph scene and can take longer
+  than changing point size or line width on very large graphs.
+- Banner removal remains quantized to the 180 ms UI timer interval.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`24 passed`)
+- `python -m pytest -q` (`54 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually verify the initialized timer ID and visual dismissal timing on the
+  target desktop display backend.
+
+## 2026-08-05 14:50 AEST
+
+### Fix overlapping Appearance dropdowns and warning expiry
+
+1. Summary of what changed
+- Kept the overlay `Target` dropdown visible above `Geometry` and reserved
+  temporary vertical space when either menu is open.
+- Added spacing between dropdown menu rows so Geometry options have distinct,
+  reliable click targets and do not overlap Node Size.
+- Hardened five-second removal for every red warning banner by checking its
+  deadline before filtering timer events by timer ID.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `controls.py`.
+- Extended local ignored coverage in `tests/test_graphviz_edge_geometry.py`
+  and `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept layout calculation centralized in `_tools_panel_layout()` and made open
+  menus reserve their own height, so controls and hitboxes use the same
+  coordinates.
+- Reused the existing menu renderer with a small explicit row gap rather than
+  adding special-case click handling for Geometry.
+- Kept warning expiry on the shared UI timer while making it independent of
+  marquee-specific timer-ID filtering.
+
+4. Assumptions
+- `Target` remains relevant only when Overlay View contains two GraphML layers,
+  matching the existing overlay appearance model.
+- Dropdown menus continue opening downward within the scrollable Tools panel.
+
+5. Limitations
+- Opening a dropdown moves later controls downward and may require scrolling
+  at shorter window heights.
+- Banner removal remains quantized to the 180 ms UI timer interval.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`21 passed`)
+- `python -m pytest -q` (`51 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually confirm dropdown placement and five-second banner dismissal with the
+  desktop viewer and the target display scaling.
+
+## 2026-08-05 14:37 AEST
+
+### Auto-dismiss graphviz error banners
+
+1. Summary of what changed
+- Made the red graphviz error banner disappear automatically five seconds
+  after it is shown.
+- Restarted the five-second timeout whenever a newer message replaces the
+  current banner.
+- Repainted the viewer immediately when an elapsed banner is removed.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `interaction.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused the existing repeating UI timer instead of creating another timer or
+  background thread.
+- Used a monotonic deadline so system clock changes cannot extend or shorten a
+  banner's lifetime.
+
+4. Assumptions
+- Viewer controls install the existing repeating UI timer during normal
+  interactive startup.
+- Five seconds begins when `_set_error()` creates or replaces the banner.
+
+5. Limitations
+- Expiry is checked on the 180 ms UI timer interval, so visual removal can
+  occur up to one timer tick after the exact five-second deadline.
+- The banner disappears immediately; no fade animation was added.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_filename_marquee.py tests/test_graphviz_edge_geometry.py tests/test_graph_visualization_drop.py` (`18 passed`)
+- `python -m pytest -q` (`48 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually confirm the five-second timing in a desktop viewer because GUI
+  event-loop scheduling can vary slightly under load.
+
+## 2026-08-05 13:29 AEST
+
+### Add selectable GraphML edge geometry to graphviz
+
+1. Summary of what changed
+- Added `Straight`, `Continuous`, and `Voxel Path` edge rendering modes under
+  the viewer's Appearance controls, between the optional overlay `Target` and
+  `Node Size` controls.
+- Rendered continuous float centreline points and discrete voxel-centre paths
+  as world-space polylines while preserving straight endpoint rendering as the
+  default.
+- Added `--edge_geometry straight|continuous|voxel` to `skelhub graphviz` and
+  the corresponding Python API argument.
+- Disabled unavailable or malformed curved modes and exposed their validation
+  reason instead of silently falling back.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and the focused
+  visualization facade modules for loading, models, constants, scene,
+  session, controls, and package exports.
+- Modified `skelhub/api.py` and `skelhub/cli/main.py`.
+- Added local ignored regression coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `README.md`, `docs/API.md`, `docs/architecture.md`,
+  `docs/visualization.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept `X/Y/Z` as the displayed node geometry and normalized both optional
+  voxel-space edge paths into the same world coordinate system during load.
+- Inferred one affine from all valid node `voxel_pos` and `X/Y/Z` pairs, then
+  required a full-rank fit with a small residual before enabling curved modes.
+- Stored geometry selection per view and per overlay graph layer through the
+  existing appearance options; the overlay `Target` controls which graph is
+  edited.
+- Used stored points directly as polylines without spline smoothing, preserving
+  source geometry and keeping the renderer lightweight.
+
+4. Assumptions
+- Compatible GraphML stores `voxel_pos`, `centerline_voxel_points`, and
+  `centerline_voxels` as JSON arrays of finite three-dimensional points.
+- One affine consistently relates every node's voxel and world coordinates.
+- A voxel-path view means a line through stored voxel centres, not voxel cubes.
+
+5. Limitations
+- GraphML does not yet store the source affine explicitly, so curved modes are
+  unavailable when node correspondences do not determine a unique affine.
+- Mode availability currently requires every edge path in the selected
+  attribute to parse successfully.
+- No spline interpolation is applied; `Continuous` shows the stored piecewise
+  polyline exactly.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py skelhub/api.py skelhub/cli/main.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graph_visualization_drop.py tests/test_graphviz_filename_marquee.py` (`16 passed`)
+- `python -m pytest -q` (`46 passed`)
+- `python -m skelhub graphviz --help`
+- Off-screen PyVista smoke render of `inf_right.graphml` in `continuous` mode
+  (`786` nodes, `547` edges, two graph actors).
+
+7. Remaining risks or recommended next steps
+- Store the original 4x4 affine as graph-level metadata in future GraphML
+  exports to support small or coplanar graphs without inference.
+- Manually check the dropdown interaction and line appearance in a desktop
+  viewer on representative large graphs.
+- The requested `inf_left.graphml` could not be used for the final smoke test
+  because its current line 8852 contains malformed XML (`<data key=rend</data>`);
+  it loaded earlier in the investigation before that malformed content was
+  observed. The sibling `inf_right.graphml` passed the curved-render smoke test.
+
+## 2026-08-04 23:07 AEST
+
+### Rebuild cleaner voxel paths from precise GraphML geometry
+
+1. Summary of what changed
+- Made node `voxel_pos` and edge `centerline_voxel_points` the authoritative
+  geometry for proto-graph cleaning.
+- Stopped validating or concatenating input `centerline_voxels`, allowing
+  separated GraphML with truncated or empty discrete paths to be cleaned.
+- Regenerated a non-empty, 26-connected integer path and updated
+  `num_centerline_voxels` for every output edge.
+
+2. Files added or modified
+- Modified `skelhub/postprocessing/protograph_cleaner.py`.
+- Extended local ignored coverage in `tests/test_protograph_cleaner.py`; the
+  existing `.gitignore` policy was not changed.
+- Modified `scripts/README.md`, `docs/postprocessing.md`,
+  `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept precise GraphML geometry authoritative because graph-separation tools
+  can insert boundary nodes while retaining only part of an old integer path.
+- Rebuilt discrete output from each fully merged precise polyline so downstream
+  GraphML readers still receive compatible integer path fields.
+- Filled rounded gaps locally with straight 26-connected steps without adding
+  a NIfTI dependency to this GraphML-only workflow.
+
+4. Assumptions
+- Every `centerline_voxel_points` path includes the exact positions of its two
+  incident nodes in either direction.
+- Regenerated integer paths should represent GraphML geometry; agreement with a
+  separate NIfTI is intentionally outside this cleaner's current scope.
+
+5. Limitations
+- The cleaner still rejects inconsistent precise endpoints because there is no
+  trustworthy geometry from which to repair them.
+- Regenerated integer voxels are rounded without volume-bound clipping because
+  the command does not receive an image shape.
+
+6. Tests run
+- `python -m py_compile skelhub/postprocessing/protograph_cleaner.py tests/test_protograph_cleaner.py`
+- `python -m pytest -q tests/test_protograph_cleaner.py` (`6 passed`)
+- `python -m pytest -q` (`37 passed`)
+- Full `inf_left.graphml` smoke run and output integrity audit.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Add optional NIfTI-aware validation later only if graph/image agreement
+  becomes part of this script's scope.
+
+## 2026-08-04 17:41 AEST
+
+### Preserve degree-2 nodes as merged centreline points
+
+1. Summary of what changed
+- Added `scripts/protograph_cleaner.sh` with required `--input/-i` and
+  `--output/-o` arguments plus optional `--verbose/-v` node progress.
+- Contracted maximal degree-2 chains while concatenating their existing float
+  and discrete centreline paths, so every removed node position remains in the
+  merged edge geometry.
+- Added an interactive overwrite prompt and atomic output replacement.
+- Preserved distinct parallel paths rather than collapsing edges that share
+  retained endpoints.
+
+2. Files added or modified
+- Added `skelhub/postprocessing/protograph_cleaner.py`,
+  `scripts/protograph_cleaner.sh`, and local regression coverage in
+  `tests/test_protograph_cleaner.py`; the repository's existing test-ignore
+  policy was not changed.
+- Modified `README.md`, `scripts/README.md`, `docs/architecture.md`,
+  `docs/postprocessing.md`, `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept GraphML transformation and validation in the postprocessing layer and
+  made the requested Bash script a thin active-environment launcher.
+- Used igraph's multigraph support so two vessel paths with the same endpoints
+  remain distinct.
+- Regenerated merged edge IDs and component-local edge indices while retaining
+  unchanged endpoint-node and consistent component metadata.
+- Wrote to a temporary sibling file before replacing the destination, so a
+  cleaning or GraphML-write failure cannot leave a partial requested output.
+
+4. Assumptions
+- `voxel_pos` is the node position contract and `centerline_voxel_points`
+  contains an ordered JSON path whose endpoints match its incident nodes.
+- If present, `centerline_voxels` is an ordered integer path with the same
+  endpoint convention.
+- Removed-node radius and identifier values are not required as point metadata;
+  only their positions are retained, as requested.
+
+5. Limitations
+- Input must be undirected and contain at least one degree-2 node.
+- A closed component made entirely from degree-2 nodes retains one anchor and
+  becomes a self-loop because GraphML cannot store an edge without a node.
+- Downstream tools must support GraphML parallel edges to retain every path.
+- Loading and writing use igraph's in-memory GraphML representation.
+
+6. Tests run
+- `bash -n scripts/protograph_cleaner.sh`
+- `python -m py_compile skelhub/postprocessing/protograph_cleaner.py tests/test_protograph_cleaner.py`
+- `python -m pytest -q tests/test_protograph_cleaner.py` (`5 passed`)
+- `python -m pytest -q` (`36 passed`)
+- Full-file smoke run on
+  `test_data/exvivo/Aug/skel_vessyn_aug_protograph.graphml`, including GraphML
+  round-trip and centreline integrity checks.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Consumers that assume a simple graph should be checked before using cleaner
+  output containing parallel paths.
+- Add a unified `skelhub` CLI command later if this helper becomes a primary
+  postprocessing workflow rather than a focused script.
+
+## 2026-08-02 18:00 AEST
+
+### Preserve continuous Laplacian graph-original edge paths
+
+1. Summary of what changed
+- Added `centerline_voxel_points` to every edge in Laplacian
+  `--graph_original` GraphML.
+- Stored unrounded, unclipped float samples along each straight source-to-target
+  segment, including both exact node positions.
+- Kept cleaned `--graph_output`, discrete `centerline_voxels`, and NIfTI
+  rasterization behavior unchanged.
+
+2. Files added or modified
+- Modified `skelhub/algorithms/laplacian/graphml.py` and
+  `skelhub/algorithms/laplacian/backend.py`.
+- Added local regression coverage in `tests/test_laplacian_graphml.py`; the
+  repository's existing test-ignore policy was not changed.
+- Modified `docs/algorithms.md`, `docs/postprocessing.md`,
+  `docs/StructuredOutput.md`, and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Made continuous-path export an explicit writer option enabled only for
+  `graph_original`, because both Laplacian GraphML outputs share one writer.
+- Used straight per-edge geometry as the canonical contracted-graph
+  representation; quadratic Bezier interpolation remains a separate NIfTI
+  rasterization rule.
+- Sampled a non-degenerate edge with
+  `ceil(max(abs(end - start))) + 1` points and stored a zero-length edge as one
+  point.
+
+4. Assumptions
+- Edge order runs from the exported source node to the exported target node.
+- JSON float arrays provide adequate round-trip precision for GraphML edge
+  metadata.
+
+5. Limitations
+- `centerline_voxel_points` is voxel-space only and does not add world-space
+  edge samples.
+- Feature extraction continues to use discrete `centerline_voxels`.
+- The continuous straight path intentionally differs from the quadratic-Bezier
+  rule used around degree-2 nodes when rasterizing the skeleton NIfTI.
+
+6. Tests run
+- `python -m py_compile skelhub/algorithms/laplacian/graphml.py skelhub/algorithms/laplacian/backend.py tests/test_laplacian_graphml.py`
+- `python -m pytest -q tests/test_laplacian_graphml.py tests/test_crop_escaping_graph_patches.py`
+  (`8 passed`)
+- `python -m pytest -q` (`31 passed`)
+- CLI smoke run using `tests/fixtures/straight_tube.nii.gz` with both GraphML
+  outputs, confirming the new field is present only in `graph_original` and
+  preserves float endpoints after an igraph GraphML round trip.
+- `git diff --check`
+
+7. Remaining risks or recommended next steps
+- Add affine-transformed `centerline_points` later only if world-space edge
+  paths become part of the shared GraphML contract.
+
 ## 2026-07-29 16:59 AEST
 
 ### Report local PCA eigenvalue ratios

@@ -3,6 +3,7 @@
 from .graph_viewer import (
     GraphVisualizationError,
     GraphVisualizationOptions,
+    EdgeGeometry,
     GraphViewerSession,
     GraphVisualizationData,
     NiftiVisualizationData,
@@ -24,6 +25,7 @@ from .graph_viewer import (
 
 __all__ = [
     "GraphVisualizationData",
+    "EdgeGeometry",
     "GraphVisualizationError",
     "GraphVisualizationOptions",
     "GraphViewerSession",
