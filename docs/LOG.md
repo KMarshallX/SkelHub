@@ -1,5 +1,225 @@
 # Development Log
 
+## 2026-08-05 15:34 AEST
+
+### Remove graphviz warning actors from their owning renderer
+
+1. Summary of what changed
+- Fixed warning cleanup so red banner actors are removed from SkelHub's
+  dedicated overlay renderer instead of the active scene renderer.
+- Retained the banner reference when removal fails, preventing unreachable
+  onscreen actors from accumulating.
+- Used VTK `AddViewProp` and `RemoveViewProp` when available, with compatibility
+  fallbacks for older VTK versions.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and `controls.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Centralized scene-versus-overlay ownership handling in
+  `_remove_viewer_actor()` and reused it for warning and UI actor-list cleanup.
+- Verified overlay membership after removal before treating cleanup as
+  successful.
+
+4. Assumptions
+- Overlay actors retain their `_skelhub_overlay_renderer` owner marker; the
+  session overlay renderer provides a fallback for warning actors.
+- VTK `HasViewProp()` accurately reports whether a text actor remains attached.
+
+5. Limitations
+- Warning dismissal remains action-based; idle banners intentionally remain
+  until one of the configured viewer actions occurs.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`31 passed`)
+- `python -m pytest -q` (`61 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm banner disappearance in the target desktop renderer, although the
+  off-screen VTK regression now verifies actual overlay membership removal.
+
+## 2026-08-05 15:22 AEST
+
+### Replace timed graphviz warning expiry with action-based cleanup
+
+1. Summary of what changed
+- Removed the five-second warning deadline and warning-expiry timer callback.
+- Cleared the current warning when changing the loaded file or active view,
+  switching Single/Double/Overlay layout, using Reset View, Sync Camera, or Fit
+  Preview, or changing Geometry, Node Size, or Edge Thickness.
+- Retained the repeating timer exclusively for filename marquee animation.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `interaction.py`.
+- Updated local ignored tests in `tests/test_graphviz_edge_geometry.py` and
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept banner ownership centralized in `_set_error()` and invoked its clear
+  path from successful state-changing operations.
+- Preserved new validation errors generated after an action clears the previous
+  banner.
+- Renamed the timer-start helper to describe its remaining marquee-only role.
+
+4. Assumptions
+- “Change loaded file” includes file assignment, active-view changes, previous,
+  next, close, and successful import/drop transitions.
+- Node Size and Edge Thickness clear the banner only when their numeric value
+  actually changes.
+
+5. Limitations
+- A warning remains visible while the viewer is idle until one of the listed
+  actions occurs.
+- Base and Overlay opacity changes were not included because they were not part
+  of the requested warning-clear actions.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`30 passed`)
+- `python -m pytest -q` (`60 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm each action removes the banner in the target desktop viewer backend.
+
+## 2026-08-05 15:12 AEST
+
+### Clear stale graphviz warnings on mesh rebuild
+
+1. Summary of what changed
+- Cleared any existing red warning banner whenever the viewer begins rebuilding
+  its active mesh.
+- Preserved validation warnings produced by the new rebuild, so current
+  malformed or unavailable geometry is still reported.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Extended local ignored coverage in
+  `tests/test_graphviz_edge_geometry.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Placed cleanup at the shared `render_active_graph()` boundary rather than in
+  individual Single, Double, or Overlay rendering branches.
+- Cleared the old banner before rebuild validation so new warnings are not
+  accidentally discarded.
+
+4. Assumptions
+- A warning belonging to the previously rendered scene is stale once a new
+  scene rebuild starts.
+- A warning generated during the new rebuild remains relevant and should stay
+  visible under the existing dismissal behavior.
+
+5. Limitations
+- A banner is only cleared by this fallback when a mesh rebuild occurs; the
+  existing timer remains responsible for dismissal while the scene is idle.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`25 passed`)
+- `python -m pytest -q` (`55 passed`)
+
+7. Remaining risks or recommended next steps
+- Confirm banner cleanup during a live desktop Geometry change on the target
+  display backend.
+
+## 2026-08-05 15:05 AEST
+
+### Fix non-overlay Geometry refresh and desktop warning timer
+
+1. Summary of what changed
+- Made Geometry selection rebuild the edge mesh and redraw controls in Single
+  and Double View, matching the working Overlay View behavior.
+- Treated VTK timer ID `0` as a failed pre-initialization attempt and retried
+  the shared UI timer after the desktop render-window interactor is mapped.
+- Preserved five-second red-banner expiry and the existing filename marquee on
+  the same repeating UI timer.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py` and `interaction.py`.
+- Extended local ignored regression coverage in
+  `tests/test_graphviz_edge_geometry.py` and
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Added an explicit geometry-rebuild flag to the shared graph refresh path,
+  retaining the lightweight actor-property update for size and thickness only.
+- Separated observer installation from idempotent UI-timer startup so observer
+  callbacks are not registered twice when the timer is retried after mapping.
+
+4. Assumptions
+- A positive VTK timer ID denotes successful timer creation; ID `0` or a
+  non-numeric result means the timer has not started.
+- PyVista initializes the desktop interactor during the first non-blocking
+  `show()` call, as observed with the installed viewer stack.
+
+5. Limitations
+- Geometry changes reconstruct the selected graph scene and can take longer
+  than changing point size or line width on very large graphs.
+- Banner removal remains quantized to the 180 ms UI timer interval.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`24 passed`)
+- `python -m pytest -q` (`54 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually verify the initialized timer ID and visual dismissal timing on the
+  target desktop display backend.
+
+## 2026-08-05 14:50 AEST
+
+### Fix overlapping Appearance dropdowns and warning expiry
+
+1. Summary of what changed
+- Kept the overlay `Target` dropdown visible above `Geometry` and reserved
+  temporary vertical space when either menu is open.
+- Added spacing between dropdown menu rows so Geometry options have distinct,
+  reliable click targets and do not overlap Node Size.
+- Hardened five-second removal for every red warning banner by checking its
+  deadline before filtering timer events by timer ID.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`, `constants.py`, and
+  `controls.py`.
+- Extended local ignored coverage in `tests/test_graphviz_edge_geometry.py`
+  and `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Kept layout calculation centralized in `_tools_panel_layout()` and made open
+  menus reserve their own height, so controls and hitboxes use the same
+  coordinates.
+- Reused the existing menu renderer with a small explicit row gap rather than
+  adding special-case click handling for Geometry.
+- Kept warning expiry on the shared UI timer while making it independent of
+  marquee-specific timer-ID filtering.
+
+4. Assumptions
+- `Target` remains relevant only when Overlay View contains two GraphML layers,
+  matching the existing overlay appearance model.
+- Dropdown menus continue opening downward within the scrollable Tools panel.
+
+5. Limitations
+- Opening a dropdown moves later controls downward and may require scrolling
+  at shorter window heights.
+- Banner removal remains quantized to the 180 ms UI timer interval.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py`
+- `python -m pytest -q tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py tests/test_graph_visualization_drop.py` (`21 passed`)
+- `python -m pytest -q` (`51 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually confirm dropdown placement and five-second banner dismissal with the
+  desktop viewer and the target display scaling.
+
 ## 2026-08-05 14:37 AEST
 
 ### Auto-dismiss graphviz error banners

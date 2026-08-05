@@ -132,15 +132,18 @@ header boundary.
 
 For GraphML rendering, the Geometry dropdown appears above Node Size and Edge
 Thickness. In an overlay containing two graphs, it appears below `Target` and
-controls the selected graph layer. Unavailable geometry rows are greyed out;
-opening the menu displays their validation status. Node and Edge control
-on-screen point size and line width. Slider edits commit when the slider is
-released. In double-view mode, appearance settings are per-view: changing
-Geometry, Node Size, or Edge Thickness in `View A` does not change `View B`. `Fit preview`
+controls the selected graph layer. Opening either dropdown reserves space
+below it, moving later controls out of the menu's clickable area. Unavailable
+geometry rows are greyed out; opening the menu displays their validation
+status. Node and Edge control on-screen point size and line width. Slider edits
+commit when the slider is released. In double-view mode, appearance settings
+are per-view: changing Geometry, Node Size, or Edge Thickness in `View A` does
+not change `View B`. Geometry changes rebuild the selected graph's edge mesh in
+Single, Double, and Overlay View. `Fit preview`
 adjusts the camera distance to fit the active object in the active viewport
 while preserving the current camera angle. When the active file is a NIfTI
-volume, the `Appearance` section remains visible but its sliders are greyed
-out and disabled.
+volume, the `Appearance` section remains visible but its sliders are greyed out
+and disabled.
 
 When the right-side panel cannot visually contain every control, a scrollbar
 appears on the panel's right edge. Drag the scrollbar thumb, or use the mouse

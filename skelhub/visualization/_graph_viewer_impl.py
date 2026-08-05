@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import importlib
 import json
 from pathlib import Path
-import time
 from typing import Any, Literal, Sequence
 import warnings
 
@@ -46,7 +45,7 @@ TOOLS_PANEL_WIDTH = 336  # kept for backward reference; runtime width is 25 % of
 TOOLS_PANEL_HEIGHT = 560
 TOOLS_PANEL_MIN_HEIGHT = 220
 TOOLS_PANEL_BOTTOM_MARGIN = 12
-TOOLS_PANEL_CONTENT_HEIGHT = 1120
+TOOLS_PANEL_CONTENT_HEIGHT = 1200
 TOOLS_SCROLLBAR_WIDTH = 10
 TOOLS_SCROLLBAR_GUTTER = 30
 TOOLS_SCROLL_STEP = 42
@@ -61,13 +60,13 @@ TOOLS_TEXT_FONT_SIZE = 11
 TOOLS_BUTTON_FONT_SIZE = 10
 TOOLS_MENU_FONT_SIZE = 10
 VIEW_LAYOUT_MENU_ROW_HEIGHT = 22
+DROPDOWN_MENU_ROW_GAP = 2
 VIEW_LAYOUT_MENU_MAX_ROWS = 6
 DROPDOWN_LABEL_WIDTH = 72
 DROPDOWN_CHARACTER_WIDTH = 6
 MARQUEE_CHARACTER_WIDTH = 8
 MARQUEE_GAP = "   "
 MARQUEE_INTERVAL_MS = 180
-ERROR_BANNER_DURATION_SECONDS = 5.0
 HEADER_HEIGHT_FRACTION = 0.05
 HEADER_COLOR = (0.733, 0.765, 0.780)  # #BBC3C7
 HEADER_BORDER_COLOR = (0.949, 0.949, 0.306)  # #F2F24E
@@ -346,7 +345,6 @@ class GraphViewerSession:
     camera_sync_enabled: bool = True
     shared_camera_state: CameraState | None = None
     error_actor: Any | None = None
-    error_expires_at: float | None = None
     layout_menu_open: bool = False
     view_menu_open: ViewID | None = None
     overlay_menu_open: str | None = None  # "base" or "overlay"
@@ -1588,24 +1586,45 @@ def _ensure_overlay_renderer(plotter: Any, session: GraphViewerSession) -> Any |
     return overlay
 
 
-def _remove_actor_list(plotter: Any, actors: list[Any]) -> None:
-    if not actors or not hasattr(plotter, "remove_actor"):
-        actors.clear()
-        return
-    for actor in actors:
-        if actor is None:
-            continue
-        overlay_renderer = getattr(actor, "_skelhub_overlay_renderer", None)
-        if overlay_renderer is not None and hasattr(overlay_renderer, "RemoveActor2D"):
-            try:
-                overlay_renderer.RemoveActor2D(actor)
-                continue
-            except Exception:
-                pass
+def _remove_viewer_actor(
+    plotter: Any,
+    actor: Any,
+    *,
+    overlay_renderer: Any | None = None,
+) -> bool:
+    """Remove an actor from its owning overlay or the active scene renderer."""
+    if actor is None:
+        return False
+    actor_overlay = getattr(actor, "_skelhub_overlay_renderer", None)
+    candidate_overlays = []
+    for candidate in (actor_overlay, overlay_renderer):
+        if candidate is not None and all(candidate is not current for current in candidate_overlays):
+            candidate_overlays.append(candidate)
+    for candidate in candidate_overlays:
         try:
-            plotter.remove_actor(actor, render=False)
-        except TypeError:
-            plotter.remove_actor(actor)
+            if hasattr(candidate, "HasViewProp") and not candidate.HasViewProp(actor):
+                continue
+            if hasattr(candidate, "RemoveViewProp"):
+                candidate.RemoveViewProp(actor)
+            elif hasattr(candidate, "RemoveActor2D"):
+                candidate.RemoveActor2D(actor)
+            else:
+                continue
+            return not hasattr(candidate, "HasViewProp") or not candidate.HasViewProp(actor)
+        except Exception:
+            continue
+    if not hasattr(plotter, "remove_actor"):
+        return False
+    try:
+        result = plotter.remove_actor(actor, render=False)
+    except TypeError:
+        result = plotter.remove_actor(actor)
+    return result is not False
+
+
+def _remove_actor_list(plotter: Any, actors: list[Any]) -> None:
+    for actor in actors:
+        _remove_viewer_actor(plotter, actor)
     actors.clear()
 
 
@@ -1673,16 +1692,24 @@ def _advance_filename_marquees(plotter: Any, session: GraphViewerSession) -> boo
 
 def _add_actor2d(plotter: Any, actor: Any) -> None:
     overlay_renderer = getattr(plotter, "_skelhub_overlay_renderer", None)
-    if overlay_renderer is not None and hasattr(overlay_renderer, "AddActor2D"):
-        overlay_renderer.AddActor2D(actor)
+    if overlay_renderer is not None and (
+        hasattr(overlay_renderer, "AddViewProp") or hasattr(overlay_renderer, "AddActor2D")
+    ):
+        if hasattr(overlay_renderer, "AddViewProp"):
+            overlay_renderer.AddViewProp(actor)
+        else:
+            overlay_renderer.AddActor2D(actor)
         try:
             setattr(actor, "_skelhub_overlay_renderer", overlay_renderer)
         except Exception:
             pass
         return
     renderer = getattr(plotter, "renderer", None)
-    if renderer is not None and hasattr(renderer, "AddActor2D"):
-        renderer.AddActor2D(actor)
+    if renderer is not None and (hasattr(renderer, "AddViewProp") or hasattr(renderer, "AddActor2D")):
+        if hasattr(renderer, "AddViewProp"):
+            renderer.AddViewProp(actor)
+        else:
+            renderer.AddActor2D(actor)
         return
     if hasattr(plotter, "add_actor"):
         try:
@@ -1937,13 +1964,13 @@ def _set_status(plotter: Any, session: GraphViewerSession) -> None:
 
 def _set_error(plotter: Any, session: GraphViewerSession, message: str | None) -> None:
     if session.error_actor is not None:
-        if hasattr(plotter, "remove_actor"):
-            try:
-                plotter.remove_actor(session.error_actor, render=False)
-            except TypeError:
-                plotter.remove_actor(session.error_actor)
+        if not _remove_viewer_actor(
+            plotter,
+            session.error_actor,
+            overlay_renderer=session.overlay_renderer,
+        ):
+            return
         session.error_actor = None
-    session.error_expires_at = None
     if message is None:
         return
     session.error_actor = _add_overlay_text(
@@ -1955,25 +1982,6 @@ def _set_error(plotter: Any, session: GraphViewerSession, message: str | None) -
         color="white",
         background_color=(0.55, 0.07, 0.08),
     )
-    session.error_expires_at = time.monotonic() + ERROR_BANNER_DURATION_SECONDS
-
-
-def _expire_error_banner(
-    plotter: Any,
-    session: GraphViewerSession,
-    *,
-    now: float | None = None,
-) -> bool:
-    """Remove an elapsed transient error banner."""
-    if session.error_actor is None or session.error_expires_at is None:
-        return False
-    current_time = time.monotonic() if now is None else float(now)
-    if current_time < session.error_expires_at:
-        return False
-    _set_error(plotter, session, None)
-    if hasattr(plotter, "render"):
-        plotter.render()
-    return True
 
 
 def _box_corners(lower: np.ndarray, upper: np.ndarray) -> np.ndarray:
@@ -2181,6 +2189,7 @@ def toggle_interactive(plotter: Any, session: GraphViewerSession, *, pv_module: 
 
 def toggle_camera_sync(plotter: Any, session: GraphViewerSession) -> None:
     """Enable or disable shared world-coordinate camera state."""
+    _set_error(plotter, session, None)
     session.camera_sync_enabled = not session.camera_sync_enabled
     if session.camera_sync_enabled:
         _store_shared_camera_state(plotter, session)
@@ -2464,6 +2473,7 @@ def _zoom_active_camera(plotter: Any, session: GraphViewerSession, *, direction:
 
 def fit_active_preview(plotter: Any, session: GraphViewerSession) -> bool:
     """Fit the active object by changing camera distance while preserving orientation."""
+    _set_error(plotter, session, None)
     _select_view_renderer(plotter, session.active_view_id)
     scene = _active_scene_center_and_radius(session)
     camera = getattr(plotter, "camera", None)
@@ -2681,6 +2691,7 @@ def render_active_graph(
     view_id: ViewID | None = None,
 ) -> None:
     """Render the active session file using committed appearance options."""
+    _set_error(plotter, session, None)
     apply_view_layout(plotter, session)
     render_view_headers(plotter, session)
     view = session.view_state(view_id)
@@ -2743,8 +2754,14 @@ def render_active_graph(
         plotter.render()
 
 
-def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
-    """Commit preview slider values when relevant and rebuild the active scene."""
+def refresh_active_graph(
+    plotter: Any,
+    session: GraphViewerSession,
+    *,
+    pv_module: Any | None = None,
+    rebuild_geometry: bool = False,
+) -> None:
+    """Commit appearance values and rebuild the scene when geometry changed."""
     if session.layout_mode == "overlay":
         session.apply_preview_options()
         render_active_graph(plotter, session, pv_module=pv_module, reset_camera=False, view_id=session.active_view_id)
@@ -2752,7 +2769,11 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
     if session.active_kind != "nifti":
         session.apply_preview_options()
         graph_data = session.active_graph_data
-        if graph_data is not None and _update_graph_appearance(session, session.active_view_id):
+        if (
+            not rebuild_geometry
+            and graph_data is not None
+            and _update_graph_appearance(session, session.active_view_id)
+        ):
             render_selected_node_highlight(plotter, session, pv_module=pv_module, view_id=session.active_view_id)
             if hasattr(plotter, "render"):
                 plotter.render()
@@ -2762,6 +2783,7 @@ def refresh_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module
 
 def reset_active_view(plotter: Any, session: GraphViewerSession) -> None:
     """Restore the initial camera state for the active graph when available."""
+    _set_error(plotter, session, None)
     _select_view_renderer(plotter, session.active_view_id)
     active_file = session.active_file
     restored = False
@@ -3000,6 +3022,7 @@ def set_layout_mode(
         session.layout_menu_open = False
         render_tools_panel(plotter, session)
         return
+    _set_error(plotter, session, None)
     if mode == "double":
         session.views["a"].file_index = session.active_index
         session.views["b"].file_index = None
@@ -3035,6 +3058,7 @@ def set_active_view(plotter: Any, session: GraphViewerSession, view_id: ViewID) 
         return False
     if session.active_view_id == view_id:
         return False
+    _set_error(plotter, session, None)
     session.active_view_id = view_id
     _clear_node_id_edit(session)
     _select_view_renderer(plotter, view_id)
@@ -3679,7 +3703,12 @@ def dispatch_ui_click(
             options.edge_geometry = geometry
             session.edge_geometry_menu_open = False
             _set_error(plotter, session, None)
-            refresh_active_graph(plotter, session, pv_module=pv_module)
+            refresh_active_graph(
+                plotter,
+                session,
+                pv_module=pv_module,
+                rebuild_geometry=True,
+            )
             return True
         if hitbox.action == "toggle-interactive-overlay-target-menu":
             session.interactive_overlay_target_menu_open = not session.interactive_overlay_target_menu_open
@@ -3850,7 +3879,6 @@ def install_ui_mouse_observers(
             event_timer_id = int(caller.GetTimerEventId())
             if event_timer_id > 0 and event_timer_id != session.marquee_timer_id:
                 return
-        _expire_error_banner(plotter, session)
         _advance_filename_marquees(plotter, session)
 
     def _add_cancellable_observer(event_name: str, callback: Any) -> None:
@@ -3875,11 +3903,7 @@ def install_ui_mouse_observers(
         interactor.add_observer("KeyPressEvent", _on_key_press)
         interactor.add_observer("InteractionEvent", _on_interaction)
         interactor.add_observer("TimerEvent", _on_marquee_timer)
-        if session.marquee_timer_id is None:
-            if hasattr(interactor, "create_timer"):
-                session.marquee_timer_id = int(interactor.create_timer(MARQUEE_INTERVAL_MS))
-            elif hasattr(native_interactor, "CreateRepeatingTimer"):
-                session.marquee_timer_id = int(native_interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
+        _start_marquee_timer(plotter, session)
         return True
     if hasattr(interactor, "AddObserver"):
         interactor.AddObserver("ConfigureEvent", _on_resize)
@@ -3891,10 +3915,31 @@ def install_ui_mouse_observers(
         interactor.AddObserver("KeyPressEvent", _on_key_press)
         interactor.AddObserver("InteractionEvent", _on_interaction)
         interactor.AddObserver("TimerEvent", _on_marquee_timer)
-        if session.marquee_timer_id is None and hasattr(interactor, "CreateRepeatingTimer"):
-            session.marquee_timer_id = int(interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS))
+        _start_marquee_timer(plotter, session)
         return True
     return False
+
+
+def _start_marquee_timer(plotter: Any, session: GraphViewerSession) -> int | None:
+    """Start the filename-marquee timer once the interactor is ready."""
+    if session.marquee_timer_id is not None and session.marquee_timer_id > 0:
+        return session.marquee_timer_id
+    interactor = getattr(plotter, "iren", None)
+    if interactor is None:
+        session.marquee_timer_id = None
+        return None
+    native_interactor = getattr(interactor, "interactor", interactor)
+    timer_id: Any = None
+    if hasattr(interactor, "create_timer"):
+        timer_id = interactor.create_timer(MARQUEE_INTERVAL_MS)
+    elif hasattr(native_interactor, "CreateRepeatingTimer"):
+        timer_id = native_interactor.CreateRepeatingTimer(MARQUEE_INTERVAL_MS)
+    try:
+        normalized_timer_id = int(timer_id)
+    except (TypeError, ValueError):
+        normalized_timer_id = 0
+    session.marquee_timer_id = normalized_timer_id if normalized_timer_id > 0 else None
+    return session.marquee_timer_id
 
 
 def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
@@ -3903,6 +3948,11 @@ def _tools_panel_geometry(plotter: Any) -> tuple[int, int, int]:
     panel_x = int(window_width * 0.75)
     panel_top = height - TOOLS_PANEL_TOP_MARGIN
     return panel_x, panel_top, panel_top - _tools_panel_visible_height(plotter)
+
+
+def _dropdown_menu_reserved_height(row_count: int) -> int:
+    """Return vertical space reserved below an open dropdown button."""
+    return max(0, int(row_count)) * (VIEW_LAYOUT_MENU_ROW_HEIGHT + DROPDOWN_MENU_ROW_GAP) + COMMAND_BUTTON_GAP
 
 
 def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, int]:
@@ -3930,13 +3980,23 @@ def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, 
     layout["appearance_header"] = cursor_top - TOOLS_SECTION_HEADER_HEIGHT
     if session.layout_mode == "overlay" and _overlay_has_both_graph_layers(session):
         layout["appearance_target"] = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
-        layout["edge_geometry_dropdown"] = layout["appearance_target"] - row_stride
+        target_menu_space = (
+            _dropdown_menu_reserved_height(2) if session.overlay_target_menu_open else 0
+        )
+        layout["edge_geometry_dropdown"] = layout["appearance_target"] - row_stride - target_menu_space
     else:
         layout["appearance_target"] = layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
         layout["edge_geometry_dropdown"] = (
             layout["appearance_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
         )
-    layout["node_slider"] = layout["edge_geometry_dropdown"] - APPEARANCE_SLIDER_TOP_GAP
+    geometry_menu_space = (
+        _dropdown_menu_reserved_height(len(EDGE_GEOMETRY_MODES))
+        if session.edge_geometry_menu_open
+        else 0
+    )
+    layout["node_slider"] = (
+        layout["edge_geometry_dropdown"] - APPEARANCE_SLIDER_TOP_GAP - geometry_menu_space
+    )
     layout["edge_slider"] = layout["node_slider"] - APPEARANCE_SLIDER_SPACING
 
     if session.layout_mode == "overlay":
@@ -4178,13 +4238,14 @@ def _add_dropdown_menu(
 ) -> None:
     field_x = x + DROPDOWN_LABEL_WIDTH
     field_width = width - DROPDOWN_LABEL_WIDTH
+    row_stride = VIEW_LAYOUT_MENU_ROW_HEIGHT + DROPDOWN_MENU_ROW_GAP
     for row_index, row in enumerate(rows[:VIEW_LAYOUT_MENU_MAX_ROWS]):
         label, action, index, view_id = row[:4]
         enabled = bool(row[4]) if len(row) == 5 else True
-        row_y = y - VIEW_LAYOUT_MENU_ROW_HEIGHT * (row_index + 1)
+        row_y = y - row_stride * (row_index + 1)
         menu_x = field_x
-        menu_y = row_y - 2
-        menu_height = VIEW_LAYOUT_MENU_ROW_HEIGHT + 4
+        menu_y = row_y
+        menu_height = VIEW_LAYOUT_MENU_ROW_HEIGHT
         if not _tools_row_visible(plotter, menu_y, menu_height):
             continue
         session.command_button_actors.append(
@@ -5061,6 +5122,7 @@ def _commit_graph_preview_value(
             if np.isclose(float(session.preview_edge_thickness), next_value):
                 return False
             session.set_preview_edge_thickness(next_value)
+    _set_error(plotter, session, None)
     refresh_active_graph(plotter, session, pv_module=pv_module)
     return True
 
@@ -5158,6 +5220,7 @@ def _show_interactive_plotter(plotter: Any, session: GraphViewerSession) -> None
     interactor = getattr(plotter, "iren", None)
     if interactor is not None and hasattr(interactor, "process_events"):
         interactor.process_events()
+    _start_marquee_timer(plotter, session)
     render_tools_panel(plotter, session)
     render_file_panel(plotter, session)
     if hasattr(plotter, "render"):
