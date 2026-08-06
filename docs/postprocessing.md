@@ -58,8 +58,14 @@ node CSV records graph node IDs, voxel positions, and node degrees.
   self-loops; an otherwise-isolated node touching another node receives an
   empty-path edge.
 - Write an undirected GraphML graph. Nodes store their supporting voxels, mean
-  voxel position, affine-transformed world position, kind, and border status;
-  edges store ordered centerline voxels and world-space points.
+  voxel position, affine-transformed world position, kind, and border status.
+  Each edge path is oriented from its serialized GraphML source to target and
+  includes both incident node positions. `centerline_voxel_points` stores the
+  exact float node positions around the original regular-component voxels;
+  `centerline_world_points` applies the NIfTI affine to that path;
+  `centerline_voxels` includes the rounded node positions and any required
+  26-connected connector voxels while preserving the original discrete path.
+  `num_centerline_voxels` records the resulting discrete path length.
 
 ### Usage
 
@@ -76,7 +82,8 @@ Inputs and outputs:
 
 - Input: a binary 3D skeleton NIfTI volume.
 - Output: a GraphML graph containing node positions and ordered edge
-  `centerline_voxels`.
+  `centerline_voxels`, `centerline_voxel_points`, and
+  `centerline_world_points`.
 
 The short flag form is also supported:
 
