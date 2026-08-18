@@ -1,5 +1,53 @@
 # Development Log
 
+## 2026-08-18 17:12 AEST
+
+### Preserve graphviz cameras during Double and Overlay file changes
+
+1. Summary of what changed
+- Preserved the full active viewport camera when replacing a file in Double
+  View or either layer in Overlay View.
+- Kept Double View cameras independent when the layout opens; enabling
+  `Sync Camera` now immediately copies the active camera to the other populated
+  viewport and keeps later navigation synchronized.
+- Prevented file replacement and camera synchronization from recalculating the
+  restored clipping range.
+
+2. Files added or modified
+- Modified `skelhub/visualization/_graph_viewer_impl.py`.
+- Added local ignored regression coverage in
+  `tests/test_graph_camera_preservation.py`; `.gitignore` was not changed.
+- Modified `docs/visualization.md` and `docs/LOG.md`.
+
+3. Architecture decisions made
+- Reused the framework `CameraState` as the complete camera snapshot and kept
+  the snapshot on each `ViewState` so Double View camera ownership stays local
+  to each viewport.
+- Passed an explicit saved camera through scene reconstruction instead of
+  suppressing scene fitting implicitly.
+
+4. Assumptions
+- File changes include Tools-panel assignments, previous/next navigation,
+  imports or drops, and clearing an assigned Double View file.
+- Overlay View has one shared viewport camera by construction.
+- `Sync Camera`, `Reset View`, and `Fit Preview` are intentional camera-changing
+  actions.
+
+5. Limitations
+- A replacement dataset can remain completely off-screen when its coordinates
+  differ from the preserved camera, as required.
+- Desktop interaction was not exercised; coverage uses off-screen PyVista/VTK.
+
+6. Tests run
+- `python -m py_compile skelhub/visualization/*.py tests/test_graph_camera_preservation.py`
+- `python -m pytest tests/test_graph_camera_preservation.py -q` (`3 passed`)
+- `python -m pytest -q tests/test_graph_camera_preservation.py tests/test_graph_visualization_drop.py tests/test_graphviz_edge_geometry.py tests/test_graphviz_filename_marquee.py` (`34 passed`)
+- `python -m pytest -q` (`68 passed`)
+
+7. Remaining risks or recommended next steps
+- Manually verify file assignments and Sync Camera in a desktop-capable viewer
+  using differently scaled or translated GraphML and NIfTI inputs.
+
 ## 2026-08-06 15:24 AEST
 
 ### Include incident node coordinates in graphgen edge paths
