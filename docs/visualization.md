@@ -120,8 +120,14 @@ or any loaded file. Clicking inside a viewport makes that viewport active,
 and the Tools panel edits only that active viewport. `Import` loads a file
 into the global loaded-file list and assigns it to the active viewport;
 `Close` clears only the active viewport assignment in double-view mode.
+Each viewport keeps its own complete camera state when its assigned file is
+changed, including position, focal point, orientation, clipping range,
+projection, viewing angle, and zoom. The replacement file is not fitted or
+recentered automatically, even when it lies outside the preserved view.
 
 `Overlay View` draws a Base file and an Overlay file in the same viewport.
+Changing either layer preserves that viewport's complete camera state without
+fitting or recentering the replacement file.
 Its top bar displays the two filenames on separate full-width lines. A
 filename that is wider than its line scrolls continuously so the complete
 name remains discoverable. The Tools-panel Base and Overlay selectors reserve
@@ -166,16 +172,14 @@ and updates the Tools panel with `View B` node details. Returning to `View A`
 restores `View A`'s last selected node details. Arrow-key navigation moves
 through nodes only in the active view.
 
-`Sync Camera` starts enabled. When selecting another loaded GraphML or NIfTI
-file, the viewer restores the same absolute camera position, focal point,
-orientation, angle, and zoom in displayed world coordinates. This allows
-aligned NIfTI and GraphML scenes to be inspected in the same view; arbitrary
-GraphML coordinates or unregistered datasets may not align usefully, in
-which case camera synchronization can be turned off. With synchronization
-enabled, `Reset View` on the active file becomes the shared world-coordinate
-camera for later file switches. Switching to `Double View` forces `Sync Camera`
-on. With synchronization enabled, camera orbit, wheel travel, reset, and fit
-operations in the active viewport are copied to the other populated viewport.
+`Sync Camera` starts enabled in Single View. Entering Double View disables it,
+so `View A` and `View B` initially retain independent cameras. Enabling
+`Sync Camera` copies the active viewport's complete camera state to the other
+populated viewport; subsequent camera orbit, wheel travel, reset, and fit
+operations remain synchronized. Arbitrary GraphML coordinates or unregistered
+datasets may not align usefully and can be inspected with synchronization off.
+`Reset View` and `Fit Preview` remain explicit framing actions and can alter
+the active camera; ordinary file changes in Double or Overlay View cannot.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz`. SkelHub reads the
 `vtkStringArray` filename payload from VTK's `DropFilesEvent`; availability of

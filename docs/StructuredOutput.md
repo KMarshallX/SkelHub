@@ -66,7 +66,11 @@ Laplacian graph path that differs from the supplied skeleton volume.
 - `skelhub run --algorithm laplacian --graph_output ...` can also write cleaned GraphML.
 - `skelhub run --algorithm laplacian --graph_original ...` writes refined pre-cleaning GraphML whose edges include JSON `centerline_voxel_points`: unrounded, unclipped float samples along the straight source-to-target segment. The cleaned `--graph_output` export does not include this field.
 - `skelhub evaluate --json-output ...` writes a structured JSON evaluation report.
-- `skelhub graphgen` writes a GraphML proto-graph from a skeleton NIfTI.
+- `skelhub graphgen` writes a GraphML proto-graph from a skeleton NIfTI. Every
+  edge's `centerline_voxels`, `centerline_voxel_points`, and
+  `centerline_world_points` path is oriented from GraphML source to target and
+  includes the corresponding incident node coordinates. Integer paths use
+  rounded node positions and 26-connected endpoint connectors.
 - `skelhub feature` writes separate edge and node CSV files from a binary vessel foreground, skeleton, and compatible GraphML graph.
 
 Feature edge CSV base columns (`length`, `minRadius`, `avgRadius`,

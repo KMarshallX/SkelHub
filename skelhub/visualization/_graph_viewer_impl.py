@@ -2193,6 +2193,7 @@ def toggle_camera_sync(plotter: Any, session: GraphViewerSession) -> None:
     session.camera_sync_enabled = not session.camera_sync_enabled
     if session.camera_sync_enabled:
         _store_shared_camera_state(plotter, session)
+        _sync_camera_to_other_views(plotter, session)
     else:
         session.shared_camera_state = None
     render_tools_panel(plotter, session)
@@ -2357,6 +2358,24 @@ def _restore_camera_state(plotter: Any, state: CameraState) -> bool:
     return True
 
 
+def _camera_state_for_file_switch(
+    plotter: Any,
+    session: GraphViewerSession,
+    view_id: ViewID,
+) -> CameraState | None:
+    """Capture the viewport camera before replacing one of its displayed files."""
+    view = session.view_state(view_id)
+    _select_view_renderer(plotter, view_id)
+    has_scene = (
+        view.base_file_index is not None or view.overlay_file_index is not None
+        if session.layout_mode == "overlay"
+        else view.file_index is not None
+    )
+    if has_scene:
+        view.camera_state = _capture_camera_state(plotter)
+    return view.camera_state
+
+
 def _store_initial_camera_state(plotter: Any, session: GraphViewerSession, view_id: ViewID | None = None) -> None:
     view = session.view_state(view_id)
     _select_view_renderer(plotter, view.view_id)
@@ -2396,8 +2415,7 @@ def _sync_camera_to_other_views(plotter: Any, session: GraphViewerSession, sourc
         if view_id == source.view_id or session.file_for_view(view_id) is None:
             continue
         _select_view_renderer(plotter, view_id)
-        if _restore_camera_state(plotter, session.shared_camera_state):
-            _reset_camera_clipping_range(plotter)
+        _restore_camera_state(plotter, session.shared_camera_state)
     _select_view_renderer(plotter, source.view_id)
 
 
@@ -2557,6 +2575,7 @@ def _render_overlay_layers(
     *,
     pv_module: Any | None = None,
     reset_camera: bool = True,
+    camera_state: CameraState | None = None,
 ) -> None:
     """Render base + overlay layers in a single viewport for overlay mode."""
     _select_view_renderer(plotter, view.view_id)
@@ -2571,6 +2590,8 @@ def _render_overlay_layers(
         _remove_selected_node_highlight(plotter, session, view.view_id)
 
     if base is None and overlay is None:
+        if camera_state is not None and _restore_camera_state(plotter, camera_state):
+            view.camera_state = camera_state
         _set_status(plotter, session)
         render_tools_panel(plotter, session)
         if hasattr(plotter, "render"):
@@ -2639,9 +2660,12 @@ def _render_overlay_layers(
                     view.overlay_overlay_nifti_actor = actor
 
     _set_error(plotter, session, "; ".join(geometry_statuses) if geometry_statuses else None)
-    if reset_camera:
+    if camera_state is not None and _restore_camera_state(plotter, camera_state):
+        view.camera_state = camera_state
+    elif reset_camera:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session, view.view_id)
+        view.camera_state = _capture_camera_state(plotter)
     _set_status(plotter, session)
     render_tools_panel(plotter, session)
     render_selected_node_highlight(plotter, session, pv_module=pv_module, view_id=view.view_id)
@@ -2689,6 +2713,7 @@ def render_active_graph(
     pv_module: Any | None = None,
     reset_camera: bool = True,
     view_id: ViewID | None = None,
+    camera_state: CameraState | None = None,
 ) -> None:
     """Render the active session file using committed appearance options."""
     _set_error(plotter, session, None)
@@ -2697,13 +2722,22 @@ def render_active_graph(
     view = session.view_state(view_id)
 
     if session.layout_mode == "overlay":
-        _render_overlay_layers(plotter, session, view, pv_module=pv_module, reset_camera=reset_camera)
+        _render_overlay_layers(
+            plotter,
+            session,
+            view,
+            pv_module=pv_module,
+            reset_camera=reset_camera,
+            camera_state=camera_state,
+        )
         return
 
     _select_view_renderer(plotter, view.view_id)
     _remove_graph_actors(plotter, session, view.view_id)
     active_file = session.file_for_view(view.view_id)
     if active_file is None:
+        if camera_state is not None and _restore_camera_state(plotter, camera_state):
+            view.camera_state = camera_state
         view.interactive_enabled = False
         clear_interactive_selection(plotter, session, view.view_id)
         _set_status(plotter, session)
@@ -2738,15 +2772,17 @@ def render_active_graph(
                 except TypeError:
                     plotter.add_actor(actor)
                 view.graph_actors.append(actor)
-    if reset_camera:
+    if camera_state is not None and _restore_camera_state(plotter, camera_state):
+        view.camera_state = camera_state
+    elif reset_camera:
         plotter.reset_camera()
         _store_initial_camera_state(plotter, session, view.view_id)
+        view.camera_state = _capture_camera_state(plotter)
         if session.camera_sync_enabled:
             if session.shared_camera_state is None:
                 _store_shared_camera_state(plotter, session, view.view_id)
             else:
-                if _restore_camera_state(plotter, session.shared_camera_state):
-                    _reset_camera_clipping_range(plotter)
+                _restore_camera_state(plotter, session.shared_camera_state)
     _set_status(plotter, session)
     render_tools_panel(plotter, session)
     render_selected_node_highlight(plotter, session, pv_module=pv_module, view_id=view.view_id)
@@ -2900,6 +2936,11 @@ def load_visualization_paths(
     allow_large_nifti: bool = False,
 ) -> list[LoadedVisualizationFile]:
     """Load supported visualization paths and render the first valid file in the batch."""
+    camera_state = (
+        _camera_state_for_file_switch(plotter, session, session.active_view_id)
+        if session.layout_mode in ("double", "overlay")
+        else None
+    )
     _store_shared_camera_state(plotter, session)
     loaded_files: list[LoadedVisualizationFile] = []
     first_loaded_index: int | None = None
@@ -2928,7 +2969,13 @@ def load_visualization_paths(
     if first_loaded_index is not None:
         session.active_index = first_loaded_index
         _set_error(plotter, session, None)
-        render_active_graph(plotter, session, pv_module=pv_module)
+        render_active_graph(
+            plotter,
+            session,
+            pv_module=pv_module,
+            reset_camera=camera_state is None,
+            camera_state=camera_state,
+        )
     return loaded_files
 
 
@@ -2948,33 +2995,73 @@ def close_active_graph(plotter: Any, session: GraphViewerSession, *, pv_module: 
     clear_interactive_selection(plotter, session, session.active_view_id)
     session.interactive_enabled = False
     _end_camera_orbit_drag(session)
+    camera_state = (
+        _camera_state_for_file_switch(plotter, session, session.active_view_id)
+        if session.layout_mode in ("double", "overlay")
+        else None
+    )
     _store_shared_camera_state(plotter, session)
     if session.layout_mode == "double":
         session.clear_active_view_file()
-        render_active_graph(plotter, session, pv_module=pv_module, view_id=session.active_view_id)
+        render_active_graph(
+            plotter,
+            session,
+            pv_module=pv_module,
+            reset_camera=camera_state is None,
+            view_id=session.active_view_id,
+            camera_state=camera_state,
+        )
     else:
         session.close_active_file()
         if session.active_file is None:
             session.shared_camera_state = None
-        render_active_graph(plotter, session, pv_module=pv_module)
+        render_active_graph(
+            plotter,
+            session,
+            pv_module=pv_module,
+            reset_camera=camera_state is None,
+            camera_state=camera_state,
+        )
 
 
 def switch_previous_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     clear_interactive_selection(plotter, session, session.active_view_id)
     session.interactive_enabled = False
     _end_camera_orbit_drag(session)
+    camera_state = (
+        _camera_state_for_file_switch(plotter, session, session.active_view_id)
+        if session.layout_mode in ("double", "overlay")
+        else None
+    )
     _store_shared_camera_state(plotter, session)
     session.activate_previous()
-    render_active_graph(plotter, session, pv_module=pv_module)
+    render_active_graph(
+        plotter,
+        session,
+        pv_module=pv_module,
+        reset_camera=camera_state is None,
+        camera_state=camera_state,
+    )
 
 
 def switch_next_graph(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None) -> None:
     clear_interactive_selection(plotter, session, session.active_view_id)
     session.interactive_enabled = False
     _end_camera_orbit_drag(session)
+    camera_state = (
+        _camera_state_for_file_switch(plotter, session, session.active_view_id)
+        if session.layout_mode in ("double", "overlay")
+        else None
+    )
     _store_shared_camera_state(plotter, session)
     session.activate_next()
-    render_active_graph(plotter, session, pv_module=pv_module)
+    render_active_graph(
+        plotter,
+        session,
+        pv_module=pv_module,
+        reset_camera=camera_state is None,
+        camera_state=camera_state,
+    )
 
 
 def handle_dropped_graphml_paths(
@@ -3028,7 +3115,8 @@ def set_layout_mode(
         session.views["b"].file_index = None
         session.layout_mode = "double"
         session.active_view_id = "a"
-        session.camera_sync_enabled = True
+        session.camera_sync_enabled = False
+        session.shared_camera_state = None
     elif mode == "overlay":
         session.layout_mode = "overlay"
         session.active_view_id = "a"
@@ -3600,9 +3688,21 @@ def dispatch_ui_click(
             clear_interactive_selection(plotter, session, view_id)
             session.view_state(view_id).interactive_enabled = False
             _end_camera_orbit_drag(session)
+            camera_state = (
+                _camera_state_for_file_switch(plotter, session, view_id)
+                if session.layout_mode in ("double", "overlay")
+                else None
+            )
             _store_shared_camera_state(plotter, session, view_id)
             session.assign_view_file(view_id, hitbox.index)
-            render_active_graph(plotter, session, pv_module=pv_module, view_id=view_id)
+            render_active_graph(
+                plotter,
+                session,
+                pv_module=pv_module,
+                reset_camera=camera_state is None,
+                view_id=view_id,
+                camera_state=camera_state,
+            )
             return True
         if hitbox.action == "open-file-list":
             view_id = hitbox.view_id or session.active_view_id
@@ -3652,12 +3752,20 @@ def dispatch_ui_click(
                 plotter.render()
             return True
         if hitbox.action == "assign-overlay-file" and hitbox.view_id is not None:
+            camera_state = _camera_state_for_file_switch(plotter, session, hitbox.view_id)
             if session.overlay_menu_open == "base":
                 session.assign_base_file(hitbox.view_id, hitbox.index)
             elif session.overlay_menu_open == "overlay":
                 session.assign_overlay_file(hitbox.view_id, hitbox.index)
             session.overlay_menu_open = None
-            render_active_graph(plotter, session, pv_module=pv_module, view_id=hitbox.view_id)
+            render_active_graph(
+                plotter,
+                session,
+                pv_module=pv_module,
+                reset_camera=camera_state is None,
+                view_id=hitbox.view_id,
+                camera_state=camera_state,
+            )
             return True
         if hitbox.action == "toggle-overlay-target-menu":
             session.overlay_target_menu_open = not session.overlay_target_menu_open
@@ -3731,9 +3839,17 @@ def dispatch_ui_click(
             return True
         if hitbox.action == "assign-view-file" and hitbox.view_id is not None:
             set_active_view(plotter, session, hitbox.view_id)
+            camera_state = _camera_state_for_file_switch(plotter, session, hitbox.view_id)
             session.assign_view_file(hitbox.view_id, hitbox.index)
             session.view_menu_open = None
-            render_active_graph(plotter, session, pv_module=pv_module, view_id=hitbox.view_id)
+            render_active_graph(
+                plotter,
+                session,
+                pv_module=pv_module,
+                reset_camera=camera_state is None,
+                view_id=hitbox.view_id,
+                camera_state=camera_state,
+            )
             return True
         if hitbox.action == "appearance-slider" and hitbox.value in (
             "node", "edge", "base_opacity", "overlay_opacity",
