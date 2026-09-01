@@ -46,32 +46,46 @@ script prompts for confirmation. Only `y` or `yes` replaces the file.
 
 ## `checker.sh`
 
-Checks whether all nonzero skeleton voxels are confined to nonzero voxels in a
-foreground volume. Both inputs must be `.nii` or `.nii.gz` files with identical
-shapes.
+Checks whether a NIfTI skeleton or GraphML graph is confined to nonzero voxels
+in a foreground NIfTI volume. NIfTI inputs must have identical shapes.
 
 ```bash
 ./scripts/checker.sh \
   --foreground ./foreground.nii.gz \
   --skeleton ./skeleton.nii.gz \
   --connectivity 26
+
+./scripts/checker.sh \
+  --foreground ./foreground.nii.gz \
+  --skeleton ./skeleton.graphml
 ```
 
 Required:
 
 - `--foreground`, `-f`: foreground NIfTI volume.
-- `--skeleton`, `-s`: skeleton NIfTI volume.
+- `--skeleton`, `-s`: skeleton NIfTI volume or `.graphml` graph.
 
 Optional:
 
-- `--connectivity`, `-c`: connectivity used to count foreground and skeleton
-  components; one of `6`, `18`, or `26` (default: `26`).
+- `--connectivity`, `-c`: connectivity used to count foreground components and,
+  for NIfTI input, skeleton components; one of `6`, `18`, or `26` (default:
+  `26`). Graph components are determined from GraphML topology.
 
-The script prints whether all skeleton voxels are within the foreground,
-followed by the connected-component count for each volume. If either input
-contains values other than zero and one, its sorted unique non-binary values
-are reported to stderr and all nonzero values are still included in both the
-confinement check and component count.
+For a NIfTI skeleton, the script prints whether all skeleton voxels are within
+the foreground, followed by the connected-component count for each volume. If
+either input contains values other than zero and one, its sorted unique
+non-binary values are reported to stderr and all nonzero values are still
+included in both the confinement check and component count.
+
+For GraphML, the script checks node `voxel_pos` and separately reports every
+available supported edge field: `centerline_voxels`,
+`centerline_voxel_points`, and `centerline_world_points`. Only stored edge
+datapoints are checked, not the continuous segments between them. A point is
+inside when it occupies a nonzero foreground voxel's half-open cell
+`[i-0.5,i+0.5) x [j-0.5,j+0.5) x [k-0.5,k+0.5)`. World points are transformed
+through the inverse foreground affine before the same test. The script also
+prints the weak graph connected-component count and the foreground
+connected-component count.
 
 ## `run_algo.sh`
 
