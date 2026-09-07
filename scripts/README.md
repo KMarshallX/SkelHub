@@ -81,11 +81,13 @@ For GraphML, the script checks node `voxel_pos` and separately reports every
 available supported edge field: `centerline_voxels`,
 `centerline_voxel_points`, and `centerline_world_points`. Only stored edge
 datapoints are checked, not the continuous segments between them. A point is
-inside when it occupies a nonzero foreground voxel's half-open cell
-`[i-0.5,i+0.5) x [j-0.5,j+0.5) x [k-0.5,k+0.5)`. World points are transformed
-through the inverse foreground affine before the same test. The script also
-prints the weak graph connected-component count and the foreground
-connected-component count.
+inside when any nonzero foreground voxel's closed cell contains it, within a
+`1e-9` coordinate tolerance. The cell centred at `(i,j,k)` extends by `0.5` in
+each direction, so a point on a shared face, edge, or corner may belong to
+multiple cells. World points are transformed through the inverse foreground
+affine before the same test. Only the stored coordinates are tested; they are
+not moved, snapped, or clipped. The script also prints the weak graph
+connected-component count and the foreground connected-component count.
 
 ## `run_algo.sh`
 

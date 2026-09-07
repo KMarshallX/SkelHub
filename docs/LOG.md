@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-09-07 10:50 AEST — Closed-cell GraphML confinement
+
+- Changed GraphML point confinement in `scripts/checker.sh` to accept a stored
+  point when any in-bounds foreground voxel's closed cell contains it, using a
+  `1e-9` coordinate tolerance.
+- Covered all cells sharing a face, edge, or corner with the point without
+  moving, snapping, or clipping coordinates. Node positions and every supported
+  edge coordinate field continue through the shared check; world coordinates
+  retain inverse-affine conversion.
+- Updated `scripts/README.md` and added local ignored regression cases in
+  `tests/test_checker.py` for interiors, shared boundaries, alternate touching
+  foreground cells, background-only points, and out-of-volume points.
+- Architecture decision: kept the behavior in `points_are_confined()` and
+  limited candidate enumeration to the at-most-eight closed cells touching each
+  point. CLI behavior, connectivity calculations, NIfTI checks, and stored-point
+  scope are unchanged.
+- Verification: `python -m pytest tests/test_checker.py -q` (`15 passed`) and
+  the supplied Laplacian GraphML check (all three available containment reports
+  were `Yes`; graph and foreground component counts were both `1`).
+- Assumption: the existing finite 3D coordinate validation remains authoritative.
+- Limitation: continuous edge segments remain outside the confinement check.
+
 ## 2026-09-01 16:48 AEST — GraphML support in `scripts/checker.sh`
 
 - Added `.graphml` support for `--skeleton` while preserving NIfTI behavior.

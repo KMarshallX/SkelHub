@@ -179,17 +179,41 @@ def parse_points(value: object, label: str, *, single: bool = False) -> np.ndarr
 
 
 def points_are_confined(points: np.ndarray, foreground: np.ndarray) -> bool:
-    """Test points against half-open voxel cells without changing the points."""
+    """Test whether every point lies in at least one closed foreground cell."""
     if len(points) == 0:
         return True
-    containing_voxels = np.floor(points + 0.5).astype(np.int64)
-    in_bounds = np.all(
-        (containing_voxels >= 0) & (containing_voxels < np.asarray(foreground.shape)),
+
+    cell_radius = 0.5 + 1e-9
+    foreground_shape = np.asarray(foreground.shape, dtype=np.int64)
+    within_volume_extent = np.all(
+        (points >= -cell_radius)
+        & (points <= (foreground_shape - 1) + cell_radius),
         axis=1,
     )
-    if not np.all(in_bounds):
+    if not np.all(within_volume_extent):
         return False
-    return bool(np.all(foreground[tuple(containing_voxels.T)] != 0))
+
+    lowest_candidates = np.ceil(points - cell_radius).astype(np.int64)
+    highest_candidates = np.floor(points + cell_radius).astype(np.int64)
+    contained = np.zeros(len(points), dtype=bool)
+
+    # A point can be in up to two closed cells per axis. Checking their Cartesian
+    # product includes cells meeting the point at a shared face, edge, or corner.
+    for offset in np.ndindex(2, 2, 2):
+        candidates = lowest_candidates + np.asarray(offset, dtype=np.int64)
+        valid = np.all(
+            (candidates <= highest_candidates)
+            & (candidates >= 0)
+            & (candidates < foreground_shape),
+            axis=1,
+        )
+        unchecked = valid & ~contained
+        if np.any(unchecked):
+            contained[unchecked] = (
+                foreground[tuple(candidates[unchecked].T)] != 0
+            )
+
+    return bool(np.all(contained))
 
 
 def report_graphml(graph, foreground: np.ndarray, foreground_affine: np.ndarray) -> None:
