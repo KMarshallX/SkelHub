@@ -3962,12 +3962,17 @@ def install_ui_mouse_observers(
 
     def _on_key_press(caller: Any, _event: str) -> None:
         _set_event_handled("KeyPressEvent", False)
-        handled = _handle_interactive_key_press(plotter, session, caller, pv_module=pv_module)
-        # VTK's default interactor style assigns viewer actions to printable
-        # keys (notably ``3`` toggles stereo rendering).  While the node-id
-        # field is consuming text, stop those same keystrokes from reaching
-        # the style after they have updated or committed the edit buffer.
-        _set_event_handled("KeyPressEvent", handled)
+        _handle_interactive_key_press(plotter, session, caller, pv_module=pv_module)
+        # Preserve SkelHub's key handling above, then stop every key press from
+        # reaching the default VTK interactor style.
+        _set_event_handled("KeyPressEvent", True)
+
+    def _on_char(_caller: Any, _event: str) -> None:
+        # VTK implements shortcuts such as ``3`` (stereo rendering) in
+        # vtkInteractorStyle.OnChar(), which is a separate event from the
+        # KeyPressEvent consumed above.  Temporarily suppress all of those
+        # built-in bindings while leaving SkelHub's KeyPressEvent handler live.
+        _set_event_handled("CharEvent", True)
 
     def _on_wheel_forward(caller: Any, _event: str) -> None:
         _set_event_handled("MouseWheelForwardEvent", False)
@@ -4019,10 +4024,12 @@ def install_ui_mouse_observers(
             _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
             _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
             _add_cancellable_observer("KeyPressEvent", _on_key_press)
+            _add_cancellable_observer("CharEvent", _on_char)
         else:
             interactor.add_observer("MouseMoveEvent", _on_mouse_move)
             interactor.add_observer("LeftButtonPressEvent", _on_left_click)
             interactor.add_observer("KeyPressEvent", _on_key_press)
+            interactor.add_observer("CharEvent", _on_char)
         interactor.add_observer("LeftButtonReleaseEvent", _on_left_release)
         interactor.add_observer("InteractionEvent", _on_interaction)
         interactor.add_observer("TimerEvent", _on_marquee_timer)
@@ -4035,6 +4042,7 @@ def install_ui_mouse_observers(
         _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
         _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
         _add_cancellable_observer("KeyPressEvent", _on_key_press)
+        _add_cancellable_observer("CharEvent", _on_char)
         interactor.AddObserver("LeftButtonReleaseEvent", _on_left_release)
         interactor.AddObserver("InteractionEvent", _on_interaction)
         interactor.AddObserver("TimerEvent", _on_marquee_timer)

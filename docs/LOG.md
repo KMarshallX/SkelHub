@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-09-08 11:00 AEST — Temporarily disable VTK keyboard shortcuts
+
+- Preserved SkelHub's custom keyboard behavior: Left/Right selected-node
+  navigation and Node-id text editing, commit, cancel, and deletion keys.
+- Added a keyboard firewall that runs the custom `KeyPressEvent` handler first,
+  then aborts all `KeyPressEvent` and `CharEvent` propagation to VTK's default
+  interactor style.
+- The additional `CharEvent` suppression fixes the earlier incomplete change:
+  VTK dispatches its built-in printable-key shortcuts separately through
+  `vtkInteractorStyle.OnChar()`, so aborting only `KeyPressEvent` did not block
+  the `3` stereo-rendering shortcut.
+- Updated local ignored observer regression coverage in
+  `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not changed.
+
 ## 2026-09-08 10:00 AEST — Prevent Node-id typing from toggling VTK hotkeys
 
 - Stopped handled Interactive Node-id keystrokes from propagating to VTK's
