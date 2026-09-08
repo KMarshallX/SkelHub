@@ -1,5 +1,23 @@
 # Development Log
 
+## 2026-09-08 10:00 AEST — Prevent Node-id typing from toggling VTK hotkeys
+
+- Stopped handled Interactive Node-id keystrokes from propagating to VTK's
+  default interactor style. In particular, typing the `3` in an ID such as
+  `n8023` no longer toggles stereo rendering and causes a magenta, doubled
+  scene; entering the same ID again had previously toggled stereo back off.
+- Registered `KeyPressEvent` through the existing high-priority cancellable
+  observer path, while retaining the compatibility fallback for interactors
+  that do not expose native cancellable commands.
+- Added local ignored regression coverage for both handled and unhandled key
+  events in `tests/test_graphviz_filename_marquee.py`; `.gitignore` was not
+  changed.
+- Verification: `python -m pytest -q tests/test_graph_camera_preservation.py
+  tests/test_graph_visualization_drop.py tests/test_graphviz_edge_geometry.py
+  tests/test_graphviz_filename_marquee.py` (`35 passed`).
+- Limitation: the current environment did not provide a desktop display for a
+  manual interactive-window check.
+
 ## 2026-09-07 10:50 AEST — Closed-cell GraphML confinement
 
 - Changed GraphML point confinement in `scripts/checker.sh` to accept a stored
