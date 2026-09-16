@@ -1,5 +1,63 @@
 # Development Log
 
+## 2026-09-16 19:00 AEST — Activate viewport before either mouse drag
+
+- Added a high-priority right-button press handler matching the existing left
+  press activation behavior in Multi View.
+- Explicitly bound VTK's interactor style to the clicked scene renderer before
+  native right-drag zoom begins. This prevents an inactive viewport from
+  fighting camera synchronization and flickering during a continued drag.
+- Left press now uses the same activation and renderer-binding path before
+  custom orbit or GraphML node selection.
+- Added local ignored regression coverage for both button observers, native
+  right-event propagation, active-view selection, and interactor renderer
+  ownership.
+- Verification: focused interaction and camera tests (`20 passed`).
+
+## 2026-09-16 18:52 AEST — Bind orientation markers per viewport
+
+- Rebound every enabled orientation widget to its owning scene renderer after
+  VTK reactivation. Previously, re-enabled widgets all retained one renderer,
+  so only one of four populated Multi View markers was visible.
+- Preserved independent visibility: populated views show their own marker and
+  clearing one view hides only that view's marker.
+- Added local ignored regression coverage for four independent renderer
+  bindings and mixed populated/empty marker state.
+- Verification: focused visualization tests (`42 passed`) and an off-screen
+  2-by-2 render displayed all four markers.
+
+## 2026-09-16 18:45 AEST — Prevent empty Multi View texture errors
+
+- Kept orientation markers disabled for empty viewports and enabled them when
+  a GraphML or NIfTI file is assigned. This prevents VTK from repeatedly
+  rendering uninitialized X/Y/Z caption textures after an empty session enters
+  Multi View.
+- Added local ignored regression coverage for empty and newly populated view
+  marker state without changing `.gitignore`.
+- Verification: focused visualization tests (`41 passed`) and repeated
+  off-screen empty-session renders emitted no `vtkOpenGLTexture` errors.
+- Limitation: the desktop-specific OpenGL path cannot be exercised directly in
+  the headless environment.
+
+## 2026-09-16 18:37 AEST — Expand Double View into Multi View
+
+- Renamed the displayed `Double View` layout to `Multi View` while retaining
+  the internal `double` mode identifier for compatibility.
+- Added empty `View C` and `View D` viewports through a capped `Add Viewer`
+  control: two views use 1-by-2, three use 1-by-3, and four use 2-by-2.
+- Centralized viewport geometry for renderer placement, headers, orientation
+  axes, and mouse targeting; extended per-view files, appearance, selection,
+  and optional camera synchronization across all four views.
+- Multi View resets to `View A` plus empty `View B` when re-entered; added
+  viewers start empty and do not change the active view. Viewer removal remains
+  outside the current scope.
+- Updated `README.md` and `docs/visualization.md`. Added focused Multi View
+  regression coverage in `tests/test_graphviz_multi_view.py` without changing
+  dependencies or `.gitignore`.
+- Verification: focused visualization tests (`40 passed`) and the full suite
+  (`82 passed`). Desktop interaction remains an environment-dependent manual
+  check.
+
 ## 2026-09-08 11:00 AEST — Temporarily disable VTK keyboard shortcuts
 
 - Preserved SkelHub's custom keyboard behavior: Left/Right selected-node
