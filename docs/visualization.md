@@ -99,7 +99,7 @@ The panel starts hidden.
 
 The tools panel can:
 
-- switch between `Single View`, `Double View`, and `Overlay View` layout modes
+- switch between `Single View`, `Multi View`, and `Overlay View` layout modes
 - enable or disable world-coordinate camera synchronization across loaded files
 - enable GraphML Interactive mode and inspect selected node `X`/`Y`/`Z`, node id, and node degree
 - import more files
@@ -112,14 +112,19 @@ The tools panel can:
 - scroll when the window is too short to show every panel control
 
 `Single View` is the default and preserves the existing one-file workflow.
-`Double View` splits the scene into `View A` and `View B`. `View A` starts
-with the current active file, while `View B` starts empty. In double-view
-mode, the top-left loaded-file dropdown is hidden and files are assigned from
-the Tools panel `View A` / `View B` dropdowns, which can choose either `Empty`
-or any loaded file. Clicking inside a viewport makes that viewport active,
-and the Tools panel edits only that active viewport. `Import` loads a file
-into the global loaded-file list and assigns it to the active viewport;
-`Close` clears only the active viewport assignment in double-view mode.
+`Multi View` starts with a 1-by-2 split containing `View A` and `View B`.
+`View A` starts with the current active file, while `View B` starts empty.
+`Add Viewer` adds an empty `View C` in a 1-by-3 layout, then an empty `View D`
+in a 2-by-2 layout. The button is hidden at the four-view limit. Leaving Multi
+View and returning resets it to the two-view default. In Multi View, the
+top-left loaded-file dropdown is hidden and files are assigned from the Tools
+panel's per-view dropdowns, which can choose either `Empty` or any loaded file.
+Clicking inside a viewport makes that viewport active, and the Tools panel
+edits only that active viewport. `Import` loads a file into the global
+loaded-file list and assigns it to the active viewport; `Close` clears only
+the active viewport assignment in Multi View. Each viewport owns an independent
+orientation marker: empty viewports keep it disabled, while assigning a file
+enables only that viewport's marker automatically.
 Each viewport keeps its own complete camera state when its assigned file is
 changed, including position, focal point, orientation, clipping range,
 projection, viewing angle, and zoom. The replacement file is not fitted or
@@ -142,10 +147,10 @@ controls the selected graph layer. Opening either dropdown reserves space
 below it, moving later controls out of the menu's clickable area. Unavailable
 geometry rows are greyed out; opening the menu displays their validation
 status. Node and Edge control on-screen point size and line width. Slider edits
-commit when the slider is released. In double-view mode, appearance settings
-are per-view: changing Geometry, Node Size, or Edge Thickness in `View A` does
-not change `View B`. Geometry changes rebuild the selected graph's edge mesh in
-Single, Double, and Overlay View. `Fit preview`
+commit when the slider is released. In Multi View, appearance settings are
+per-view: changing Geometry, Node Size, or Edge Thickness in one view does not
+change another. Geometry changes rebuild the selected graph's edge mesh in
+Single, Multi, and Overlay View. `Fit preview`
 adjusts the camera distance to fit the active object in the active viewport
 while preserving the current camera angle. When the active file is a NIfTI
 volume, the `Appearance` section remains visible but its sliders are greyed out
@@ -166,20 +171,21 @@ when `Enter` is pressed; `Escape` cancels an edit. While Interactive mode is
 enabled and a node is selected, the left and right arrow keys move to the
 previous or next GraphML node in file order.
 
-In double-view mode, Interactive mode is per-view. Selecting a node in
-`View B` makes `View B` active, highlights only the selected node in `View B`,
-and updates the Tools panel with `View B` node details. Returning to `View A`
-restores `View A`'s last selected node details. Arrow-key navigation moves
-through nodes only in the active view.
+In Multi View, Interactive mode is per-view. Selecting a node in a viewport
+makes that viewport active, highlights only its selected node, and updates the
+Tools panel with that view's node details. Returning to another view restores
+its last selected node details. Arrow-key navigation moves through nodes only
+in the active view.
 
-`Sync Camera` starts enabled in Single View. Entering Double View disables it,
-so `View A` and `View B` initially retain independent cameras. Enabling
-`Sync Camera` copies the active viewport's complete camera state to the other
-populated viewport; subsequent camera orbit, wheel travel, reset, and fit
-operations remain synchronized. Arbitrary GraphML coordinates or unregistered
-datasets may not align usefully and can be inspected with synchronization off.
-`Reset View` and `Fit Preview` remain explicit framing actions and can alter
-the active camera; ordinary file changes in Double or Overlay View cannot.
+`Sync Camera` starts enabled in Single View. Entering Multi View disables it,
+so all visible views initially retain independent cameras. Enabling
+`Sync Camera` copies the active viewport's complete camera state to every other
+populated visible viewport; subsequent camera orbit, wheel travel, reset, and
+fit operations remain synchronized. Arbitrary GraphML coordinates or
+unregistered datasets may not align usefully and can be inspected with
+synchronization off. `Reset View` and `Fit Preview` remain explicit framing
+actions and can alter the active camera; ordinary file changes in Multi or
+Overlay View cannot.
 
 Drag-and-drop accepts `.graphml`, `.nii`, and `.nii.gz`. SkelHub reads the
 `vtkStringArray` filename payload from VTK's `DropFilesEvent`; availability of
@@ -191,8 +197,10 @@ from the active object's displayed center instead of changing scene
 magnification. The wheel step scales with the current camera-object distance:
 far views move faster, and close views move slower. Left-click dragging in the
 viewport orbits the camera around the active object center without translating
-the rendered scene. When Interactive mode is enabled, left-clicking a GraphML
-node selects it instead.
+the rendered scene, while right-click dragging uses VTK's camera zoom. Pressing
+either mouse button first makes the viewport under the pointer active and binds
+the drag to that viewport's renderer. When Interactive mode is enabled,
+left-clicking a GraphML node selects it instead.
 
 ## HPC and Conda Notes
 

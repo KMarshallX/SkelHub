@@ -31,7 +31,8 @@ DEFAULT_OVERLAY_OPACITY = 0.5
 OVERLAY_NIFTI_COLOR = (0.949, 0.486, 0.306)  # #F27A4E orange
 OVERLAY_GRAPH_NODE_COLOR = (0.949, 0.486, 0.306)  # #F27A4E orange
 OVERLAY_GRAPH_EDGE_COLOR = (0.306, 0.776, 0.949)  # #4EC6F2 blue
-ViewID = Literal["a", "b"]
+ViewID = Literal["a", "b", "c", "d"]
+ALL_VIEW_IDS: tuple[ViewID, ...] = ("a", "b", "c", "d")
 NODE_SIZE_RANGE = (0.5, 40.0)
 EDGE_THICKNESS_RANGE = (0.1, 10.0)
 LARGE_NIFTI_VOXEL_WARNING_THRESHOLD = 250_000
@@ -322,6 +323,7 @@ class GraphViewerSession:
     options: GraphVisualizationOptions = field(default_factory=GraphVisualizationOptions)
     loaded_files: list[LoadedVisualizationFile] = field(default_factory=list)
     layout_mode: ViewLayoutMode = "single"
+    multi_view_count: int = 2
     active_view_id: ViewID = "a"
     views: dict[ViewID, ViewState] = field(default_factory=dict)
     file_panel_actors: list[Any] = field(default_factory=list)
@@ -362,21 +364,15 @@ class GraphViewerSession:
 
     def __post_init__(self) -> None:
         _validate_options(self.options)
-        if not self.views:
-            self.views = {
-                "a": ViewState("a", options=GraphVisualizationOptions(
+        for view_id in ALL_VIEW_IDS:
+            if view_id not in self.views:
+                self.views[view_id] = ViewState(view_id, options=GraphVisualizationOptions(
                     edge_thickness=self.options.edge_thickness,
                     node_size=self.options.node_size,
                     window_title=self.options.window_title,
                     edge_geometry=self.options.edge_geometry,
-                )),
-                "b": ViewState("b", options=GraphVisualizationOptions(
-                    edge_thickness=self.options.edge_thickness,
-                    node_size=self.options.node_size,
-                    window_title=self.options.window_title,
-                    edge_geometry=self.options.edge_geometry,
-                )),
-            }
+                ))
+        self.multi_view_count = max(2, min(int(self.multi_view_count), len(ALL_VIEW_IDS)))
 
     @property
     def active_view(self) -> ViewState:
@@ -1258,9 +1254,9 @@ def build_graph_plotter(
     """Create a PyVista plotter containing an optional graph scene."""
     _validate_options(options)
     pv = _import_pyvista() if pv_module is None else pv_module
-    plotter = pv.Plotter(title=options.window_title, off_screen=off_screen, shape=(1, 2))
+    plotter = pv.Plotter(title=options.window_title, off_screen=off_screen, shape=(1, 4))
     plotter.set_background("white")
-    for column in (0, 1):
+    for column in range(4):
         plotter.subplot(0, column)
         plotter.add_axes(line_width=3, viewport=AXES_MARKER_VIEWPORT)
 
@@ -1273,7 +1269,7 @@ def build_graph_plotter(
 
 
 def _scene_column(view_id: ViewID) -> int:
-    return 0 if view_id == "a" else 1
+    return ALL_VIEW_IDS.index(view_id)
 
 
 def _select_view_renderer(plotter: Any, view_id: ViewID) -> None:
@@ -1292,18 +1288,20 @@ def _scene_renderer(plotter: Any, view_id: ViewID) -> Any | None:
     return getattr(plotter, "renderer", None)
 
 
-def _axes_marker_viewport(*, scale_x: float = 1.0) -> tuple[float, float, float, float]:
+def _axes_marker_viewport(
+    *, scale_x: float = 1.0, scale_y: float = 1.0
+) -> tuple[float, float, float, float]:
     """Return the renderer-relative viewport for the orientation axes marker.
 
     VTK's orientation marker widget interprets the viewport relative to the
-    parent renderer, not the full window.  When *scale_x* is > 1.0 (e.g. in
-    double-view mode where each renderer occupies half the scene width) the
-    widget width is scaled up so it keeps the same physical pixel size as in
-    single-view mode.
+    parent renderer, not the full window.  The scale factors compensate for
+    narrower or shorter Multi View cells so the widget keeps approximately the
+    same physical pixel size as in Single View.
     """
     x_min, y_min, x_max, y_max = AXES_MARKER_VIEWPORT
     effective_x_max = x_min + (x_max - x_min) * float(scale_x)
-    return (x_min, y_min, effective_x_max, y_max)
+    effective_y_max = y_min + (y_max - y_min) * float(scale_y)
+    return (x_min, y_min, effective_x_max, effective_y_max)
 
 
 def _set_axes_marker_visible(
@@ -1327,6 +1325,8 @@ def _set_axes_marker_visible(
             axes_widget.EnabledOn()
         elif hasattr(axes_widget, "SetEnabled"):
             axes_widget.SetEnabled(1)
+        if hasattr(axes_widget, "SetCurrentRenderer"):
+            axes_widget.SetCurrentRenderer(renderer)
     else:
         is_enabled = True
         if hasattr(axes_widget, "GetEnabled"):
@@ -1395,31 +1395,67 @@ def _scene_area_fraction(plotter: Any) -> float:
     return 0.75
 
 
-def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
-    """Apply scene renderer viewports for the current single/double layout."""
+def _multi_view_cells(
+    plotter: Any, session: GraphViewerSession
+) -> dict[ViewID, tuple[float, float, float, float]]:
+    """Return full-window normalized cells for the visible Multi View renderers."""
     scene_right = _scene_area_fraction(plotter)
-    renderer_a = _scene_renderer(plotter, "a")
-    renderer_b = _scene_renderer(plotter, "b")
-    if session.layout_mode == "double":
-        header_bottom = 1.0 - HEADER_HEIGHT_FRACTION
-        if renderer_a is not None and hasattr(renderer_a, "SetViewport"):
-            renderer_a.SetViewport(0.0, 0.0, scene_right / 2.0, header_bottom)
-        if renderer_b is not None and hasattr(renderer_b, "SetViewport"):
-            renderer_b.SetViewport(scene_right / 2.0, 0.0, scene_right, header_bottom)
-        axes_viewport = _axes_marker_viewport(scale_x=2.0)
-        _set_axes_marker_visible(renderer_a, visible=True, viewport=axes_viewport)
-        _set_axes_marker_visible(renderer_b, visible=True, viewport=axes_viewport)
-    else:
-        if renderer_a is not None and hasattr(renderer_a, "SetViewport"):
-            renderer_a.SetViewport(0.0, 0.0, scene_right, 1.0)
-        if renderer_b is not None and hasattr(renderer_b, "SetViewport"):
-            renderer_b.SetViewport(0.0, 0.0, 0.0, 0.0)
-        _set_axes_marker_visible(renderer_a, visible=True, viewport=_axes_marker_viewport())
-        _set_axes_marker_visible(renderer_b, visible=False, viewport=AXES_MARKER_HIDDEN_VIEWPORT)
+    view_ids = ALL_VIEW_IDS[: session.multi_view_count]
+    if session.multi_view_count == 4:
+        half_width = scene_right / 2.0
+        return {
+            "a": (0.0, 0.5, half_width, 1.0),
+            "b": (half_width, 0.5, scene_right, 1.0),
+            "c": (0.0, 0.0, half_width, 0.5),
+            "d": (half_width, 0.0, scene_right, 0.5),
+        }
+    cell_width = scene_right / len(view_ids)
+    return {
+        view_id: (index * cell_width, 0.0, (index + 1) * cell_width, 1.0)
+        for index, view_id in enumerate(view_ids)
+    }
+
+
+def apply_view_layout(plotter: Any, session: GraphViewerSession) -> None:
+    """Apply scene renderer viewports for the current layout."""
+    scene_right = _scene_area_fraction(plotter)
+    visible_cells = _multi_view_cells(plotter, session) if session.layout_mode == "double" else {}
+    for view_id in ALL_VIEW_IDS:
+        renderer = _scene_renderer(plotter, view_id)
+        if session.layout_mode == "double" and view_id in visible_cells:
+            x_min, y_min, x_max, y_max = visible_cells[view_id]
+            viewport = (x_min, y_min, x_max, y_max - HEADER_HEIGHT_FRACTION)
+            if renderer is not None and hasattr(renderer, "SetViewport"):
+                renderer.SetViewport(*viewport)
+            columns = 2 if session.multi_view_count == 4 else session.multi_view_count
+            rows = 2 if session.multi_view_count == 4 else 1
+            axes_viewport = _axes_marker_viewport(scale_x=float(columns), scale_y=float(rows))
+            _set_axes_marker_visible(
+                renderer,
+                visible=session.file_for_view(view_id) is not None,
+                viewport=axes_viewport,
+            )
+        elif view_id == "a":
+            if renderer is not None and hasattr(renderer, "SetViewport"):
+                renderer.SetViewport(0.0, 0.0, scene_right, 1.0)
+            active_file = (
+                session.base_file_for_view("a") or session.overlay_file_for_view("a")
+                if session.layout_mode == "overlay"
+                else session.file_for_view("a")
+            )
+            _set_axes_marker_visible(
+                renderer,
+                visible=active_file is not None,
+                viewport=_axes_marker_viewport(),
+            )
+        else:
+            if renderer is not None and hasattr(renderer, "SetViewport"):
+                renderer.SetViewport(0.0, 0.0, 0.0, 0.0)
+            _set_axes_marker_visible(renderer, visible=False, viewport=AXES_MARKER_HIDDEN_VIEWPORT)
 
 
 def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
-    """Render compact header bars above each viewport in double/overlay mode."""
+    """Render compact header bars above each viewport in Multi/Overlay View."""
     _remove_actor_list(plotter, session.header_actors)
     session.header_marquee_texts.clear()
     if session.layout_mode == "double":
@@ -1429,15 +1465,15 @@ def render_view_headers(plotter: Any, session: GraphViewerSession) -> None:
 
 
 def _render_double_view_headers(plotter: Any, session: GraphViewerSession) -> None:
+    """Render one header in each visible Multi View cell."""
     window_width, window_height = _plotter_window_size(plotter)
-    scene_right_px = int(window_width * 0.75)
     header_px = int(window_height * HEADER_HEIGHT_FRACTION)
-    half_scene = scene_right_px // 2
     border_w = HEADER_BORDER_WIDTH
 
-    for col, view_id in enumerate(("a", "b")):
-        header_x = col * half_scene
-        header_y = window_height - header_px
+    for view_id, (x_min, _y_min, x_max, y_max) in _multi_view_cells(plotter, session).items():
+        header_x = int(round(x_min * window_width))
+        header_y = int(round(y_max * window_height)) - header_px
+        header_width = int(round((x_max - x_min) * window_width))
         is_active = session.active_view_id == view_id
 
         file = session.file_for_view(view_id)
@@ -1447,7 +1483,7 @@ def _render_double_view_headers(plotter: Any, session: GraphViewerSession) -> No
             kind_label = _kind_label(file.kind)
             name = file.path.name
             prefix = _view_label(view_id) + "  |  " + kind_label + "  "
-            available_px = half_scene - 20
+            available_px = header_width - 20
             max_chars = max(10, available_px // 8)
             full_text = prefix + name
             if len(full_text) > max_chars:
@@ -1455,7 +1491,7 @@ def _render_double_view_headers(plotter: Any, session: GraphViewerSession) -> No
                 name = name[: name_chars - 3] + "..."
             text = prefix + name
 
-        _draw_header_cell(plotter, session, header_x, header_y, half_scene, header_px,
+        _draw_header_cell(plotter, session, header_x, header_y, header_width, header_px,
                           text, is_active, border_w)
 
 
@@ -1886,11 +1922,11 @@ def render_file_panel(plotter: Any, session: GraphViewerSession) -> None:
     scene_right = int(round(width * _scene_area_fraction(plotter)))
     label_y = height - FILE_PANEL_TOP_MARGIN - FILE_PANEL_ROW_HEIGHT
 
-    view_ids: tuple[ViewID, ...] = ("a", "b") if session.layout_mode == "double" else ("a",)
+    view_ids = _visible_view_ids(session)
     for view_id in view_ids:
         view = session.view_state(view_id)
         panel_x = FILE_PANEL_X if view_id == "a" else scene_right // 2 + FILE_PANEL_X
-        view_label = "View A" if view_id == "a" else "View B"
+        view_label = _view_label(view_id)
         status = session.compact_status_text(max_length=30, view_id=view_id)
         label_text = f" {view_label}: {status} "
         is_active_view = view_id == session.active_view_id
@@ -2411,7 +2447,7 @@ def _sync_camera_to_other_views(plotter: Any, session: GraphViewerSession, sourc
     _store_shared_camera_state(plotter, session, source.view_id)
     if session.shared_camera_state is None:
         return
-    for view_id in ("a", "b"):
+    for view_id in _visible_view_ids(session):
         if view_id == source.view_id or session.file_for_view(view_id) is None:
             continue
         _select_view_renderer(plotter, view_id)
@@ -3087,7 +3123,7 @@ def handle_dropped_visualization_paths(
 
 
 def _visible_view_ids(session: GraphViewerSession) -> tuple[ViewID, ...]:
-    return ("a", "b") if session.layout_mode == "double" else ("a",)
+    return ALL_VIEW_IDS[: session.multi_view_count] if session.layout_mode == "double" else ("a",)
 
 
 def render_visible_views(plotter: Any, session: GraphViewerSession, *, pv_module: Any | None = None, reset_camera: bool = False) -> None:
@@ -3112,7 +3148,14 @@ def set_layout_mode(
     _set_error(plotter, session, None)
     if mode == "double":
         session.views["a"].file_index = session.active_index
-        session.views["b"].file_index = None
+        session.multi_view_count = 2
+        for view_id in ALL_VIEW_IDS[1:]:
+            view = session.views[view_id]
+            view.file_index = None
+            view.file_list_open = False
+            view.interactive_enabled = False
+            clear_interactive_selection(plotter, session, view_id)
+            _remove_graph_actors(plotter, session, view_id)
         session.layout_mode = "double"
         session.active_view_id = "a"
         session.camera_sync_enabled = False
@@ -3121,17 +3164,19 @@ def set_layout_mode(
         session.layout_mode = "overlay"
         session.active_view_id = "a"
         session.camera_sync_enabled = True
-        session.views["b"].file_list_open = False
-        session.views["b"].interactive_enabled = False
-        _remove_graph_actors(plotter, session, "b")
-        _remove_selected_node_highlight(plotter, session, "b")
+        for view_id in ALL_VIEW_IDS[1:]:
+            session.views[view_id].file_list_open = False
+            session.views[view_id].interactive_enabled = False
+            _remove_graph_actors(plotter, session, view_id)
+            _remove_selected_node_highlight(plotter, session, view_id)
     else:
         session.active_view_id = "a"
         session.layout_mode = "single"
-        session.views["b"].file_list_open = False
-        session.views["b"].interactive_enabled = False
-        _remove_graph_actors(plotter, session, "b")
-        _remove_selected_node_highlight(plotter, session, "b")
+        for view_id in ALL_VIEW_IDS[1:]:
+            session.views[view_id].file_list_open = False
+            session.views[view_id].interactive_enabled = False
+            _remove_graph_actors(plotter, session, view_id)
+            _remove_selected_node_highlight(plotter, session, view_id)
     session.layout_menu_open = False
     session.view_menu_open = None
     session.overlay_menu_open = None
@@ -3139,6 +3184,27 @@ def set_layout_mode(
     session.edge_geometry_menu_open = False
     session.interactive_overlay_target_menu_open = False
     render_visible_views(plotter, session, pv_module=pv_module, reset_camera=False)
+
+
+def add_multi_viewer(
+    plotter: Any,
+    session: GraphViewerSession,
+    *,
+    pv_module: Any | None = None,
+) -> bool:
+    """Add one empty Multi View viewport, up to the four-view limit."""
+    if session.layout_mode != "double" or session.multi_view_count >= len(ALL_VIEW_IDS):
+        return False
+    view_id = ALL_VIEW_IDS[session.multi_view_count]
+    view = session.views[view_id]
+    view.file_index = None
+    view.file_list_open = False
+    view.interactive_enabled = False
+    clear_interactive_selection(plotter, session, view_id)
+    session.multi_view_count += 1
+    session.view_menu_open = None
+    render_visible_views(plotter, session, pv_module=pv_module, reset_camera=False)
+    return True
 
 
 def set_active_view(plotter: Any, session: GraphViewerSession, view_id: ViewID) -> bool:
@@ -3159,14 +3225,42 @@ def set_active_view(plotter: Any, session: GraphViewerSession, view_id: ViewID) 
 
 
 def _view_at_display_position(plotter: Any, session: GraphViewerSession, x_pos: int, y_pos: int) -> ViewID | None:
-    del y_pos
     if session.layout_mode != "double":
         return "a"
-    width, _height = _plotter_window_size(plotter)
+    width, height = _plotter_window_size(plotter)
     scene_right = int(round(width * _scene_area_fraction(plotter)))
-    if x_pos < 0 or x_pos > scene_right:
+    if x_pos < 0 or x_pos > scene_right or y_pos < 0 or y_pos > height:
         return None
-    return "a" if x_pos < scene_right / 2 else "b"
+    normalized_x = x_pos / width
+    normalized_y = y_pos / height
+    for view_id, (x_min, y_min, x_max, y_max) in _multi_view_cells(plotter, session).items():
+        if x_min <= normalized_x <= x_max and y_min <= normalized_y <= y_max:
+            return view_id
+    return None
+
+
+def _activate_view_at_display_position(
+    plotter: Any,
+    session: GraphViewerSession,
+    x_pos: int,
+    y_pos: int,
+) -> ViewID | None:
+    """Activate and bind interaction to the scene viewport under the pointer."""
+    view_id = _view_at_display_position(plotter, session, x_pos, y_pos)
+    if view_id is None:
+        return None
+    set_active_view(plotter, session, view_id)
+    _select_view_renderer(plotter, view_id)
+    renderer = _scene_renderer(plotter, view_id)
+    interactor = getattr(plotter, "iren", None)
+    style = getattr(interactor, "style", None)
+    if style is None:
+        native_interactor = getattr(interactor, "interactor", interactor)
+        if native_interactor is not None and hasattr(native_interactor, "GetInteractorStyle"):
+            style = native_interactor.GetInteractorStyle()
+    if renderer is not None and style is not None and hasattr(style, "SetCurrentRenderer"):
+        style.SetCurrentRenderer(renderer)
+    return view_id
 
 
 def _extract_dropped_paths(source: Any) -> list[str]:
@@ -3728,6 +3822,9 @@ def dispatch_ui_click(
                 pv_module=pv_module,
             )
             return True
+        if hitbox.action == "add-viewer":
+            add_multi_viewer(plotter, session, pv_module=pv_module)
+            return True
         if hitbox.action == "toggle-view-menu" and hitbox.view_id is not None:
             session.view_menu_open = None if session.view_menu_open == hitbox.view_id else hitbox.view_id
             session.layout_menu_open = False
@@ -3943,14 +4040,18 @@ def install_ui_mouse_observers(
             if dispatch_ui_click(plotter, session, *position, pv_module=pv_module):
                 _set_event_handled("LeftButtonPressEvent", True)
                 return
-            view_id = _view_at_display_position(plotter, session, *position)
-            if view_id is not None:
-                set_active_view(plotter, session, view_id)
+            _activate_view_at_display_position(plotter, session, *position)
             if select_graph_node_at_display_position(plotter, session, *position, pv_module=pv_module):
                 _set_event_handled("LeftButtonPressEvent", True)
                 return
             if _begin_camera_orbit_drag(plotter, session, *position):
                 _set_event_handled("LeftButtonPressEvent", True)
+
+    def _on_right_click(caller: Any, _event: str) -> None:
+        _set_event_handled("RightButtonPressEvent", False)
+        position = _event_position(caller)
+        if position is not None:
+            _activate_view_at_display_position(plotter, session, *position)
 
     def _on_left_release(_caller: Any, _event: str) -> None:
         _end_appearance_slider_drag(session)
@@ -4021,6 +4122,7 @@ def install_ui_mouse_observers(
         if hasattr(native_interactor, "AddObserver") and hasattr(native_interactor, "GetCommand"):
             _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
             _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+            _add_cancellable_observer("RightButtonPressEvent", _on_right_click)
             _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
             _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
             _add_cancellable_observer("KeyPressEvent", _on_key_press)
@@ -4028,6 +4130,7 @@ def install_ui_mouse_observers(
         else:
             interactor.add_observer("MouseMoveEvent", _on_mouse_move)
             interactor.add_observer("LeftButtonPressEvent", _on_left_click)
+            interactor.add_observer("RightButtonPressEvent", _on_right_click)
             interactor.add_observer("KeyPressEvent", _on_key_press)
             interactor.add_observer("CharEvent", _on_char)
         interactor.add_observer("LeftButtonReleaseEvent", _on_left_release)
@@ -4039,6 +4142,7 @@ def install_ui_mouse_observers(
         interactor.AddObserver("ConfigureEvent", _on_resize)
         _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
         _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
+        _add_cancellable_observer("RightButtonPressEvent", _on_right_click)
         _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
         _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
         _add_cancellable_observer("KeyPressEvent", _on_key_press)
@@ -4099,10 +4203,24 @@ def _tools_panel_layout(plotter: Any, session: GraphViewerSession) -> dict[str, 
     cursor_top = layout["session_navigation"] - TOOLS_SECTION_GAP
     layout["view_layout_header"] = cursor_top - TOOLS_SECTION_HEADER_HEIGHT
     layout["layout_dropdown"] = layout["view_layout_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
-    layout["view_a_dropdown"] = layout["layout_dropdown"] - row_stride
-    layout["view_b_dropdown"] = layout["view_a_dropdown"] - row_stride
+    previous_row = layout["layout_dropdown"]
+    for view_id in ALL_VIEW_IDS:
+        row_key = f"view_{view_id}_dropdown"
+        layout[row_key] = previous_row - row_stride
+        previous_row = layout[row_key]
+    layout["add_viewer"] = layout[f"view_{ALL_VIEW_IDS[session.multi_view_count - 1]}_dropdown"] - row_stride
 
-    cursor_top = layout["view_b_dropdown"] - TOOLS_SECTION_GAP
+    if session.layout_mode == "double":
+        last_layout_row = (
+            layout["add_viewer"]
+            if session.multi_view_count < len(ALL_VIEW_IDS)
+            else layout["view_d_dropdown"]
+        )
+    elif session.layout_mode == "single":
+        last_layout_row = layout["view_a_dropdown"]
+    else:
+        last_layout_row = layout["view_b_dropdown"]
+    cursor_top = last_layout_row - TOOLS_SECTION_GAP
     layout["camera_header"] = cursor_top - TOOLS_SECTION_HEADER_HEIGHT
     layout["camera_sync"] = layout["camera_header"] - TOOLS_SECTION_HEADER_GAP - COMMAND_BUTTON_HEIGHT
     layout["camera_view"] = layout["camera_sync"] - row_stride
@@ -4251,11 +4369,11 @@ def _add_ui_button(
 
 
 def _view_label(view_id: ViewID) -> str:
-    return "View A" if view_id == "a" else "View B"
+    return f"View {view_id.upper()}"
 
 
 def _layout_mode_label(mode: ViewLayoutMode) -> str:
-    return {"single": "Single View", "double": "Double View", "overlay": "Overlay View"}[mode]
+    return {"single": "Single View", "double": "Multi View", "overlay": "Overlay View"}[mode]
 
 
 def _loaded_file_label(loaded_file: LoadedVisualizationFile, *, max_length: int | None = None) -> str:
@@ -4623,7 +4741,8 @@ def render_view_layout_controls(plotter: Any, session: GraphViewerSession) -> No
                 view_id=view_id,
             )
     elif session.layout_mode == "double":
-        for view_id, row_key in (("a", "view_a_dropdown"), ("b", "view_b_dropdown")):
+        for view_id in _visible_view_ids(session):
+            row_key = f"view_{view_id}_dropdown"
             row_y = layout[row_key]
             if not _tools_row_visible(plotter, row_y):
                 continue
@@ -4635,6 +4754,19 @@ def render_view_layout_controls(plotter: Any, session: GraphViewerSession) -> No
                 x=inner_x, y=row_y, width=inner_width,
                 view_id=view_id,
             )
+        if session.multi_view_count < len(ALL_VIEW_IDS):
+            row_y = layout["add_viewer"]
+            if _tools_row_visible(plotter, row_y):
+                _add_ui_button(
+                    plotter,
+                    session.command_button_actors,
+                    session.command_hitboxes,
+                    label="Add Viewer",
+                    action="add-viewer",
+                    x=inner_x,
+                    y=row_y,
+                    width=inner_width,
+                )
     elif session.layout_mode == "overlay":
         view = session.active_view
         for target_index, (label, file_index, action_key) in enumerate((
@@ -4674,13 +4806,13 @@ def render_open_dropdown_menus(plotter: Any, session: GraphViewerSession) -> Non
             width=inner_width,
             rows=(
                 ("Single View", "set-layout", None, None),
-                ("Double View", "set-layout", 1, None),
+                ("Multi View", "set-layout", 1, None),
                 ("Overlay View", "set-layout", 2, None),
             ),
         )
 
     if session.view_menu_open is not None:
-        row_key = "view_a_dropdown" if session.view_menu_open == "a" else "view_b_dropdown"
+        row_key = f"view_{session.view_menu_open}_dropdown"
         rows: list[tuple[str, str, int | None, ViewID | None]] = [
             ("Empty", "assign-view-file", None, session.view_menu_open)
         ]
