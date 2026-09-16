@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-09-16 19:15 AEST — Show the project version in the GraphViz title
+
+- Changed the default desktop title from `SkelHub Graph Viewer` to
+  `SkelHub GraphViz (Version: <version>)`.
+- Added a shared version resolver that reads `[project].version` directly from
+  `pyproject.toml` in source checkouts. Installed distributions fall back to
+  metadata generated from the same project version when `pyproject.toml` is
+  not present.
+- Avoided the stale local distribution metadata (`0.1.0`); the current source
+  title correctly displays the authoritative `0.4.1` value.
+- Added local ignored regression coverage for version resolution and the full
+  default window title.
+- Verification: focused GraphViz tests (`12 passed`) and the full suite
+  (`87 passed`).
+
 ## 2026-09-16 19:00 AEST — Activate viewport before either mouse drag
 
 - Added a high-priority right-button press handler matching the existing left

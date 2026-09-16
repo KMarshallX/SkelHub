@@ -13,6 +13,8 @@ import igraph as ig
 import nibabel as nib
 import numpy as np
 
+from skelhub._version import get_version
+
 
 VisualizationFileKind = Literal["graphml", "nifti"]
 ViewLayoutMode = Literal["single", "double", "overlay"]
@@ -137,7 +139,9 @@ class GraphVisualizationOptions:
 
     edge_thickness: float = 1.0
     node_size: float = 2.5
-    window_title: str = "SkelHub Graph Viewer"
+    window_title: str = field(
+        default_factory=lambda: f"SkelHub GraphViz (Version: {get_version()})"
+    )
     edge_geometry: EdgeGeometry = "straight"
 
 
