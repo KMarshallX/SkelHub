@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-09-21 23:19 AEST — Activate an inactive viewer before middle-button panning
+
+- Added a middle-button press observer that activates the scene viewport under
+  the pointer and binds its renderer before native VTK panning begins.
+- Applied the observer to all supported interactor registration paths; the
+  middle-button event still reaches VTK's pan interaction.
+- Added local ignored regression coverage for press, drag, and release in an
+  inactive Multi View viewport, and updated the viewer interaction guide.
+- Assumption: "wheel-click" means pressing and dragging the mouse's middle
+  button. Limitation: automated coverage uses off-screen VTK; desktop input
+  behavior should also be checked interactively.
+- Verification: focused Multi View and camera-preservation tests (`12 passed`)
+  and `git diff --check`.
+
 ## 2026-09-16 19:15 AEST — Show the project version in the GraphViz title
 
 - Changed the default desktop title from `SkelHub Graph Viewer` to

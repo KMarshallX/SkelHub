@@ -4057,6 +4057,12 @@ def install_ui_mouse_observers(
         if position is not None:
             _activate_view_at_display_position(plotter, session, *position)
 
+    def _on_middle_click(caller: Any, _event: str) -> None:
+        _set_event_handled("MiddleButtonPressEvent", False)
+        position = _event_position(caller)
+        if position is not None:
+            _activate_view_at_display_position(plotter, session, *position)
+
     def _on_left_release(_caller: Any, _event: str) -> None:
         _end_appearance_slider_drag(session)
         if _end_tools_scroll_drag(session):
@@ -4127,6 +4133,7 @@ def install_ui_mouse_observers(
             _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
             _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
             _add_cancellable_observer("RightButtonPressEvent", _on_right_click)
+            _add_cancellable_observer("MiddleButtonPressEvent", _on_middle_click)
             _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
             _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
             _add_cancellable_observer("KeyPressEvent", _on_key_press)
@@ -4135,6 +4142,7 @@ def install_ui_mouse_observers(
             interactor.add_observer("MouseMoveEvent", _on_mouse_move)
             interactor.add_observer("LeftButtonPressEvent", _on_left_click)
             interactor.add_observer("RightButtonPressEvent", _on_right_click)
+            interactor.add_observer("MiddleButtonPressEvent", _on_middle_click)
             interactor.add_observer("KeyPressEvent", _on_key_press)
             interactor.add_observer("CharEvent", _on_char)
         interactor.add_observer("LeftButtonReleaseEvent", _on_left_release)
@@ -4147,6 +4155,7 @@ def install_ui_mouse_observers(
         _add_cancellable_observer("MouseMoveEvent", _on_mouse_move)
         _add_cancellable_observer("LeftButtonPressEvent", _on_left_click)
         _add_cancellable_observer("RightButtonPressEvent", _on_right_click)
+        _add_cancellable_observer("MiddleButtonPressEvent", _on_middle_click)
         _add_cancellable_observer("MouseWheelForwardEvent", _on_wheel_forward)
         _add_cancellable_observer("MouseWheelBackwardEvent", _on_wheel_backward)
         _add_cancellable_observer("KeyPressEvent", _on_key_press)
