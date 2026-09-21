@@ -197,9 +197,10 @@ from the active object's displayed center instead of changing scene
 magnification. The wheel step scales with the current camera-object distance:
 far views move faster, and close views move slower. Left-click dragging in the
 viewport orbits the camera around the active object center without translating
-the rendered scene, while right-click dragging uses VTK's camera zoom. Pressing
-either mouse button first makes the viewport under the pointer active and binds
-the drag to that viewport's renderer. When Interactive mode is enabled,
+the rendered scene, while right-click dragging uses VTK's camera zoom and
+middle-click dragging pans the camera. Pressing any of these mouse buttons
+first makes the viewport under the pointer active and binds the drag to that
+viewport's renderer. When Interactive mode is enabled,
 left-clicking a GraphML node selects it instead.
 
 ## HPC and Conda Notes
