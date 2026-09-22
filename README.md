@@ -17,7 +17,7 @@ The goal is simple: keep each algorithm backend isolated, while giving users one
 Current status:
 
 - Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
-- CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`
+- CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`, `skelhub gui`
 - Evaluation: voxel-based v1 metrics for paired 3D binary skeleton volumes
 - Visualization: PyVista-based viewer for GraphML graphs with selectable straight,
   continuous-centreline, or voxel-path edges, plus binary NIfTI volumes
@@ -77,6 +77,13 @@ The console command `skelhub` is exposed by the package install. If `skelhub` po
 python -m skelhub --help
 ```
 
+For the standalone Linux Graph Tools GUI, install the optional desktop dependencies and launch it:
+
+```bash
+python -m pip install -e '.[gui]'
+skelhub gui
+```
+
 ## CLI Usage
 
 Use the focused docs below:
@@ -132,6 +139,7 @@ Key locations:
   into ordered centreline paths; `scripts/protograph_cleaner.sh` exposes the
   workflow through the active Python environment.
 - `skelhub.visualization` powers `skelhub graphviz`.
+- `skelhub.gui` powers `skelhub gui`, while topology calculations and report output stay separate from the desktop widgets.
 
 ## Structured Output
 
