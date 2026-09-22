@@ -1,5 +1,9 @@
 # SkelHub Scripts
 
+`release_version.py` is the standard-library-only GitHub Actions helper for PR
+version checks and release preparation. It does not require an installed
+SkelHub package. See [release documentation](../docs/releases.md) for its workflow.
+
 Helper scripts in this directory assume they are run from an installed checkout
 with SkelHub available in the execution environment. `run_algo.sh` and
 `run_graphgen.sh` use the currently activated conda environment and halt if

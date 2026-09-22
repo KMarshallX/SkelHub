@@ -1,5 +1,15 @@
 # Development Log
 
+## 2026-09-22 16:09 AEST — Add checkbox-driven PR versioning
+
+- Added `.github/PULL_REQUEST_TEMPLATE.md` with summary, changes, testing, breaking changes, and exactly one version choice: bugfix / refactoring (+0.0.1), minor (+0.1.0), major (+1.0.0), or no release. Minor/major increments reset lower components; multi-digit versions are supported.
+- Replaced the manual version-increase check in `.github/workflows/version-check.yml` with PR-description validation, including description edits, and added standard-library helper `scripts/release_version.py`. PRs keep the target branch's package version; automation applies the increment after release merges.
+- Updated `.github/workflows/release.yml` to release only merged, same-repository `dev → main` PRs. It starts from the exact merged revision, atomically pushes a version commit and tag, and creates release notes from the PR. Reruns verify existing tag ancestry and full file trees before completing publication. No-release selections leave versions and tags unchanged.
+- Replaced automatic test deletion/cleanup commits with validation rejecting tracked root test instances. Local tests remain ignored; `.gitignore` was not modified. No application modules, package dependencies, or current package version were changed.
+- Updated `README.md`, `docs/architecture.md`, and `scripts/README.md`; added `docs/releases.md` with setup, branch synchronization, and recovery guidance. The user selected existing GitHub Actions rather than the reference repository's `auto` tool; release tooling stays outside framework layers.
+- Validation: 38 local tests in `tests/test_release_version.py` passed, including temporary local-remote Git integration tests for atomic publication, reruns, concurrent main advancement, conflicting tags, branch/fork gates, invalid choices, version editing, and no-release behavior. Workflow YAML parsing, embedded shell syntax, Python compilation, and `git diff --check` passed. Test instances are not included in tracked changes.
+- Assumptions/limitations: stable X.Y.Z releases only; sync main into dev after releases and let a release finish before another main merge. GitHub must permit the workflow token to push version commits/tags; branch protections are not bypassed. Make Check PR version choice required and replace the previous required-check name if configured. Live Actions execution and remote permissions remain unverified; no remote settings, pushes, or releases were performed.
+
 ## 2026-09-22 15:22 AEST — Keep TopoStats responsive on complex graphs
 
 - Moved GUI TopoStats execution from a worker thread to an isolated `QProcess` running `skelhub.gui.topology_worker`. The child streams flushed JSON events for progress, early graph counts/degree histogram, final results, and errors. The GUI event loop now drives the indeterminate bar, elapsed timer, and five-second log heartbeat independently of igraph's exact cycle-basis call.

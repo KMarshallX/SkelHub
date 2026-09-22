@@ -146,3 +146,11 @@ Key locations:
 SkelHub uses typed result containers for skeletons, graphs, and evaluation reports. See [Structured Output](docs/StructuredOutput.md) for the current contract.
 
 *Review pending:* this output structure is stable enough to use, but it will be reviewed as the framework matures.
+
+## Pull Requests and Releases
+
+The PR template includes a change summary, testing notes, and one version choice:
+bugfix / refactoring (+0.0.1), minor (+0.1.0), major (+1.0.0), or no release.
+Only `dev → main` merges trigger automatic releases. Leave the package version
+unchanged in PRs; automation updates `pyproject.toml` when releasing. Merge
+`main` back into `dev` after each release. See [release workflow and setup](docs/releases.md).

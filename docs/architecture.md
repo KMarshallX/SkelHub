@@ -31,3 +31,10 @@ Compatibility notes:
 - The evaluation modules are structured so a future `SkeletonResult` wrapper can reuse the same array-level evaluator rather than reimplementing metrics.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.
 - Graph-native backends such as `laplacian` must adapt to `SkeletonResult.skeleton` by rasterizing their internal graph output; optional graph files remain backend extras rather than replacing the common volume contract.
+
+Release tooling:
+
+- `.github/PULL_REQUEST_TEMPLATE.md` captures the change description and version choice.
+- `.github/workflows/version-check.yml` validates PR choices using the standard-library helper `scripts/release_version.py`.
+- `.github/workflows/release.yml` releases only merged, same-repository `dev → main` PRs. It commits the selected increment to the authoritative `pyproject.toml`, tags that commit, and creates GitHub release notes from the PR.
+- Release tooling remains separate from the Python package and its algorithm, evaluation, and visualization layers. See [release setup and recovery](releases.md).
