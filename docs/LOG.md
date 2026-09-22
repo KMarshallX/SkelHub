@@ -1,5 +1,71 @@
 # Development Log
 
+## 2026-09-22 16:09 AEST — Add checkbox-driven PR versioning
+
+- Added `.github/PULL_REQUEST_TEMPLATE.md` with summary, changes, testing, breaking changes, and exactly one version choice: bugfix / refactoring (+0.0.1), minor (+0.1.0), major (+1.0.0), or no release. Minor/major increments reset lower components; multi-digit versions are supported.
+- Replaced the manual version-increase check in `.github/workflows/version-check.yml` with PR-description validation, including description edits, and added standard-library helper `scripts/release_version.py`. PRs keep the target branch's package version; automation applies the increment after release merges.
+- Updated `.github/workflows/release.yml` to release only merged, same-repository `dev → main` PRs. It starts from the exact merged revision, atomically pushes a version commit and tag, and creates release notes from the PR. Reruns verify existing tag ancestry and full file trees before completing publication. No-release selections leave versions and tags unchanged.
+- Replaced automatic test deletion/cleanup commits with validation rejecting tracked root test instances. Local tests remain ignored; `.gitignore` was not modified. No application modules, package dependencies, or current package version were changed.
+- Updated `README.md`, `docs/architecture.md`, and `scripts/README.md`; added `docs/releases.md` with setup, branch synchronization, and recovery guidance. The user selected existing GitHub Actions rather than the reference repository's `auto` tool; release tooling stays outside framework layers.
+- Validation: 38 local tests in `tests/test_release_version.py` passed, including temporary local-remote Git integration tests for atomic publication, reruns, concurrent main advancement, conflicting tags, branch/fork gates, invalid choices, version editing, and no-release behavior. Workflow YAML parsing, embedded shell syntax, Python compilation, and `git diff --check` passed. Test instances are not included in tracked changes.
+- Assumptions/limitations: stable X.Y.Z releases only; sync main into dev after releases and let a release finish before another main merge. GitHub must permit the workflow token to push version commits/tags; branch protections are not bypassed. Make Check PR version choice required and replace the previous required-check name if configured. Live Actions execution and remote permissions remain unverified; no remote settings, pushes, or releases were performed.
+
+## 2026-09-22 15:22 AEST — Keep TopoStats responsive on complex graphs
+
+- Moved GUI TopoStats execution from a worker thread to an isolated `QProcess` running `skelhub.gui.topology_worker`. The child streams flushed JSON events for progress, early graph counts/degree histogram, final results, and errors. The GUI event loop now drives the indeterminate bar, elapsed timer, and five-second log heartbeat independently of igraph's exact cycle-basis call.
+- Added Cancel TopoStats, which kills the child process and leaves export disabled. The other three tools and explicit report export keep their existing background workflows. The analysis remains exact and unweighted; no cycle-basis approximation or silent cutoff was introduced.
+- Diagnosed the user's read-only 6 MB GraphML example: 1,621 nodes, 8,607 edges, one component, and 6,987 independent cycles. GraphML loading took about 0.05 seconds, while a direct minimum-cycle-basis probe exceeded eight seconds. In a GUI run, early counts appeared, the bar remained active at five seconds, Cancel stopped the worker, and a separate uncancelled run completed in about ten seconds in this environment.
+- Added local worker-protocol, error, and cancellation tests. Limitation: the exact cycle-basis stage has no reliable percent or ETA; elapsed time and a five-second heartbeat indicate continued work. Verification is recorded below after the full focused suite.
+- Verification: 55 focused and regression tests passed; the final cancel-log adjustment passed three worker tests. `git diff --check` and Python compilation passed. No changes were made to the example graph.
+
+
+## 2026-09-22 15:07 AEST — Restore top tabs and improve histogram readability
+
+- Replaced the Graph Tools side rail with four styled top tabs and a compact dark header. The same four tools and progress/log behavior remain available.
+- Stacked the TopoStats histograms vertically so each uses the full content width. Moved Run TopoStats and Export Report above the charts so they stay accessible on a 1366×768 display. The log opens during processing and closes after a successful run when it opened automatically; failed runs keep it visible.
+- Added shared collision-aware integer tick placement in `skelhub/gui/charting.py` for both in-window charts and exported PNGs. The chart checks rendered x and y label bounds and reduces tick density when needed, including after a window resize.
+- Updated the implemented screenshot and design notes in `docs/design/`. Assumption: “vertical graphs” means stacked charts, retaining vertical histogram bars. Limitation: very dense histograms show a representative subset of labeled bins; all bins remain plotted and exported CSV tables retain every count.
+- Verification: 52 focused and regression tests passed; the final chart/layout adjustment passed 11 GUI and topology tests. The populated 1366×768 window was inspected, and `git diff --check` passed.
+
+
+## 2026-09-22 14:54 AEST — Refine Graph Tools navigation and processing feedback
+
+- Replaced the plain tab strip in `skelhub/gui/app.py` with a dedicated four-tool rail, improved metric cards and input styling, and retained the same Clean, Check, Crop patches, and TopoStats workflows. The older PNG in `docs/design/` remains a concept reference; the design notes and a new screenshot show the implemented layout.
+- Added a persistent progress panel and a timestamped log that opens when work starts. Cleaner node processing, crop patch writing, and report file preparation provide measured progress. Checks, graphgen conversion, and minimum-cycle-basis computation show stage messages with an indeterminate bar during work whose completion fraction is unavailable. Errors stop the bar and remain visible in the log.
+- Added progress callbacks to the reusable checker/crop services, topology analysis and cache, and report export without changing the script entrypoints. Histogram axes now label integer degree and cycle-size bins explicitly.
+- Assumption: percentages describe measurable stages, while an animated bar communicates activity for unmeasurable work. Limitation: no ETA is available for graphgen or exact cycle-basis computation. Verification: 51 focused and regression tests passed after the GUI update; 20 checker and GUI tests passed after the final log refinement; a populated 1366×768 offscreen layout was inspected; `git diff --check` passed.
+
+
+## 2026-09-22 14:36 AEST — Add standalone Graph Tools GUI and TopoStats
+
+- Added `skelhub gui` with four PySide6 tabs: Clean, Check, Crop patches, and TopoStats. The GUI follows `docs/design/` but excludes its early Graph Generation navigation item and has no 3D view. Added optional `skelhub[gui]` dependencies.
+- Moved the checker and cropper logic into reusable postprocessing modules while keeping their script entrypoints; the GUI calls those modules directly. Cleaner uses the existing postprocessing API. Results run in one background worker at a time, with stale-result marking and replacement prompts.
+- Added topology analysis of undirected GraphML with input nodes, parallel edges, and self-loops preserved. Skeleton NIfTI is converted through graphgen into a content-keyed cache. Reports show `E - V + C` independent cycles and a complete unweighted minimum-cycle-basis vertex histogram. JSON, CSV, and PNG files are created only on Export Report.
+- Added local tests for multigraph counts, degree-2 nodes, directed rejection, NIfTI cache reuse and invalidation, export, direct checker/crop services, and offscreen GUI operation. Updated README, architecture, postprocessing, visualization, and design notes.
+- Verification: 51 focused and regression tests passed, including checker, crop, cleaner, graphgen-related, topology, and GUI cases; the 1366×768 offscreen layout was inspected; `git diff --check` passed.
+- Assumptions: the graph is undirected; the minimum basis is unweighted; crop remains node-triggered as confirmed. Limitations: one dataset at a time, no 3D view or Graph Generation tab, and minimum-cycle-basis computation can be slow on large graphs. Tests are local and ignored by the repository; `.gitignore` was not changed.
+
+
+## 2026-09-22 14:17 AEST — Align graph crop node containment with checker
+
+- Updated `scripts/crop_escaping_graph_patches.py` to treat every nonzero
+  foreground value as occupied and accept a node point when any touching
+  occupied closed voxel cell contains it within `1e-9` tolerance.
+- Updated `scripts/README.md` and added boundary, corner, tolerance, volume
+  extent, and negative-foreground regression cases in the locally ignored
+  `tests/test_crop_escaping_graph_patches.py`.
+- Preserved 26-connected component labels, component-specific patches, and
+  existing GraphML crop behavior. The user confirmed that only the existing
+  node check should be aligned; edge centerline fields remain outside this
+  crop trigger's scope, though `checker.sh` reports them separately.
+- Verification: focused crop and checker tests (`26 passed`) and
+  `git diff --check`. Remaining risk: a graph with confined nodes and escaping
+  edge samples still produces no crop; extending the trigger needs an explicit
+  component-assignment rule for those samples.
+- Added separate GUI concept artifacts in `docs/design/`: a focused PNG
+  mockup, its generation prompt, and `gui-concept.md`. The concept shows the
+  agreed TopoStats workflow; no GUI behavior was implemented.
+
 ## 2026-09-21 23:19 AEST — Activate an inactive viewer before middle-button panning
 
 - Added a middle-button press observer that activates the scene viewport under

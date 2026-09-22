@@ -14,6 +14,7 @@ Current implementation details:
 - `skelhub.api` is the framework orchestration layer that loads inputs, dispatches to a backend, writes outputs, and routes evaluation requests.
 - `skelhub.evaluation` is intentionally separated into validation, geometry, morphology, reporting, and orchestration helpers so voxel-based evaluation stays decoupled from backend internals and graphification.
 - `skelhub.visualization` contains the optional PyVista-based GraphML/NIfTI viewer used by `skelhub graphviz`. Graph nodes and optional edge paths are normalized into world-space viewer data during loading, while rendering remains independent of GraphML backend details. Its legacy `graph_viewer` import path is kept as a compatibility facade, while focused modules group constants, typed models, loading, session state, scene rendering, layout, camera behavior, controls, interaction, and launcher entrypoints.
+- `skelhub.gui` is an optional PySide6 desktop layer for Graph Tools. It calls reusable postprocessing services and keeps topology analysis, graphgen caching, and report writing separate from widgets. `skelhub gui` loads the optional dependencies only at launch.
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
 - `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
 - `skelhub.algorithms.laplacian.backend` adapts the VascGraph Laplacian graph-contraction path. It is graph-native internally, but returns a standard rasterized binary skeleton volume and stores the cleaned graph as optional metadata/output.
@@ -30,3 +31,10 @@ Compatibility notes:
 - The evaluation modules are structured so a future `SkeletonResult` wrapper can reuse the same array-level evaluator rather than reimplementing metrics.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.
 - Graph-native backends such as `laplacian` must adapt to `SkeletonResult.skeleton` by rasterizing their internal graph output; optional graph files remain backend extras rather than replacing the common volume contract.
+
+Release tooling:
+
+- `.github/PULL_REQUEST_TEMPLATE.md` captures the change description and version choice.
+- `.github/workflows/version-check.yml` validates PR choices using the standard-library helper `scripts/release_version.py`.
+- `.github/workflows/release.yml` releases only merged, same-repository `dev → main` PRs. It commits the selected increment to the authoritative `pyproject.toml`, tags that commit, and creates GitHub release notes from the PR.
+- Release tooling remains separate from the Python package and its algorithm, evaluation, and visualization layers. See [release setup and recovery](releases.md).

@@ -1,149 +1,70 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-      - closed
+    branches: [main]
+    types: [closed]
 
 permissions:
-  contents: write
-  pull-requests: read
+  contents: read
+
+concurrency:
+  group: skelhub-release-main
+  cancel-in-progress: false
 
 jobs:
-  remove-tests:
-    name: Remove root tests directory
-    if: github.event_name == 'push' || github.event.action != 'closed'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout branch
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
-          fetch-depth: 0
-
-      - name: Configure git author
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Remove tests directory
-        env:
-          TARGET_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
-        run: |
-          if [ -d tests ]; then
-            git rm -r tests
-          fi
-
-          if git diff --cached --quiet; then
-            echo "No root tests directory cleanup needed."
-          else
-            git commit -m "Remove root tests directory"
-            git push origin "HEAD:${TARGET_BRANCH}"
-          fi
-
   release:
     name: Release merged dev PR
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'dev' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
-      - name: Checkout main
+      - name: Checkout the exact merged revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
-
-      - name: Configure git author
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare selected version and release notes
+        id: version
+        run: python scripts/release_version.py prepare
+      - name: Commit version and publish tag atomically
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Parse release version
-        id: version
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import re
-          import tomllib
-          from pathlib import Path
-
-          VERSION_RE = re.compile(r"^[0-9]\.[0-9]\.[0-9]$")
-
-          version = tomllib.loads(
-              Path("pyproject.toml").read_text(encoding="utf-8")
-          )["project"]["version"]
-
-          if not VERSION_RE.fullmatch(version):
-              raise SystemExit(
-                  f"Release version must use single-digit X.Y.Z format; got {version!r}"
-              )
-
-          print(f"version={version}")
-          print(f"tag=v{version}")
-          PY
-
-      - name: Ensure release tag does not exist
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git fetch --tags --force
-
+          git add pyproject.toml
+          git fetch origin --tags
           if git rev-parse --verify --quiet "refs/tags/${TAG}"; then
-            echo "Tag ${TAG} already exists."
-            exit 1
+            # A rerun can finish a release only for this exact version commit.
+            test "$(git rev-parse "${TAG}^1")" = "${MERGE_SHA}"
+            test "$(git rev-parse "${TAG}^{tree}")" = "$(git write-tree)"
+            echo "Verified existing tag ${TAG}; continuing release creation."
+          else
+            git commit -m "Release ${TAG}"
+            git tag "${TAG}"
+            # Refuse to overwrite main if another merge advanced it meanwhile.
+            git push --atomic origin HEAD:refs/heads/main "refs/tags/${TAG}"
           fi
-
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Remote tag ${TAG} already exists."
-            exit 1
-          fi
-
-      - name: Ensure GitHub Release does not exist
+      - name: Create GitHub Release
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "GitHub Release ${TAG} already exists."
-            exit 1
-          fi
-
-      - name: Remove tests from main
-        run: |
-          if [ -d tests ]; then
-            git rm -r tests
-          fi
-
-          if git diff --cached --quiet; then
-            echo "No tests directory cleanup needed."
           else
-            git commit -m "Remove tests from main release branch"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            gh release create "${TAG}" --verify-tag --title "${TAG}" \
+              --notes-file "${RUNNER_TEMP}/skelhub-release-notes.md"
           fi
-
-      - name: Create tag
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git tag "${TAG}"
-          git push origin "${TAG}"
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          gh release create "${TAG}" \
-            --title "${TAG}" \
-            --notes "Release ${TAG}"

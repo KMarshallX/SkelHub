@@ -16,6 +16,12 @@ The postprocessing package contains three user-facing modules:
 - `skelhub.postprocessing.protograph_cleaner` removes degree-2 GraphML nodes
   while preserving their positions inside ordered, merged centreline paths.
 
+`skelhub gui` exposes the cleaner, checker, and component cropper in a standalone Graph Tools window. The checker and cropper use reusable Python services; the original script entrypoints remain available. TopoStats analyzes GraphML as supplied, or derives a cached graph from a skeleton NIfTI. It reports independent cycles (`edges - nodes + components`) and an unweighted minimum-cycle-basis vertex histogram.
+TopoStats converts NIfTI through graphgen into a cache under `${XDG_CACHE_HOME:-~/.cache}/skelhub/`. Reports are saved only through **Export Report** as JSON, CSV, and PNG files. The current GUI handles one dataset at a time and has no 3D view.
+The window shows progress for each tool and opens a timestamped run log during processing.
+TopoStats displays its histograms vertically and adjusts axis ticks to keep labels readable.
+TopoStats runs its graph analysis in an isolated process. Counts and the degree histogram appear before the minimum cycle basis finishes; an active progress bar, elapsed time, log updates, and Cancel remain responsive during that calculation.
+
 These workflows are adapted from vessel graph generation and feature
 extraction implemented in Voreen [1]. SkelHub provides a Python/CLI implementation
 with its documented graph input and dual-space measurement conventions.

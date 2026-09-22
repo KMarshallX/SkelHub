@@ -1,5 +1,9 @@
 # SkelHub Scripts
 
+`release_version.py` is the standard-library-only GitHub Actions helper for PR
+version checks and release preparation. It does not require an installed
+SkelHub package. See [release documentation](../docs/releases.md) for its workflow.
+
 Helper scripts in this directory assume they are run from an installed checkout
 with SkelHub available in the execution environment. `run_algo.sh` and
 `run_graphgen.sh` use the currently activated conda environment and halt if
@@ -240,7 +244,10 @@ Useful options:
 
 ## `crop_escaping_graph_patches.sh`
 
-Finds GraphML nodes whose rounded `voxel_pos` falls outside a foreground NIfTI.
+Finds GraphML nodes whose `voxel_pos` is outside every nonzero foreground
+voxel's closed cell, using the same `1e-9` coordinate tolerance as `checker.sh`.
+Shared faces, edges, and corners count as contained when they touch an occupied
+cell. The crop trigger checks nodes; edge centerline fields are not checked.
 If escaping nodes are found, it writes one component-specific foreground patch
 and one cropped GraphML patch per affected connected component. An optional
 image input can be cropped to a separate output directory.

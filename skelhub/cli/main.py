@@ -405,6 +405,8 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         help="GraphML edge geometry: straight endpoints, continuous float centreline, or voxel-centre path.",
     )
 
+    subparsers.add_parser("gui", help="Open the standalone Graph Tools window.")
+
     return parser
 
 
@@ -491,6 +493,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         except GraphVisualizationError as exc:
             parser.exit(status=2, message=f"skelhub graphviz: error: {exc}\n")
+
+    if args.command == "gui":
+        try:
+            from skelhub.gui.app import launch
+        except ImportError as exc:
+            parser.exit(status=2, message=f"skelhub gui: install the GUI dependencies with 'pip install skelhub[gui]' ({exc})\n")
+        return launch()
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
