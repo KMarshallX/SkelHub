@@ -117,7 +117,7 @@ How it is computed:
 **Radius multiplier α**, beside Colour by:
 
 - Range 1.0–3.0, default 1.5, step 0.1. Enabled only for Local EDT ratio.
-- Hover the **?** icon for a reminder: search radius = α × EDT at that point, measured in physical units; only the same 26-connected component counts; larger α searches farther, may include wider neighbouring sections of the same component, and takes longer.
+- Hover or click the **?** icon for a reminder: search radius = α × EDT at that point, measured in physical units; only the same 26-connected component counts; larger α searches farther, may include wider neighbouring sections of the same component, and takes longer.
 
 Reading the value:
 
@@ -144,6 +144,7 @@ Display:
 
 - Foreground: binary NIfTI (`.nii` / `.nii.gz`).
 - Skeleton: binary NIfTI, or GraphML with node `voxel_pos`. Edges must have `centerline_voxel_points`.
+- GraphML files that also store a node attribute named `id` (for example laplskel output) are fine: that attribute names the nodes, as in `skelhub graphviz`.
 - **Calculate** runs loading, checks, and the calculation in the background with the selected settings. Progress shows the loading stages and the local EDT ratio's sample batches; the EDT, component labelling, surface reconstruction, and distance queries have no percentage.
 - NIfTI: one block per skeleton voxel, drawn at its physical size and orientation, coloured in discrete bands.
 - GraphML: nodes coloured on a continuous gradient. Edges follow `centerline_voxel_points` and are always neutral grey; they draw the shape only and carry no distance samples.

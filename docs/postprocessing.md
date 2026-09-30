@@ -233,30 +233,7 @@ Architecture:
 - Jobs run off the GUI thread: a worker thread for most tools, a child process for TopoStats. Services report progress through a callback, and pass `None` for stages without a measurable fraction.
 - The checker and EDT Heat share one containment rule, `checker.points_in_foreground_cells`.
 
-### Boundary-distance sampling (`skelhub.postprocessing.edt`)
-
-`compute_edt_heat(foreground, skeleton, method=..., metric=..., alpha=...)` backs the EDT Heat tab and can be used directly from Python. It returns an `EdtHeatResult` holding the samples, their voxel and physical positions, spacing, unit, `distance_method`, and `metric`.
-
-- `method="voxel_edt"` (default, unchanged behaviour):
-  - EDT = distance from each foreground voxel centre to the nearest background voxel centre, using physical spacing (the affine column lengths). A voxel next to background equals the spacing along that axis. The volume border is not treated as background.
-  - Skeleton NIfTI: the EDT value at each occupied skeleton voxel. GraphML: the EDT at each node `voxel_pos`, trilinearly interpolated for fractional coordinates.
-  - The EDT is computed on the foreground bounding box plus a one-voxel background margin. This gives the same values as the full volume with less memory. Only the samples are kept.
-- `method="surface"` (GraphML only), in `skelhub.postprocessing.surface_distance`:
-  - The shortest physical distance from each node to the unsmoothed 0.5 marching-cubes isosurface of the foreground, placed with the full affine.
-  - Exact point-to-triangle distances from a VTK static cell locator. No surface-distance volume is built.
-  - Where the foreground meets the image border, the distance mesh stays open. Inside/outside tests use a separate closed copy, which never contributes to distances.
-  - Nodes beyond the voxel-centre hull, or outside the surface, are rejected.
-  - An optional `SurfaceCache` reuses the mesh and locator while the foreground file (path, modification time, size) and surface parameters are unchanged.
-- `metric="local_edt_ratio"` (with `method="voxel_edt"` only):
-  - `values` hold the dimensionless local EDT ratio from `skelhub.evaluation.centeredness`; see [Evaluation](evaluation.md#centeredness-local-edt-ratio).
-  - It reuses the Voxel EDT above: one EDT and one 26-connected component labelling of the same crop per call. The crop holds every foreground voxel, so labelling it matches the full volume, and clipping searches to it drops only background.
-  - NIfTI samples take the component of their voxel. GraphML nodes keep trilinear EDT sampling, centre the ball at the fractional `voxel_pos`, and take their component by foreground-cell containment; missing or conflicting components are rejected by node ID.
-  - `alpha` (1.0–3.0, default 1.5) applies only here. Passing it with `metric="distance"` raises, so distance results never depend on it.
-  - The result also stores `edt_values`, `local_max_values`, `search_radii`, `component_ids`, `neighbour_counts`, `extends_beyond_image`, `alpha`, and `connectivity`. `value_unit_label` is `None` for the ratio, and `value_range` fixes its colour scale at 0–1.
-  - Search-ball and support warnings are added to `warnings`, measured against the full image, not the crop.
-- Inputs are validated before any distance is computed. Misaligned, sheared, empty, or non-binary inputs, and nodes the surface method cannot place, raise `EdtInputError`. The full list of checks is in [GUI](GUI.md#checks-before-calculation).
-
-## Citation 
+## Citation
 
 ```
 [1] J. Meyer-Spradow, T. Ropinski, J. Mensmann, and K. Hinrichs, “Voreen: A Rapid-Prototyping Environment for Ray-Casting-Based Volume Visualizations,” IEEE Comput. Grap. Appl., vol. 29, no. 6, pp. 6–13, Nov. 2009, doi: 10.1109/MCG.2009.130.

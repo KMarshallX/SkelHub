@@ -12,7 +12,7 @@ from PySide6.QtCore import QElapsedTimer, QObject, QProcess, QThread, QTimer, Si
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton,
-    QScrollArea, QSizePolicy, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QStyledItemDelegate, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -162,6 +162,10 @@ class Window(QMainWindow):
         self._build_crop()
         self._build_topology()
         self._build_edt_heat()
+        # Styled delegates make combo popups follow the stylesheet's item colours; the
+        # default menu-style delegate drew hovered items as white text on white.
+        for combo in self.findChildren(QComboBox):
+            combo.setItemDelegate(QStyledItemDelegate(combo))
 
         progress_panel = QFrame()
         progress_panel.setObjectName("progressPanel")
@@ -216,6 +220,12 @@ class Window(QMainWindow):
             QProgressBar::chunk { background: #168e91; border-radius: 4px; }
             QTextEdit#runLog { background: #112b38; color: #d5edec; border: 1px solid #264451; border-radius: 6px; padding: 6px; font-family: monospace; font-size: 11px; }
             QLineEdit, QComboBox { background: white; border: 1px solid #c4d5db; border-radius: 5px; padding: 7px; }
+            QComboBox { color: #172d39; }
+            QComboBox:disabled { color: #91a1a7; background: #ecf1f2; }
+            QComboBox QAbstractItemView { background: white; color: #172d39; border: 1px solid #c4d5db; outline: 0;
+                                          selection-background-color: #d8ecec; selection-color: #0f4d52; }
+            QComboBox QAbstractItemView::item { min-height: 24px; padding: 0 8px; color: #172d39; }
+            QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected { background: #d8ecec; color: #0f4d52; }
             QPushButton { padding: 7px 14px; border: 1px solid #b7cbd0; border-radius: 5px; background: #ffffff; color: #163643; }
             QPushButton:hover { background: #e3f2f2; border-color: #88b9bb; }
             QPushButton:disabled { color: #91a1a7; background: #ecf1f2; }

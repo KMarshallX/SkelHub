@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QSlider, QSpinBox, QStyle, QToolButton, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QSlider, QSpinBox, QStyle, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from skelhub.evaluation.centeredness import ALPHA_RANGE, CONNECTIVITY, DEFAULT_ALPHA
@@ -125,6 +125,42 @@ def legend_labels(legend: HeatLegend, top: float, bottom: float, min_gap: float)
             kept.append((y, format_value(value)))
     kept.append(last)
     return kept
+
+
+class HelpIcon(QLabel):
+    """A question-mark icon that shows its tooltip as soon as the pointer enters, or on click.
+
+    Qt's delayed hover tooltip is skipped while the window is inactive and restarts
+    whenever the pointer moves over a small widget, so it can seem not to appear.
+    Showing the text directly on enter avoids both. The hover target is a little
+    larger than the 16 px glyph.
+    """
+
+    SIZE = 22
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.setPixmap(self.style().standardIcon(QStyle.SP_MessageBoxQuestion).pixmap(16, 16))
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setToolTip(text)
+        self.setCursor(Qt.WhatsThisCursor)
+
+    def show_help(self) -> None:
+        """Show the tooltip below the icon; it hides when the pointer leaves the icon."""
+        QToolTip.showText(self.mapToGlobal(QPoint(0, self.height())), self.toolTip(), self, self.rect())
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self.show_help()
+
+    def leaveEvent(self, event) -> None:
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        self.show_help()
+        event.accept()
 
 
 class HeatLegendWidget(QWidget):
@@ -392,13 +428,9 @@ class EdtHeatTab(QWidget):
         scroll.setFixedWidth(250)
         return scroll
 
-    def _help_icon(self, text: str) -> QLabel:
-        """A question-mark icon whose hover tooltip holds ``text``."""
-        icon = QLabel()
-        icon.setPixmap(self.style().standardIcon(QStyle.SP_MessageBoxQuestion).pixmap(16, 16))
-        icon.setToolTip(text)
-        icon.setCursor(Qt.WhatsThisCursor)
-        return icon
+    @staticmethod
+    def _help_icon(text: str) -> HelpIcon:
+        return HelpIcon(text)
 
     @staticmethod
     def _slider(bounds: tuple[float, float], step: float, default: float, callback) -> tuple[QSlider, QLabel]:

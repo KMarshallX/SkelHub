@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-09-30 23:04 AEST — Fix EDT Heat GraphML thread safety, help tooltips, and dropdown colours
+
+- **GraphML warning in the terminal** (laplskel `0001.graphml`, which stores a node data attribute `id`):
+  - Cause: python-igraph installs its warning and error handlers only on the thread that imported igraph. On the GUI's worker thread, igraph's C reader printed "Could not add vertex ids…" straight to stderr, bypassing the existing Python warning filter. The graph itself loaded correctly.
+  - Found while checking: on the same worker threads, a malformed GraphML (truncated file, edge to an unknown node) **aborted the whole process** instead of raising an error.
+  - Fix: `skelhub/io/graphml_reader.py` `read_graph_voxel_geometry` now streams GraphML with `xml.etree.ElementTree` instead of igraph. It keeps igraph's conventions: file order, key `<default>` values, missing values as None, and a node data attribute `id` replacing `<node id>` (so node IDs still match `graph_node_ids` and graphviz). Malformed files raise `ValueError` ("Failed to load GraphML file …").
+  - The igraph-based `read_graphml` is unchanged for its callers. python-igraph exposes no way to install its handlers on another thread; its C core hides the setters.
+  - Verified: node IDs, edge order, and `voxel_pos` match igraph on all 4,941 GraphML files under 30 MB in SkelHub `test_data` and `Laplacian_Flow_Skeletonisation/tests/test_output`. The reported pair now calculates quietly for both Distance and Local EDT ratio (184 nodes).
+- **? tooltips sometimes not appearing**:
+  - Cause: Qt's delayed hover tooltip is skipped while the window is inactive and restarts when the pointer moves over the 16 px icon.
+  - Fix: new `HelpIcon` in `skelhub/gui/edt_tab.py` shows its text immediately on enter or click and hides it on leave. The hover target is 22 px.
+- **Dropdown hover text turning white**:
+  - Cause: the stylesheet styled the combo box but not its popup. Fusion's menu-style delegate drew the hovered item as white text on white.
+  - Fix: `skelhub/gui/app.py` styles the popup (dark text; hovered item #0f4d52 on #d8ecec, 7.8:1 contrast; disabled combos greyed) and gives every combo box a `QStyledItemDelegate` so the item rules apply. This covers all tabs.
+- Docs: `docs/GUI.md` (hover or click help; GraphML `id` attribute), `docs/architecture.md` (why geometry parsing avoids igraph).
+- Tests:
+  - `tests/test_edt_heat_processing.py`: +6. A GraphML with an `id` attribute and an edge default is calculated on a worker thread with no terminal output, and its node IDs match igraph. Five malformed files raise `ValueError` on a worker thread; with the old reader this test run crashed with a core dump.
+  - `tests/test_gui_edt_heat.py`: +2. Help icons show on enter while the window is inactive and hide on leave. Every combo uses a styled delegate, and the hovered Colour by item is highlighted with at least 4.5:1 text contrast.
+  - Full suite: 247 passed; compilation passed. The layout is unchanged (the 1366×768 page still does not scroll).
+- Limitations and risks:
+  - The Check, Crop patches, and Clean tabs still call igraph's GraphML reader on worker threads. They can print the same warnings and abort on malformed GraphML. Not changed here.
+  - Tooltip and popup behaviour was checked offscreen with synthetic events and grabs, not on a live X11 display.
+  - The stdlib reader holds each node's and edge's attributes briefly while streaming. Very large GraphML (over 100 MB) is slower than igraph.
+
 ## 2026-09-30 17:38 AEST — Add Local EDT ratio to EDT Heat
 
 - Added a **Local EDT ratio** option under a new **Colour by** selector (Distance / Local EDT ratio) in the EDT Heat tab. It is a first centeredness indicator: $r(p) = D(p) / \max(\{D(p)\} \cup \{D(q) : q \in Q(p)\})$, where $Q(p)$ holds the foreground voxel centres within $\alpha D(p)$ (physical) in the same 26-connected foreground component.
