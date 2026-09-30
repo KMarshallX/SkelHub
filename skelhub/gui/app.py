@@ -362,7 +362,7 @@ class Window(QMainWindow):
 
     def _build_edt_heat(self) -> None:
         self.edt_tab = EdtHeatTab(PathRow, self._launch, self._log, self._error)
-        self._settings.append(self.edt_tab.calculate_button)
+        self._settings.extend((self.edt_tab.calculate_button, self.edt_tab.method_combo))
         self.tabs.addTab(self.edt_tab, "EDT Heat")
 
     def _toggle_log(self, visible: bool) -> None:

@@ -1,12 +1,15 @@
-"""Foreground Euclidean distance transform sampled at skeleton locations.
+"""Foreground boundary distance sampled at skeleton locations.
 
 GUI-independent. Given a binary foreground NIfTI and either a binary skeleton
 NIfTI or a GraphML graph, this module validates that both describe the same
-voxel grid, computes the physical-space EDT of the foreground, and samples it:
+voxel grid and samples one of two physical distances:
 
-- skeleton NIfTI: at every occupied skeleton voxel (exact voxel values)
-- GraphML: at every node ``voxel_pos`` (trilinear interpolation for
-  fractional coordinates)
+- ``voxel_edt`` (default): the Euclidean distance transform from foreground
+  voxel centres to background voxel centres, read at every occupied skeleton
+  voxel, or trilinearly interpolated at each GraphML node ``voxel_pos``.
+- ``surface`` (GraphML only): the shortest distance from each node to the
+  unsmoothed 0.5 isosurface of the foreground; see
+  ``skelhub.postprocessing.surface_distance``.
 
 Sampled geometry is placed in physical space with the *foreground* affine.
 No algorithm backend is involved.
@@ -24,10 +27,21 @@ from scipy import ndimage
 from skelhub.io.graphml_reader import GraphVoxelGeometry, read_graph_voxel_geometry
 from skelhub.io.nifti_reader import BinaryMaskVolume, read_binary_mask
 from skelhub.postprocessing.checker import FOREGROUND_CELL_TOLERANCE, points_in_foreground_cells
+from skelhub.postprocessing.surface_distance import (
+    SURFACE_PARAMETERS,
+    SurfaceCache,
+    SurfaceDistanceError,
+    build_foreground_surface,
+    file_identity,
+    surface_distances,
+)
 
 
 Progress = Callable[[int | None, str], None]
 SkeletonKind = Literal["nifti", "graphml"]
+DistanceMethod = Literal["voxel_edt", "surface"]
+DISTANCE_METHODS: tuple[DistanceMethod, ...] = ("voxel_edt", "surface")
+DISTANCE_METHOD_LABELS: dict[str, str] = {"voxel_edt": "Voxel EDT", "surface": "Surface distance"}
 
 # Placement tolerance, as a fraction of the smallest voxel spacing.
 ALIGNMENT_TOLERANCE_VOXELS = 1e-3
@@ -42,7 +56,10 @@ class EdtInputError(ValueError):
 
 @dataclass(slots=True)
 class EdtHeatResult:
-    """EDT samples at skeleton voxels or graph nodes, placed in physical space.
+    """Distance samples at skeleton voxels or graph nodes, placed in physical space.
+
+    ``distance_method`` says which distance ``values`` hold (``voxel_edt`` or
+    ``surface``); it defaults to ``voxel_edt`` for existing callers.
 
     ``voxel_positions`` are indices in the foreground grid; ``world_positions``
     are the same points through the foreground affine. For GraphML,
@@ -63,11 +80,17 @@ class EdtHeatResult:
     node_ids: tuple[str, ...] = ()
     edge_world_paths: tuple[np.ndarray, ...] = ()
     warnings: list[str] = field(default_factory=list)
+    distance_method: DistanceMethod = "voxel_edt"
 
     @property
     def sample_count(self) -> int:
         """Number of sampled voxels or nodes."""
         return int(self.values.shape[0])
+
+    @property
+    def metric_label(self) -> str:
+        """Display name of the distance held in ``values``."""
+        return DISTANCE_METHOD_LABELS[self.distance_method]
 
     @property
     def unit_label(self) -> str:
@@ -250,18 +273,34 @@ def skeleton_kind(path: str | Path) -> SkeletonKind:
     raise EdtInputError(f"Unsupported skeleton input: {candidate}. Expected .graphml, .nii, or .nii.gz.")
 
 
-def compute_edt_heat(foreground_path: str | Path, skeleton_path: str | Path, progress: Progress | None = None) -> EdtHeatResult:
-    """Validate inputs, compute the foreground EDT, and sample it at the skeleton.
+def compute_edt_heat(
+    foreground_path: str | Path,
+    skeleton_path: str | Path,
+    progress: Progress | None = None,
+    *,
+    method: DistanceMethod = "voxel_edt",
+    surface_cache: SurfaceCache | None = None,
+) -> EdtHeatResult:
+    """Validate inputs and sample the chosen boundary distance at the skeleton.
+
+    ``method="surface"`` is available for GraphML skeletons only. A
+    ``surface_cache`` lets repeated calls reuse the reconstructed surface for
+    an unchanged foreground file.
 
     Raises ``EdtInputError`` (a ``ValueError``) for malformed, empty, or
-    misaligned inputs. A passing spatial check shows the inputs share a grid;
-    it cannot prove they came from the same source data.
+    misaligned inputs, and for nodes the surface method cannot place. A passing
+    spatial check shows the inputs share a grid; it cannot prove they came from
+    the same source data.
     """
     def update(percent: int | None, message: str) -> None:
         if progress:
             progress(percent, message)
 
+    if method not in DISTANCE_METHODS:
+        raise EdtInputError(f"Unknown distance method '{method}'. Choose one of: {', '.join(DISTANCE_METHODS)}.")
     kind = skeleton_kind(skeleton_path)
+    if method == "surface" and kind != "graphml":
+        raise EdtInputError("Surface distance currently supports GraphML skeletons only; use Voxel EDT for NIfTI skeletons.")
     update(5, f"Loading foreground: {Path(foreground_path).name}")
     try:
         foreground = read_binary_mask(foreground_path, label="Foreground")
@@ -302,14 +341,18 @@ def compute_edt_heat(foreground_path: str | Path, skeleton_path: str | Path, pro
     except ValueError as exc:
         raise EdtInputError(str(exc)) from exc
 
-    update(None, f"Computing physical EDT on {foreground.shape} foreground (spacing {', '.join(f'{s:g}' for s in spacing)})")
-    edt, origin = foreground_edt(foreground.mask, spacing)
-    update(85, "Sampling EDT at skeleton " + ("voxels" if kind == "nifti" else "nodes"))
-    if kind == "nifti":
-        values = sample_edt_at_voxels(edt, voxel_positions, origin)
+    if method == "surface":
+        assert graph is not None
+        values = _surface_values(foreground, graph, spacing, foreground_path, surface_cache, warnings, update)
     else:
-        values = sample_edt_at_points(edt, voxel_positions, origin)
-    del edt
+        update(None, f"Computing physical EDT on {foreground.shape} foreground (spacing {', '.join(f'{s:g}' for s in spacing)})")
+        edt, origin = foreground_edt(foreground.mask, spacing)
+        update(85, "Sampling EDT at skeleton " + ("voxels" if kind == "nifti" else "nodes"))
+        if kind == "nifti":
+            values = sample_edt_at_voxels(edt, voxel_positions, origin)
+        else:
+            values = sample_edt_at_points(edt, voxel_positions, origin)
+        del edt
 
     edge_world_paths: tuple[np.ndarray, ...] = ()
     node_ids: tuple[str, ...] = ()
@@ -331,4 +374,38 @@ def compute_edt_heat(foreground_path: str | Path, skeleton_path: str | Path, pro
         node_ids=node_ids,
         edge_world_paths=edge_world_paths,
         warnings=warnings,
+        distance_method=method,
     )
+
+
+def _surface_values(
+    foreground: BinaryMaskVolume,
+    graph: GraphVoxelGeometry,
+    spacing: tuple[float, float, float],
+    foreground_path: str | Path,
+    surface_cache: SurfaceCache | None,
+    warnings: list[str],
+    update: Progress,
+) -> np.ndarray:
+    def build():
+        return build_foreground_surface(foreground.mask, foreground.affine, spacing, update)
+
+    try:
+        if surface_cache is None:
+            surface = build()
+        else:
+            key = (file_identity(foreground_path), SURFACE_PARAMETERS)
+            surface, reused = surface_cache.get(key, build)
+            if reused:
+                update(None, "Reusing the reconstructed surface for the unchanged foreground")
+        if surface.open_border_faces:
+            warnings.append(
+                "Foreground reaches the image border at " + ", ".join(surface.open_border_faces)
+                + ". The surface is left open there, so distances are measured to the observed surface only; "
+                "an unobserved boundary beyond the image could be closer."
+            )
+        values = surface_distances(surface, graph.voxel_positions, graph.node_ids, update)
+    except SurfaceDistanceError as exc:
+        raise EdtInputError(str(exc)) from exc
+    update(90, f"Surface distance measured for {len(values)} nodes ({surface.triangle_count} triangles)")
+    return values

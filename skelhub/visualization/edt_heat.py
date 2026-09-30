@@ -60,6 +60,7 @@ class HeatPick:
     voxel_position: tuple[float, float, float]
     world_position: tuple[float, float, float]
     node_id: str | None = None
+    metric_label: str = "Voxel EDT"
 
     def describe(self, unit_label: str) -> str:
         """Multi-line text for a details panel."""
@@ -68,7 +69,7 @@ class HeatPick:
         lines = []
         if self.node_id is not None:
             lines.append(f"Node ID: {self.node_id}")
-        lines.append(f"EDT: {format_value(self.edt)} {unit_label}")
+        lines.append(f"{self.metric_label}: {format_value(self.edt)} {unit_label}")
         lines.append(f"{'Voxel index' if self.kind == 'nifti' else 'voxel_pos'}: ({voxel})")
         lines.append(f"Position: ({world}) {unit_label}")
         return "\n".join(lines)
@@ -204,8 +205,8 @@ class EdtHeatScene:
         if render:
             self._render()
 
-    def show(self, result: EdtHeatResult) -> None:
-        """Replace the scene with a new result and fit the camera to it."""
+    def show(self, result: EdtHeatResult, *, reset_camera: bool = True) -> None:
+        """Replace the scene with a new result; fit the camera unless told to keep it."""
         self.clear(render=False)
         self.result = result
         colors = self._compute_colors()
@@ -230,7 +231,10 @@ class EdtHeatScene:
                 samples, scalars=HEAT_ARRAY, rgb=True, style="points", point_size=self.node_size,
                 render_points_as_spheres=True, render=False, reset_camera=False, show_scalar_bar=False,
             )
-        self.reset_view()
+        if reset_camera:
+            self.reset_view()
+        else:
+            self._render()
 
     def _build_voxel_actor(self, samples: Any, affine: np.ndarray) -> Any:
         from vtkmodules.vtkRenderingCore import vtkActor, vtkGlyph3DMapper
@@ -253,7 +257,7 @@ class EdtHeatScene:
         assert self.result is not None
         colors, self.legend = heat_colors(
             self.result.values, scheme_for(self.result.kind), self.preset,
-            band_count=self.band_count, title=f"EDT ({self.result.unit_label})",
+            band_count=self.band_count, title=f"{self.result.metric_label} ({self.result.unit_label})",
         )
         self.color_updates += 1
         return colors
@@ -336,6 +340,7 @@ class EdtHeatScene:
             voxel_position=tuple(float(value) for value in result.voxel_positions[index]),
             world_position=tuple(float(value) for value in world),
             node_id=result.node_ids[index] if result.kind == "graphml" else None,
+            metric_label=result.metric_label,
         )
         self._render()
         return self.selected
