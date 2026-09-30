@@ -11,6 +11,10 @@ voxel grid and samples one of two physical distances:
   unsmoothed 0.5 isosurface of the foreground; see
   ``skelhub.postprocessing.surface_distance``.
 
+With ``metric="local_edt_ratio"`` the Voxel EDT samples are turned into the
+dimensionless local EDT ratio from ``skelhub.evaluation.centeredness``,
+searching the sample's 26-connected foreground component.
+
 Sampled geometry is placed in physical space with the *foreground* affine.
 No algorithm backend is involved.
 """
@@ -24,6 +28,16 @@ from typing import Callable, Literal
 import numpy as np
 from scipy import ndimage
 
+from skelhub.evaluation.centeredness import (
+    CONNECTIVITY,
+    DEFAULT_ALPHA,
+    CenterednessError,
+    component_ids_at_points,
+    component_ids_at_voxels,
+    label_foreground_components,
+    local_edt_ratio,
+    validate_alpha,
+)
 from skelhub.io.graphml_reader import GraphVoxelGeometry, read_graph_voxel_geometry
 from skelhub.io.nifti_reader import BinaryMaskVolume, read_binary_mask
 from skelhub.postprocessing.checker import FOREGROUND_CELL_TOLERANCE, points_in_foreground_cells
@@ -42,6 +56,10 @@ SkeletonKind = Literal["nifti", "graphml"]
 DistanceMethod = Literal["voxel_edt", "surface"]
 DISTANCE_METHODS: tuple[DistanceMethod, ...] = ("voxel_edt", "surface")
 DISTANCE_METHOD_LABELS: dict[str, str] = {"voxel_edt": "Voxel EDT", "surface": "Surface distance"}
+Metric = Literal["distance", "local_edt_ratio"]
+METRICS: tuple[Metric, ...] = ("distance", "local_edt_ratio")
+METRIC_LABELS: dict[str, str] = {"distance": "Distance", "local_edt_ratio": "Local EDT ratio"}
+RATIO_VALUE_RANGE = (0.0, 1.0)
 
 # Placement tolerance, as a fraction of the smallest voxel spacing.
 ALIGNMENT_TOLERANCE_VOXELS = 1e-3
@@ -56,15 +74,22 @@ class EdtInputError(ValueError):
 
 @dataclass(slots=True)
 class EdtHeatResult:
-    """Distance samples at skeleton voxels or graph nodes, placed in physical space.
+    """Per-sample values at skeleton voxels or graph nodes, placed in physical space.
 
-    ``distance_method`` says which distance ``values`` hold (``voxel_edt`` or
-    ``surface``); it defaults to ``voxel_edt`` for existing callers.
+    ``metric`` says what ``values`` hold:
+
+    - ``distance`` (default): the physical distance named by ``distance_method``
+      (``voxel_edt`` or ``surface``).
+    - ``local_edt_ratio``: the dimensionless local EDT ratio. The Voxel EDT at
+      each sample is then in ``edt_values``, the local maximum EDT in
+      ``local_max_values``, and the search radius in ``search_radii`` (all
+      physical); ``alpha`` and ``connectivity`` record the settings. These
+      fields are None for distance results.
 
     ``voxel_positions`` are indices in the foreground grid; ``world_positions``
     are the same points through the foreground affine. For GraphML,
     ``edge_world_paths`` holds each edge's ``centerline_voxel_points`` in
-    physical space for rendering only; edges carry no EDT samples.
+    physical space for rendering only; edges carry no samples.
     """
 
     kind: SkeletonKind
@@ -81,6 +106,15 @@ class EdtHeatResult:
     edge_world_paths: tuple[np.ndarray, ...] = ()
     warnings: list[str] = field(default_factory=list)
     distance_method: DistanceMethod = "voxel_edt"
+    metric: Metric = "distance"
+    alpha: float | None = None
+    connectivity: int | None = None
+    edt_values: np.ndarray | None = None
+    local_max_values: np.ndarray | None = None
+    search_radii: np.ndarray | None = None
+    component_ids: np.ndarray | None = None
+    neighbour_counts: np.ndarray | None = None
+    extends_beyond_image: np.ndarray | None = None
 
     @property
     def sample_count(self) -> int:
@@ -88,14 +122,49 @@ class EdtHeatResult:
         return int(self.values.shape[0])
 
     @property
+    def is_ratio(self) -> bool:
+        """True when ``values`` hold the dimensionless local EDT ratio."""
+        return self.metric == "local_edt_ratio"
+
+    @property
     def metric_label(self) -> str:
-        """Display name of the distance held in ``values``."""
-        return DISTANCE_METHOD_LABELS[self.distance_method]
+        """Display name of what ``values`` hold."""
+        return METRIC_LABELS["local_edt_ratio"] if self.is_ratio else DISTANCE_METHOD_LABELS[self.distance_method]
+
+    @property
+    def settings_label(self) -> str:
+        """Metric name with its settings, e.g. "Local EDT ratio (α = 1.5)"."""
+        return f"{self.metric_label} (α = {self.alpha:g})" if self.is_ratio else self.metric_label
 
     @property
     def unit_label(self) -> str:
-        """Distance unit for display; never guesses a unit the header does not state."""
+        """Physical unit for distances and positions; never guesses a unit the header does not state."""
         return self.spatial_unit if self.spatial_unit else "unit unspecified"
+
+    @property
+    def value_unit_label(self) -> str | None:
+        """Unit of ``values``: the physical unit for distances, None for the dimensionless ratio."""
+        return None if self.is_ratio else self.unit_label
+
+    @property
+    def value_title(self) -> str:
+        """Legend title: the metric, with a unit only when ``values`` have one."""
+        unit = self.value_unit_label
+        return self.metric_label if unit is None else f"{self.metric_label} ({unit})"
+
+    @property
+    def value_range(self) -> tuple[float, float] | None:
+        """Fixed colour range for ``values`` (0–1 for the ratio), or None to use the data range."""
+        return RATIO_VALUE_RANGE if self.is_ratio else None
+
+    def sample_warnings(self, index: int) -> list[str]:
+        """Warnings that apply to one sample."""
+        warnings = []
+        if self.extends_beyond_image is not None and bool(self.extends_beyond_image[index]):
+            warnings.append("Search ball reaches beyond the image; only observed voxels were searched.")
+        if self.neighbour_counts is not None and int(self.neighbour_counts[index]) == 0:
+            warnings.append("Limited neighbourhood support: no other same-component voxel in the search ball.")
+        return warnings
 
 
 def spatial_unit_label(header_unit: str) -> str | None:
@@ -280,17 +349,24 @@ def compute_edt_heat(
     *,
     method: DistanceMethod = "voxel_edt",
     surface_cache: SurfaceCache | None = None,
+    metric: Metric = "distance",
+    alpha: float | None = None,
 ) -> EdtHeatResult:
-    """Validate inputs and sample the chosen boundary distance at the skeleton.
+    """Validate inputs and sample the chosen boundary distance or local EDT ratio at the skeleton.
 
     ``method="surface"`` is available for GraphML skeletons only. A
     ``surface_cache`` lets repeated calls reuse the reconstructed surface for
     an unchanged foreground file.
 
+    ``metric="local_edt_ratio"`` needs ``method="voxel_edt"``. ``alpha`` (the
+    search-radius multiplier, 1.0–3.0, default 1.5) applies to that metric
+    only; passing it with ``metric="distance"`` is an error, so distance
+    results never depend on it.
+
     Raises ``EdtInputError`` (a ``ValueError``) for malformed, empty, or
-    misaligned inputs, and for nodes the surface method cannot place. A passing
-    spatial check shows the inputs share a grid; it cannot prove they came from
-    the same source data.
+    misaligned inputs, for invalid settings, and for nodes the surface method
+    cannot place. A passing spatial check shows the inputs share a grid; it
+    cannot prove they came from the same source data.
     """
     def update(percent: int | None, message: str) -> None:
         if progress:
@@ -298,6 +374,20 @@ def compute_edt_heat(
 
     if method not in DISTANCE_METHODS:
         raise EdtInputError(f"Unknown distance method '{method}'. Choose one of: {', '.join(DISTANCE_METHODS)}.")
+    if metric not in METRICS:
+        raise EdtInputError(f"Unknown metric '{metric}'. Choose one of: {', '.join(METRICS)}.")
+    ratio = metric == "local_edt_ratio"
+    if ratio:
+        if method != "voxel_edt":
+            raise EdtInputError(
+                "Local EDT ratio uses Voxel EDT; a centeredness measure based on Surface distance is not available yet."
+            )
+        try:
+            alpha = validate_alpha(DEFAULT_ALPHA if alpha is None else alpha)
+        except CenterednessError as exc:
+            raise EdtInputError(str(exc)) from exc
+    elif alpha is not None:
+        raise EdtInputError("The radius multiplier alpha applies only to metric='local_edt_ratio'.")
     kind = skeleton_kind(skeleton_path)
     if method == "surface" and kind != "graphml":
         raise EdtInputError("Surface distance currently supports GraphML skeletons only; use Voxel EDT for NIfTI skeletons.")
@@ -341,17 +431,22 @@ def compute_edt_heat(
     except ValueError as exc:
         raise EdtInputError(str(exc)) from exc
 
+    ratio_fields: dict[str, object] = {}
     if method == "surface":
         assert graph is not None
         values = _surface_values(foreground, graph, spacing, foreground_path, surface_cache, warnings, update)
     else:
         update(None, f"Computing physical EDT on {foreground.shape} foreground (spacing {', '.join(f'{s:g}' for s in spacing)})")
         edt, origin = foreground_edt(foreground.mask, spacing)
-        update(85, "Sampling EDT at skeleton " + ("voxels" if kind == "nifti" else "nodes"))
+        update(50 if ratio else 85, "Sampling EDT at skeleton " + ("voxels" if kind == "nifti" else "nodes"))
         if kind == "nifti":
             values = sample_edt_at_voxels(edt, voxel_positions, origin)
         else:
             values = sample_edt_at_points(edt, voxel_positions, origin)
+        if ratio:
+            assert alpha is not None
+            ratio_fields = _ratio_fields(foreground, graph, edt, origin, voxel_positions, values, spacing, alpha, warnings, update)
+            values = ratio_fields.pop("ratios")
         del edt
 
     edge_world_paths: tuple[np.ndarray, ...] = ()
@@ -375,7 +470,59 @@ def compute_edt_heat(
         edge_world_paths=edge_world_paths,
         warnings=warnings,
         distance_method=method,
+        metric=metric,
+        **ratio_fields,  # type: ignore[arg-type]
     )
+
+
+def _ratio_fields(
+    foreground: BinaryMaskVolume,
+    graph: GraphVoxelGeometry | None,
+    edt: np.ndarray,
+    origin: tuple[int, int, int],
+    voxel_positions: np.ndarray,
+    sample_edt: np.ndarray,
+    spacing: tuple[float, float, float],
+    alpha: float,
+    warnings: list[str],
+    update: Progress,
+) -> dict[str, object]:
+    """Local EDT ratio on the EDT crop; returns the ratio-specific result fields plus ``ratios``.
+
+    The crop holds every foreground voxel (bounding box plus one background
+    voxel), so labelling it gives the same components as the full volume and
+    clipping searches to it drops only background. Image-border warnings use
+    the full image shape, not the crop.
+    """
+    crop = tuple(slice(start, start + size) for start, size in zip(origin, edt.shape))
+    update(None, f"Labelling {CONNECTIVITY}-connected foreground components")
+    labels, component_count = label_foreground_components(foreground.mask[crop])
+    try:
+        if graph is None:
+            component_ids = component_ids_at_voxels(labels, voxel_positions, origin)
+        else:
+            component_ids = component_ids_at_points(labels, voxel_positions, origin, graph.node_ids)
+        update(55, f"Searching {len(sample_edt)} neighbourhoods across {component_count} components (α = {alpha:g})")
+        result = local_edt_ratio(
+            edt, labels, voxel_positions, sample_edt, component_ids, spacing, alpha,
+            origin=origin, image_shape=foreground.shape,
+            progress=lambda percent, message: update(55 + (percent or 0) * 35 // 100, message),
+            sample_names=graph.node_ids if graph is not None else None,
+        )
+    except CenterednessError as exc:
+        raise EdtInputError(str(exc)) from exc
+    warnings.extend(result.warnings)
+    return {
+        "ratios": result.ratios,
+        "alpha": result.alpha,
+        "connectivity": result.connectivity,
+        "edt_values": result.sample_edt,
+        "local_max_values": result.local_max_edt,
+        "search_radii": result.search_radii,
+        "component_ids": result.component_ids,
+        "neighbour_counts": result.neighbour_counts,
+        "extends_beyond_image": result.extends_beyond_image,
+    }
 
 
 def _surface_values(

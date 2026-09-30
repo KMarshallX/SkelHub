@@ -5,9 +5,12 @@ The scene works with an embedded ``pyvistaqt.QtInteractor`` or an off-screen
 recomputation), and maps clicks back to the original voxel or node index.
 
 - NIfTI skeletons: one voxel block per sample, drawn by one instanced glyph
-  mapper (not one mesh per voxel), each block coloured by its EDT band.
-- GraphML: EDT-coloured node points plus neutral grey curved edges from
+  mapper (not one mesh per voxel), each block coloured by its value band.
+- GraphML: node points coloured by value plus neutral grey curved edges from
   ``centerline_voxel_points``.
+
+Distances use the data range and the physical unit; the local EDT ratio uses
+a fixed 0–1 range and no unit.
 """
 
 from __future__ import annotations
@@ -51,8 +54,23 @@ HIGHLIGHT_BLOCK_SCALE = 1.12
 
 
 @dataclass(slots=True, frozen=True)
+class RatioDetails:
+    """What a local EDT ratio sample was built from (physical units, except alpha)."""
+
+    edt: float
+    local_max: float
+    alpha: float
+    search_radius: float
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
 class HeatPick:
-    """One picked voxel or node, referring back to the result by sample index."""
+    """One picked voxel or node, referring back to the result by sample index.
+
+    ``edt`` holds the displayed value: a distance, or the local EDT ratio when
+    ``ratio`` is set.
+    """
 
     index: int
     kind: str
@@ -61,17 +79,27 @@ class HeatPick:
     world_position: tuple[float, float, float]
     node_id: str | None = None
     metric_label: str = "Voxel EDT"
+    ratio: RatioDetails | None = None
 
     def describe(self, unit_label: str) -> str:
-        """Multi-line text for a details panel."""
+        """Multi-line text for a details panel; ``unit_label`` is the physical unit."""
         voxel = ", ".join(format_value(value) for value in self.voxel_position)
         world = ", ".join(format_value(value) for value in self.world_position)
         lines = []
         if self.node_id is not None:
             lines.append(f"Node ID: {self.node_id}")
-        lines.append(f"{self.metric_label}: {format_value(self.edt)} {unit_label}")
+        if self.ratio is None:
+            lines.append(f"{self.metric_label}: {format_value(self.edt)} {unit_label}")
+        else:
+            details = self.ratio
+            lines.append(f"{self.metric_label}: {format_value(self.edt)}")
+            lines.append(f"Voxel EDT: {format_value(details.edt)} {unit_label}")
+            lines.append(f"Local max EDT: {format_value(details.local_max)} {unit_label}")
+            lines.append(f"α: {format_value(details.alpha)} · search radius: {format_value(details.search_radius)} {unit_label}")
         lines.append(f"{'Voxel index' if self.kind == 'nifti' else 'voxel_pos'}: ({voxel})")
         lines.append(f"Position: ({world}) {unit_label}")
+        if self.ratio is not None:
+            lines.extend(f"Warning: {warning}" for warning in self.ratio.warnings)
         return "\n".join(lines)
 
 
@@ -155,6 +183,19 @@ def display_ray(renderer: Any, x_pos: float, y_pos: float) -> tuple[np.ndarray, 
 
     near, far = world(0.0), world(1.0)
     return near, far - near
+
+
+def _ratio_details(result: EdtHeatResult, index: int) -> RatioDetails | None:
+    if not result.is_ratio:
+        return None
+    assert result.edt_values is not None and result.local_max_values is not None and result.search_radii is not None
+    return RatioDetails(
+        edt=float(result.edt_values[index]),
+        local_max=float(result.local_max_values[index]),
+        alpha=float(result.alpha),  # type: ignore[arg-type]
+        search_radius=float(result.search_radii[index]),
+        warnings=tuple(result.sample_warnings(index)),
+    )
 
 
 class EdtHeatScene:
@@ -257,7 +298,7 @@ class EdtHeatScene:
         assert self.result is not None
         colors, self.legend = heat_colors(
             self.result.values, scheme_for(self.result.kind), self.preset,
-            band_count=self.band_count, title=f"{self.result.metric_label} ({self.result.unit_label})",
+            band_count=self.band_count, title=self.result.value_title, value_range=self.result.value_range,
         )
         self.color_updates += 1
         return colors
@@ -341,6 +382,7 @@ class EdtHeatScene:
             world_position=tuple(float(value) for value in world),
             node_id=result.node_ids[index] if result.kind == "graphml" else None,
             metric_label=result.metric_label,
+            ratio=_ratio_details(result, index),
         )
         self._render()
         return self.selected

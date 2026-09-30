@@ -1,4 +1,4 @@
-"""EDT Heat tab: foreground distance transform sampled on a skeleton, shown in 3D."""
+"""EDT Heat tab: foreground distance or local EDT ratio sampled on a skeleton, shown in 3D."""
 from __future__ import annotations
 
 from functools import partial
@@ -10,11 +10,12 @@ import numpy as np
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton,
+    QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QSizePolicy, QSlider, QSpinBox, QStyle, QToolButton, QVBoxLayout, QWidget,
 )
 
-from skelhub.postprocessing.edt import DISTANCE_METHOD_LABELS, EdtHeatResult, compute_edt_heat
+from skelhub.evaluation.centeredness import ALPHA_RANGE, CONNECTIVITY, DEFAULT_ALPHA
+from skelhub.postprocessing.edt import DISTANCE_METHOD_LABELS, METRIC_LABELS, EdtHeatResult, compute_edt_heat
 from skelhub.postprocessing.surface_distance import SURFACE_PARAMETERS, SurfaceCache
 from skelhub.visualization.heatmap import (
     BAND_COUNT_RANGE, COLOR_PRESETS, DEFAULT_BAND_COUNT, DEFAULT_PRESET, HeatLegend, format_value,
@@ -33,8 +34,40 @@ METHOD_HELP = (
     "<b>Surface distance</b>: Shortest distance to the foreground’s unsmoothed 0.5 isosurface.<br>"
     "Surface distance currently supports GraphML skeletons only; NIfTI skeletons use Voxel EDT."
 )
+ALPHA_STEP = 0.1
+ALPHA_DECIMALS = 2
+ALPHA_HELP = (
+    "<p>Controls the neighbourhood searched for the maximum EDT. "
+    "At each point, search radius = α × EDT at that point, measured in physical units. "
+    "Only foreground voxels in the same 26-connected component are included. "
+    "Larger α searches farther, may include wider neighbouring sections of the same component, "
+    f"and can take longer. Allowed range: {ALPHA_RANGE[0]:.1f}–{ALPHA_RANGE[1]:.1f}. Default: {DEFAULT_ALPHA:g}.</p>"
+)
+METRIC_HELP = (
+    "<p><b>Distance</b>: physical distance to the foreground boundary, using the distance method.<br>"
+    "<b>Local EDT ratio</b>: EDT at the point ÷ largest EDT within α × EDT in the same component "
+    "(0–1; 1 = no larger EDT nearby). Uses Voxel EDT.</p>"
+)
+RATIO_METHOD_TIP = "Local EDT ratio uses Voxel EDT. Set Colour by to Distance to choose another method."
+NIFTI_METHOD_TIP = "NIfTI skeletons use Voxel EDT."
+ALPHA_DISABLED_TIP = "α applies to Local EDT ratio only."
 INTERACTION_HINT = "Drag: rotate · Shift+drag: pan · Wheel or right-drag: zoom · Click: inspect a voxel or node"
 Launch = Callable[[str, Callable, Callable[[object], None]], None]
+# What Calculate applies: (metric, distance method, alpha or None for distances).
+Config = tuple[str, str, float | None]
+
+
+def config_label(config: Config) -> str:
+    """Display name of a calculation config, e.g. "Voxel EDT" or "Local EDT ratio (α = 1.5)"."""
+    metric, method, alpha = config
+    if metric == "local_edt_ratio":
+        return f"{METRIC_LABELS[metric]} (α = {alpha:g})"
+    return DISTANCE_METHOD_LABELS[method]
+
+
+def result_config(result: EdtHeatResult) -> Config:
+    """The config a result was calculated with."""
+    return (result.metric, result.distance_method, result.alpha if result.is_ratio else None)
 
 
 def _input_kind(path: str) -> str | None:
@@ -187,7 +220,7 @@ class EdtHeatTab(QWidget):
         self._graph_method = "voxel_edt"
         self._result_status = ""
         self._generation = 0
-        self._pending: tuple[int, tuple | None, str] | None = None
+        self._pending: tuple[int, tuple | None, Config] | None = None
         self._press_position: tuple[int, int] | None = None
 
         outer = QVBoxLayout(self)
@@ -199,12 +232,13 @@ class EdtHeatTab(QWidget):
         page_scroll.setWidget(page)
         outer.addWidget(page_scroll)
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(8)
+        # Tight vertical spacing keeps the page from scrolling at 1366 x 768 with two control rows.
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(6)
         title = QLabel("EDT Heat")
         title.setObjectName("sectionLabel")
         layout.addWidget(title)
-        description = QLabel("Colour a skeleton by its physical distance to the foreground boundary: voxel EDT, or the reconstructed surface for GraphML.")
+        description = QLabel("Colour a skeleton by its physical distance to the foreground boundary, or by the local EDT ratio.")
         description.setObjectName("sectionDescription")
         layout.addWidget(description)
         form = QFormLayout()
@@ -215,23 +249,48 @@ class EdtHeatTab(QWidget):
         form.addRow("Skeleton NIfTI or GraphML", self.skeleton_row)
         layout.addLayout(form)
 
-        actions = QHBoxLayout()
-        self.calculate_button = QPushButton("Calculate")
-        self.calculate_button.clicked.connect(self.calculate)
-        actions.addWidget(self.calculate_button)
-        actions.addSpacing(6)
-        actions.addWidget(QLabel("Distance method"))
+        # Calculation settings on one row; Calculate, status, and the panel toggle on the next.
+        settings = QHBoxLayout()
+        settings.setSpacing(6)
+        settings.addWidget(QLabel("Colour by"))
+        self.metric_combo = QComboBox()
+        for metric, label in METRIC_LABELS.items():
+            self.metric_combo.addItem(label, metric)
+        self.metric_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.metric_combo.setToolTip(METRIC_HELP)
+        self.metric_combo.currentIndexChanged.connect(self._metric_changed)
+        settings.addWidget(self.metric_combo)
+        settings.addSpacing(12)
+        settings.addWidget(QLabel("Distance method"))
         self.method_combo = QComboBox()
         for method, label in DISTANCE_METHOD_LABELS.items():
             self.method_combo.addItem(label, method)
         self.method_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.method_combo.currentIndexChanged.connect(self._method_changed)
-        actions.addWidget(self.method_combo)
-        self.method_info = QLabel()
-        self.method_info.setPixmap(self.style().standardIcon(QStyle.SP_MessageBoxQuestion).pixmap(16, 16))
-        self.method_info.setToolTip(METHOD_HELP)
-        self.method_info.setCursor(Qt.WhatsThisCursor)
-        actions.addWidget(self.method_info)
+        settings.addWidget(self.method_combo)
+        self.method_info = self._help_icon(METHOD_HELP)
+        settings.addWidget(self.method_info)
+        settings.addSpacing(12)
+        self.alpha_label = QLabel("Radius multiplier α")
+        settings.addWidget(self.alpha_label)
+        self.alpha_spin = QDoubleSpinBox()
+        self.alpha_spin.setRange(*ALPHA_RANGE)
+        self.alpha_spin.setDecimals(ALPHA_DECIMALS)
+        self.alpha_spin.setSingleStep(ALPHA_STEP)
+        self.alpha_spin.setValue(DEFAULT_ALPHA)
+        self.alpha_spin.setKeyboardTracking(False)
+        self.alpha_spin.valueChanged.connect(self._alpha_changed)
+        self.alpha_label.setBuddy(self.alpha_spin)
+        settings.addWidget(self.alpha_spin)
+        self.alpha_info = self._help_icon(ALPHA_HELP)
+        settings.addWidget(self.alpha_info)
+        settings.addStretch(1)
+        layout.addLayout(settings)
+
+        actions = QHBoxLayout()
+        self.calculate_button = QPushButton("Calculate")
+        self.calculate_button.clicked.connect(self.calculate)
+        actions.addWidget(self.calculate_button)
         actions.addSpacing(6)
         self.status = QLabel("Select a foreground and a skeleton, then Calculate.")
         self.status.setObjectName("sectionDescription")
@@ -333,6 +392,14 @@ class EdtHeatTab(QWidget):
         scroll.setFixedWidth(250)
         return scroll
 
+    def _help_icon(self, text: str) -> QLabel:
+        """A question-mark icon whose hover tooltip holds ``text``."""
+        icon = QLabel()
+        icon.setPixmap(self.style().standardIcon(QStyle.SP_MessageBoxQuestion).pixmap(16, 16))
+        icon.setToolTip(text)
+        icon.setCursor(Qt.WhatsThisCursor)
+        return icon
+
     @staticmethod
     def _slider(bounds: tuple[float, float], step: float, default: float, callback) -> tuple[QSlider, QLabel]:
         slider = QSlider(Qt.Horizontal)
@@ -362,7 +429,7 @@ class EdtHeatTab(QWidget):
         self.panel_toggle.setText("Controls ▸" if visible else "◂ Controls")
 
     def _reset_details(self) -> None:
-        self.details.setText("Click a voxel or node to see its distance and position.")
+        self.details.setText("Click a voxel or node to see its value and position.")
 
     # ----- viewer lifecycle -------------------------------------------------------
     def showEvent(self, event) -> None:
@@ -419,19 +486,38 @@ class EdtHeatTab(QWidget):
     def _current_kind(self) -> str | None:
         return self.result.kind if self.result is not None else _input_kind(self.skeleton_row.value())
 
+    def selected_metric(self) -> str:
+        """Metric Calculate would apply: ``distance`` or ``local_edt_ratio``."""
+        return str(self.metric_combo.currentData())
+
+    def selected_alpha(self) -> float | None:
+        """Alpha Calculate would apply; None when colouring by distance."""
+        if self.selected_metric() != "local_edt_ratio":
+            return None
+        return round(float(self.alpha_spin.value()), ALPHA_DECIMALS)
+
     def selected_method(self) -> str:
-        """Method Calculate would apply: NIfTI skeletons always use Voxel EDT."""
-        if _input_kind(self.skeleton_row.value()) == "nifti":
+        """Method Calculate would apply: NIfTI skeletons and Local EDT ratio always use Voxel EDT."""
+        if _input_kind(self.skeleton_row.value()) == "nifti" or self.selected_metric() == "local_edt_ratio":
             return "voxel_edt"
         return str(self.method_combo.currentData())
 
+    def selected_config(self) -> Config:
+        """Everything Calculate would apply, for cache keys and outdated checks."""
+        return (self.selected_metric(), self.selected_method(), self.selected_alpha())
+
     def _sync_method_selector(self) -> None:
         nifti = _input_kind(self.skeleton_row.value()) == "nifti"
-        wanted = "voxel_edt" if nifti else self._graph_method
+        ratio = self.selected_metric() == "local_edt_ratio"
+        locked = nifti or ratio
         self.method_combo.blockSignals(True)
-        self.method_combo.setCurrentIndex(self.method_combo.findData(wanted))
+        self.method_combo.setCurrentIndex(self.method_combo.findData("voxel_edt" if locked else self._graph_method))
         self.method_combo.blockSignals(False)
-        self.method_combo.setEnabled(not nifti)
+        self.method_combo.setEnabled(not locked)
+        self.method_combo.setToolTip(RATIO_METHOD_TIP if ratio else NIFTI_METHOD_TIP if nifti else "")
+        for widget in (self.alpha_label, self.alpha_spin):
+            widget.setEnabled(ratio)
+            widget.setToolTip("" if ratio else ALPHA_DISABLED_TIP)
 
     def refresh_controls(self) -> None:
         kind = self._current_kind()
@@ -447,22 +533,32 @@ class EdtHeatTab(QWidget):
         self._sync_method_selector()
 
     def _method_changed(self, _index: int) -> None:
-        """User picked a method: remember it for GraphML and mark a different displayed result as outdated."""
+        """User picked a distance method: remember it for GraphML and flag a displayed result that differs."""
         self._graph_method = str(self.method_combo.currentData())
-        self._generation += 1
+        self._show_result_status()
+
+    def _metric_changed(self, _index: int) -> None:
+        """User picked what to colour by: lock or restore the method, enable alpha, flag the displayed result."""
+        self._sync_method_selector()
+        self._show_result_status()
+
+    def _alpha_changed(self, _value: float) -> None:
         self._show_result_status()
 
     def _show_result_status(self) -> None:
+        """Describe the displayed result; flag it in amber when Calculate would apply other settings."""
         if self.result is None:
             return
-        selected = self.selected_method()
-        outdated = selected != self.result.distance_method
+        selected = self.selected_config()
+        outdated = selected != result_config(self.result)
         if outdated:
-            self._set_status(f"Showing {self.result.metric_label} · {DISTANCE_METHOD_LABELS[selected]} not yet applied")
-            self.status.setToolTip(f"The view shows {self.result.metric_label}. Calculate to apply "
-                                   f"{DISTANCE_METHOD_LABELS[selected]}.")
+            self._set_status(f"Showing {self.result.settings_label} · {config_label(selected)} not yet applied")
+            self.status.setToolTip(f"The view shows {self.result.settings_label}. Calculate to apply "
+                                   f"{config_label(selected)}.")
         else:
             self._set_status(self._result_status)
+            if self.result.warnings:
+                self.status.setToolTip(self._result_status + "\n\n" + "\n".join(self.result.warnings))
         self.status.setStyleSheet(f"color: {OUTDATED_COLOR}; font-weight: 600;" if outdated else "")
 
     def invalidate(self) -> None:
@@ -480,11 +576,17 @@ class EdtHeatTab(QWidget):
                             "Select a foreground and a skeleton, then Calculate.")
         self.refresh_controls()
 
-    def _cache_key(self, foreground: str, skeleton: str, method: str) -> tuple | None:
+    def _cache_key(self, foreground: str, skeleton: str, config: Config) -> tuple | None:
+        """Both file identities plus every setting the result depends on; alpha only for the ratio."""
         files = (_file_key(foreground), _file_key(skeleton))
         if None in files:
             return None
-        return (*files, method, SURFACE_PARAMETERS if method == "surface" else ())
+        metric, method, alpha = config
+        return (
+            *files, metric, method,
+            SURFACE_PARAMETERS if method == "surface" else (),
+            (alpha, CONNECTIVITY) if metric == "local_edt_ratio" else (),
+        )
 
     def calculate(self) -> None:
         foreground, skeleton = self.foreground_row.value(), self.skeleton_row.value()
@@ -494,36 +596,48 @@ class EdtHeatTab(QWidget):
         if not self.ensure_viewer():
             self._error("The 3D viewer is unavailable:\n" + str(self.viewer_error))
             return
-        method = self.selected_method()
-        label = DISTANCE_METHOD_LABELS[method]
-        key = self._cache_key(foreground, skeleton, method)
+        config = self.selected_config()
+        metric, method, alpha = config
+        label = config_label(config)
+        key = self._cache_key(foreground, skeleton, config)
         if key is not None and key in self._cache:
             self._log(f"EDT Heat: inputs unchanged; reusing cached {label} samples")
             self.display(self._cache[key])
             return
-        self._pending = (self._generation, key, method)
-        self._set_status(f"Calculating {label}…")
+        self._pending = (self._generation, key, config)
+        # While the job runs, the status keeps naming what is on screen.
+        self._set_status(f"Showing {self.result.settings_label} · calculating {label}…" if self.result is not None
+                         else f"Calculating {label}…")
         self._log(f"EDT Heat: calculating {label}")
         self._launch(f"EDT Heat ({label})",
-                     partial(compute_edt_heat, foreground, skeleton, method=method, surface_cache=self._surface_cache),
+                     partial(compute_edt_heat, foreground, skeleton, method=method, surface_cache=self._surface_cache,
+                             metric=metric, alpha=alpha),
                      self._on_result)
 
     def job_finished(self) -> None:
         """Called after any background job; resets state if an EDT job ended without a result."""
         if self._pending is not None:
-            label = DISTANCE_METHOD_LABELS[self._pending[2]]
+            label = config_label(self._pending[2])
             self._pending = None
             self._set_status(f"{label} calculation rejected or failed. Review the warning and run log.")
+            self.status.setStyleSheet("")
         self.refresh_controls()
 
     def _on_result(self, value: object) -> None:
         assert isinstance(value, EdtHeatResult)
         pending, self._pending = self._pending, None
-        if pending is None or pending[0] != self._generation or pending[2] != value.distance_method:
-            self._log("EDT Heat: inputs or method changed during calculation; result discarded")
+        if pending is None or pending[0] != self._generation or result_config(value) != pending[2]:
+            self._log("EDT Heat: inputs changed during calculation; result discarded")
+            self._show_result_status()
             return
         if pending[1] is not None:
             self._cache[pending[1]] = value
+        if pending[2] != self.selected_config():
+            self._log(f"EDT Heat: settings changed during calculation; {config_label(pending[2])} cached but not shown")
+            if self.result is None:
+                self._set_status(f"Settings changed. Calculate to apply {config_label(self.selected_config())}.")
+            self._show_result_status()
+            return
         self.display(value)
 
     def display(self, result: EdtHeatResult) -> None:
@@ -550,20 +664,23 @@ class EdtHeatTab(QWidget):
         else:
             self._reset_details()
         what = "skeleton voxels" if result.kind == "nifti" else "graph nodes"
+        value_range = f"{format_value(float(result.values.min()))}–{format_value(float(result.values.max()))}"
+        unit = result.value_unit_label
         self._result_status = (
-            f"{result.sample_count} {what} · {result.metric_label} {format_value(float(result.values.min()))}–"
-            f"{format_value(float(result.values.max()))} {result.unit_label} · spatial checks passed"
-            + (" · warning: see run log" if result.warnings else "")
+            f"{result.sample_count} {what} · {result.settings_label} {value_range}" + (f" {unit}" if unit else "")
+            + " · spatial checks passed" + (" · warning: see run log" if result.warnings else "")
         )
-        self._log(f"EDT Heat: {result.metric_label} for {result.sample_count} {what}; spacing "
+        self._log(f"EDT Heat: {result.settings_label} for {result.sample_count} {what}; spacing "
                   f"{', '.join(f'{s:g}' for s in result.spacing)} {result.unit_label}")
+        if result.is_ratio and result.search_radii is not None:
+            self._log(f"EDT Heat: local EDT ratio searched {result.connectivity}-connected foreground components; "
+                      f"search radius {format_value(float(result.search_radii.min()))}–"
+                      f"{format_value(float(result.search_radii.max()))} {result.unit_label}")
         self._log("EDT Heat: shape/affine/containment checks passed; they cannot prove both files come from the same source")
         for warning in result.warnings:
             self._log(f"EDT Heat warning: {warning}")
         self.refresh_controls()
         self._show_result_status()
-        if result.warnings:
-            self.status.setToolTip(self._result_status + "\n\n" + "\n".join(result.warnings))
         self.result_shown.emit()
 
     # ----- appearance -------------------------------------------------------------
