@@ -229,20 +229,25 @@ Architecture:
   - Check → `skelhub.postprocessing.checker` (also used by `scripts/checker.sh`)
   - Crop patches → `skelhub.postprocessing.crop_escaping_graph_patches` (also used by its script)
   - TopoStats → `skelhub.gui.topology`, which converts NIfTI inputs through `graphgen` and caches the graph
-  - EDT Heat → `skelhub.postprocessing.edt`, drawn with `skelhub.visualization.edt_heat`
+  - EDT Heat → `skelhub.postprocessing.edt` and `skelhub.postprocessing.surface_distance`, drawn with `skelhub.visualization.edt_heat`
 - Jobs run off the GUI thread: a worker thread for most tools, a child process for TopoStats. Services report progress through a callback, and pass `None` for stages without a measurable fraction.
 - The checker and EDT Heat share one containment rule, `checker.points_in_foreground_cells`.
 
-### EDT sampling (`skelhub.postprocessing.edt`)
+### Boundary-distance sampling (`skelhub.postprocessing.edt`)
 
-`compute_edt_heat(foreground, skeleton)` backs the EDT Heat tab and can be used directly from Python. It returns an `EdtHeatResult` holding the samples, their voxel and physical positions, spacing, and unit.
+`compute_edt_heat(foreground, skeleton, method=...)` backs the EDT Heat tab and can be used directly from Python. It returns an `EdtHeatResult` holding the samples, their voxel and physical positions, spacing, unit, and `distance_method`.
 
-- EDT = distance from each foreground voxel centre to the nearest background voxel centre, using physical spacing (the affine column lengths). A voxel next to background equals the spacing along that axis. The volume border is not treated as background.
-- Samples:
-  - skeleton NIfTI: the EDT value at each occupied skeleton voxel
-  - GraphML: the EDT at each node `voxel_pos`, trilinearly interpolated for fractional coordinates
-- The EDT is computed on the foreground bounding box plus a one-voxel background margin. This gives the same values as the full volume with less memory. Only the samples are kept.
-- Inputs are validated before the EDT is computed; misaligned, sheared, empty, or non-binary inputs raise `EdtInputError`. The full list of checks is in [GUI](GUI.md#checks-before-calculation).
+- `method="voxel_edt"` (default, unchanged behaviour):
+  - EDT = distance from each foreground voxel centre to the nearest background voxel centre, using physical spacing (the affine column lengths). A voxel next to background equals the spacing along that axis. The volume border is not treated as background.
+  - Skeleton NIfTI: the EDT value at each occupied skeleton voxel. GraphML: the EDT at each node `voxel_pos`, trilinearly interpolated for fractional coordinates.
+  - The EDT is computed on the foreground bounding box plus a one-voxel background margin. This gives the same values as the full volume with less memory. Only the samples are kept.
+- `method="surface"` (GraphML only), in `skelhub.postprocessing.surface_distance`:
+  - The shortest physical distance from each node to the unsmoothed 0.5 marching-cubes isosurface of the foreground, placed with the full affine.
+  - Exact point-to-triangle distances from a VTK static cell locator. No surface-distance volume is built.
+  - Where the foreground meets the image border, the distance mesh stays open. Inside/outside tests use a separate closed copy, which never contributes to distances.
+  - Nodes beyond the voxel-centre hull, or outside the surface, are rejected.
+  - An optional `SurfaceCache` reuses the mesh and locator while the foreground file (path, modification time, size) and surface parameters are unchanged.
+- Inputs are validated before any distance is computed. Misaligned, sheared, empty, or non-binary inputs, and nodes the surface method cannot place, raise `EdtInputError`. The full list of checks is in [GUI](GUI.md#checks-before-calculation).
 
 ## Citation 
 

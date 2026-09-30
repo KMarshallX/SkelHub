@@ -144,7 +144,7 @@ Key locations:
   workflow through the active Python environment.
 - `skelhub.visualization` powers `skelhub graphviz`.
 - `skelhub.gui` powers `skelhub gui`, while topology calculations and report output stay separate from the desktop widgets.
-- `skelhub.postprocessing.edt` computes and samples the foreground EDT for the EDT Heat tab; `skelhub.visualization.heatmap` and `skelhub.visualization.edt_heat` handle its colours, rendering, and picking.
+- `skelhub.postprocessing.edt` and `skelhub.postprocessing.surface_distance` compute voxel-EDT and surface-distance samples for the EDT Heat tab; `skelhub.visualization.heatmap` and `skelhub.visualization.edt_heat` handle its colours, rendering, and picking.
 
 ## Structured Output
 

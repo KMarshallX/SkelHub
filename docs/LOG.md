@@ -1,5 +1,55 @@
 # Development Log
 
+## 2026-09-30 15:51 AEST — Add Surface distance method to EDT Heat
+
+- Added a **Distance method** selector (Voxel EDT / Surface distance) beside Calculate in the EDT Heat tab, with a **?** tooltip holding the definitions. Surface distance is the shortest physical distance from each GraphML node to the foreground's unsmoothed 0.5 marching-cubes isosurface, to triangle interiors, edges, and vertices.
+  - NIfTI skeletons stay on Voxel EDT; the selector is disabled for them.
+  - GraphML remembers its last method during the session. Voxel EDT behaviour and values are unchanged, and `skelhub graphviz` is untouched.
+- New file: `skelhub/postprocessing/surface_distance.py`. It builds the surface (scikit-image Lewiner marching cubes, full affine, bounding-box crop plus one voxel of observed background), queries a VTK static cell locator, runs the containment checks, and provides `SurfaceCache`.
+- Modified files:
+  - `skelhub/postprocessing/edt.py`: `compute_edt_heat(..., method=, surface_cache=)`; `EdtHeatResult.distance_method` (default `voxel_edt`) and `metric_label`.
+  - `skelhub/visualization/edt_heat.py`: legend and selection labels follow the result's method; `show(reset_camera=False)`.
+  - `skelhub/gui/edt_tab.py`: selector, info tooltip, per-method result cache, surface cache, amber "not yet applied" status, and camera and selection kept when the same file pair is recalculated.
+  - `skelhub/gui/app.py`: the selector is disabled during jobs.
+  - Docs: `docs/GUI.md`, `docs/postprocessing.md`, `docs/architecture.md`, `README.md`.
+- Architecture:
+  - Surface work lives in its own postprocessing module. VTK is used there only for geometry queries; there is no Qt and no algorithm backend.
+  - The GUI passes the method and a `SurfaceCache` into the existing background job; rendering stays on the GUI thread.
+  - Result cache keys hold both file identities, the method, and the surface parameters. A result is discarded if the generation or method changed while it was computing.
+  - No surface-distance volume is built.
+- Validation policy (Surface distance, on top of all existing checks):
+  - Rejected: fewer than 2 voxels on any axis; no triangles; a closure mesh that does not close.
+  - Rejected: nodes beyond the voxel-centre hull [0, n−1]. The user chose rejection over closing at the image edge, since the observed surface does not cover that strip.
+  - Rejected: nodes inside a foreground voxel cell but outside the surface. The message explains that the two containment rules differ and suggests Voxel EDT.
+  - Nodes within 1e-6 × the smallest spacing of the surface count as on it, with distance 0.
+  - Nothing is projected onto the surface, and there is no fallback to Voxel EDT.
+  - Foreground at the image border: the calculation runs. The distance mesh stays open and a warning is shown. Inside tests use a separate background-padded closed mesh; it matches the open mesh inside the hull, and its caps never enter distances.
+- Tests:
+  - New `tests/test_surface_distance.py` (10 tests):
+    - a planar boundary separating voxel EDT (3.0 / 4.0 voxels) from surface distance (2.5 / 3.5)
+    - no cap contribution at open borders
+    - a chamfer-triangle interior closest point (0.5/√3)
+    - anisotropic, rotated, translated affine with crop offset
+    - fractional and on-surface nodes
+    - voxel-cell-inside but surface-outside rejection
+    - open-surface containment, valid and invalid
+    - border-strip rejection
+    - degenerate and empty surfaces
+    - NIfTI and unknown-method rejection
+    - surface-cache reuse and rebuild after a file change
+  - `tests/test_gui_edt_heat.py`: +4 tests for selector enablement and the remembered method, the outdated status, legend and selection labels, no recomputation on colour change, camera preservation across a method switch, the per-method cache, surface rejection messages, and discarding stale method results.
+  - Two existing assertions were updated for the renamed legend title ("EDT (mm)" → "Voxel EDT (mm)").
+  - Full suite: 192 passed; no destructor warnings; compilation passed.
+  - Real data: on the L-system foreground with its graphgen GraphML, all 14 nodes passed surface containment. Surface values were 0.37–0.5 below Voxel EDT. The first surface run took 0.53 s; the cached rerun took 0.06 s.
+  - The window was inspected offscreen at 1366×768 and 850×560.
+- Limitations and risks:
+  - No display was available, so the live tooltip hover, on-screen drawing, mouse interaction, and live resizing were not verified.
+  - The surface is inferred from the segmentation, not the true anatomy. It follows the staircase marching-cubes shape, and ambiguous diagonal contacts are resolved by Lewiner's rule, so nodes exactly at such contacts may be rejected.
+  - Inside tests use VTK ray casting (`vtkSelectEnclosedPoints`) on the closed copy; points extremely close to but outside the tolerance rely on its intersection tolerance.
+  - Distance queries loop over nodes in Python, so very large graphs will be slower.
+  - Only the most recent foreground surface is cached.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
 ## 2026-09-30 14:23 AEST — Move GUI documentation to docs/GUI.md
 
 - Added `docs/GUI.md` for `skelhub gui`. It covers install and launch, window behaviour (jobs, progress, log, replacement prompts), each of the five tabs, and the full EDT Heat section: inputs, controls, checks, limitations. The page states that the GUI is under active development and currently separate from `skelhub graphviz`.
