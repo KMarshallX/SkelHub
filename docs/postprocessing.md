@@ -16,11 +16,8 @@ The postprocessing package contains three user-facing modules:
 - `skelhub.postprocessing.protograph_cleaner` removes degree-2 GraphML nodes
   while preserving their positions inside ordered, merged centreline paths.
 
-`skelhub gui` exposes the cleaner, checker, and component cropper in a standalone Graph Tools window. The checker and cropper use reusable Python services; the original script entrypoints remain available. TopoStats analyzes GraphML as supplied, or derives a cached graph from a skeleton NIfTI. It reports independent cycles (`edges - nodes + components`) and an unweighted minimum-cycle-basis vertex histogram.
-TopoStats converts NIfTI through graphgen into a cache under `${XDG_CACHE_HOME:-~/.cache}/skelhub/`. Reports are saved only through **Export Report** as JSON, CSV, and PNG files. The current GUI handles one dataset at a time and has no 3D view.
-The window shows progress for each tool and opens a timestamped run log during processing.
-TopoStats displays its histograms vertically and adjusts axis ticks to keep labels readable.
-TopoStats runs its graph analysis in an isolated process. Counts and the degree histogram appear before the minimum cycle basis finishes; an active progress bar, elapsed time, log updates, and Cancel remain responsive during that calculation.
+The checker, component cropper, and EDT sampler also back the desktop
+[Graph Tools GUI](#graph-tools-gui).
 
 These workflows are adapted from vessel graph generation and feature
 extraction implemented in Voreen [1]. SkelHub provides a Python/CLI implementation
@@ -220,7 +217,23 @@ skelhub feature \
 For the Python entrypoints, see [Python API](API.md). For field-level output
 details, see [Structured Output](StructuredOutput.md).
 
-## Citation 
+## Graph Tools GUI
+
+`skelhub gui` is an optional desktop front end for postprocessing tools. It is under active development and currently separate from `skelhub graphviz`. User-facing details: [GUI](GUI.md).
+
+Architecture:
+
+- The GUI (`skelhub.gui`, PySide6) only collects inputs, runs jobs, and shows results. Processing lives in reusable, GUI-independent modules, so the same code serves scripts, the CLI, and Python.
+- Tab → service:
+  - Clean → `skelhub.postprocessing.protograph_cleaner`
+  - Check → `skelhub.postprocessing.checker` (also used by `scripts/checker.sh`)
+  - Crop patches → `skelhub.postprocessing.crop_escaping_graph_patches` (also used by its script)
+  - TopoStats → `skelhub.gui.topology`, which converts NIfTI inputs through `graphgen` and caches the graph
+  - EDT Heat → `skelhub.postprocessing.edt` and `skelhub.postprocessing.surface_distance`, plus `skelhub.evaluation.centeredness` for the local EDT ratio, drawn with `skelhub.visualization.edt_heat`
+- Jobs run off the GUI thread: a worker thread for most tools, a child process for TopoStats. Services report progress through a callback, and pass `None` for stages without a measurable fraction.
+- The checker and EDT Heat share one containment rule, `checker.points_in_foreground_cells`.
+
+## Citation
 
 ```
 [1] J. Meyer-Spradow, T. Ropinski, J. Mensmann, and K. Hinrichs, “Voreen: A Rapid-Prototyping Environment for Ray-Casting-Based Volume Visualizations,” IEEE Comput. Grap. Appl., vol. 29, no. 6, pp. 6–13, Nov. 2009, doi: 10.1109/MCG.2009.130.

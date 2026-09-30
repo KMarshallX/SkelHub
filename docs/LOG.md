@@ -1,5 +1,202 @@
 # Development Log
 
+## 2026-09-30 23:04 AEST — Fix EDT Heat GraphML thread safety, help tooltips, and dropdown colours
+
+- **GraphML warning in the terminal** (laplskel `0001.graphml`, which stores a node data attribute `id`):
+  - Cause: python-igraph installs its warning and error handlers only on the thread that imported igraph. On the GUI's worker thread, igraph's C reader printed "Could not add vertex ids…" straight to stderr, bypassing the existing Python warning filter. The graph itself loaded correctly.
+  - Found while checking: on the same worker threads, a malformed GraphML (truncated file, edge to an unknown node) **aborted the whole process** instead of raising an error.
+  - Fix: `skelhub/io/graphml_reader.py` `read_graph_voxel_geometry` now streams GraphML with `xml.etree.ElementTree` instead of igraph. It keeps igraph's conventions: file order, key `<default>` values, missing values as None, and a node data attribute `id` replacing `<node id>` (so node IDs still match `graph_node_ids` and graphviz). Malformed files raise `ValueError` ("Failed to load GraphML file …").
+  - The igraph-based `read_graphml` is unchanged for its callers. python-igraph exposes no way to install its handlers on another thread; its C core hides the setters.
+  - Verified: node IDs, edge order, and `voxel_pos` match igraph on all 4,941 GraphML files under 30 MB in SkelHub `test_data` and `Laplacian_Flow_Skeletonisation/tests/test_output`. The reported pair now calculates quietly for both Distance and Local EDT ratio (184 nodes).
+- **? tooltips sometimes not appearing**:
+  - Cause: Qt's delayed hover tooltip is skipped while the window is inactive and restarts when the pointer moves over the 16 px icon.
+  - Fix: new `HelpIcon` in `skelhub/gui/edt_tab.py` shows its text immediately on enter or click and hides it on leave. The hover target is 22 px.
+- **Dropdown hover text turning white**:
+  - Cause: the stylesheet styled the combo box but not its popup. Fusion's menu-style delegate drew the hovered item as white text on white.
+  - Fix: `skelhub/gui/app.py` styles the popup (dark text; hovered item #0f4d52 on #d8ecec, 7.8:1 contrast; disabled combos greyed) and gives every combo box a `QStyledItemDelegate` so the item rules apply. This covers all tabs.
+- Docs: `docs/GUI.md` (hover or click help; GraphML `id` attribute), `docs/architecture.md` (why geometry parsing avoids igraph).
+- Tests:
+  - `tests/test_edt_heat_processing.py`: +6. A GraphML with an `id` attribute and an edge default is calculated on a worker thread with no terminal output, and its node IDs match igraph. Five malformed files raise `ValueError` on a worker thread; with the old reader this test run crashed with a core dump.
+  - `tests/test_gui_edt_heat.py`: +2. Help icons show on enter while the window is inactive and hide on leave. Every combo uses a styled delegate, and the hovered Colour by item is highlighted with at least 4.5:1 text contrast.
+  - Full suite: 247 passed; compilation passed. The layout is unchanged (the 1366×768 page still does not scroll).
+- Limitations and risks:
+  - The Check, Crop patches, and Clean tabs still call igraph's GraphML reader on worker threads. They can print the same warnings and abort on malformed GraphML. Not changed here.
+  - Tooltip and popup behaviour was checked offscreen with synthetic events and grabs, not on a live X11 display.
+  - The stdlib reader holds each node's and edge's attributes briefly while streaming. Very large GraphML (over 100 MB) is slower than igraph.
+
+## 2026-09-30 17:38 AEST — Add Local EDT ratio to EDT Heat
+
+- Added a **Local EDT ratio** option under a new **Colour by** selector (Distance / Local EDT ratio) in the EDT Heat tab. It is a first centeredness indicator: $r(p) = D(p) / \max(\{D(p)\} \cup \{D(q) : q \in Q(p)\})$, where $Q(p)$ holds the foreground voxel centres within $\alpha D(p)$ (physical) in the same 26-connected foreground component.
+  - Works for NIfTI skeleton voxels and GraphML nodes (ball centred at the fractional `voxel_pos`, trilinear $D(p)$).
+  - **Radius multiplier α** spin box: 1.0–3.0, default 1.5, step 0.1, enabled only for the ratio, with a **?** hover tooltip.
+  - Distance views, including Surface distance, are unchanged. Algorithm backends and `skelhub graphviz` are untouched.
+- New file: `skelhub/evaluation/centeredness.py`. It holds the kernel (`local_edt_ratio`), α validation, 26-connected labelling, component assignment for voxels and fractional points, and a `SkeletonResult` + `VolumeData` adapter (`local_edt_ratio_for_skeleton`). Pure NumPy/SciPy.
+- Modified files:
+  - `skelhub/postprocessing/edt.py`: `compute_edt_heat(..., metric=, alpha=)`. It reuses the one EDT crop, labels that crop once, and stores `edt_values`, `local_max_values`, `search_radii`, `component_ids`, `neighbour_counts`, `extends_beyond_image`, `alpha`, `connectivity`. New `EdtHeatResult` helpers: `is_ratio`, `settings_label`, `value_unit_label`, `value_title`, `value_range`, `sample_warnings`.
+  - `skelhub/visualization/heatmap.py`: optional fixed `value_range` for bands and gradient (0–1 for the ratio). The data-range output is unchanged.
+  - `skelhub/visualization/edt_heat.py`: legend title and range from the result; `HeatPick` shows ratio inputs (EDT, local max, α, radius) and sample warnings.
+  - `skelhub/gui/edt_tab.py`: settings row (Colour by, Distance method, α with help icons) above the Calculate/status row. Also: config-aware amber "not yet applied" status, cache keys with metric/method/α/connectivity, and in-flight results for changed settings cached but not shown. The method selector locks to Voxel EDT in ratio mode and restores the last choice afterwards.
+  - `skelhub/gui/app.py`: the new selectors are disabled during jobs.
+  - Docs: `docs/GUI.md`, `docs/evaluation.md`, `docs/postprocessing.md`, `docs/architecture.md`, `docs/visualization.md`, `README.md`.
+- Architecture:
+  - The numerics live in `evaluation/`, independent of Qt, VTK, and files. `postprocessing/edt.py` imports the kernel; the adapter imports the EDT helpers lazily, so there is no import cycle.
+  - The kernel is not exported from `skelhub.evaluation.__init__`, so importing evaluation does not start loading postprocessing.
+  - The GUI no longer bumps its generation on setting changes. It checks the result's settings against the current ones instead, so switching settings and back does not waste a finished job.
+- Assumptions and decisions:
+  - "Limited neighbourhood support" means no same-component voxel centre in the ball other than one at $p$ itself (within $10^{-9}$ × the smallest spacing). The ratio stays 1 and the sample is flagged.
+  - Ball-boundary tolerance is $10^{-6}$ relative. $10^{-9}$ was tried first; float32 NIfTI affines pushed exact on-sphere voxels ~3×10⁻⁸ outside, so the result depended on header rounding.
+  - The image-border warning is geometric: it fires whenever a ball crosses $[0, n-1]$ on any axis, even where the foreground does not reach that border, following the plan's wording.
+  - `alpha` passed with `metric="distance"` is an error rather than silently ignored.
+  - Conflicting component assignments cannot occur with 26-connectivity (cells sharing a point are 26-adjacent), but the check is kept for safety.
+- Tradeoffs:
+  - The second control row costs height. Page spacing went 8→6 px and top/bottom margins 12→10 px. At 1366×768 the page still does not scroll; the viewer is 302 px tall instead of 324. At 1280×720 the page scroll grows from 24 to 46 px, and at 850×560 from 184 to 206 px.
+  - The tab description was shortened so it does not set a minimum page width at 850 px.
+- Tests:
+  - New `tests/test_centeredness.py` (38 tests):
+    - brute-force agreement (whole-volume search) for voxel and fractional samples, isotropic and anisotropic
+    - centred and displaced samples with exact values
+    - lower bound held and reached; wall plateau at $1/(1+\alpha)$
+    - ratio non-increasing in α
+    - α accepted at 1.0, 1.5, 3.0; rejected below, above, NaN, ±inf, non-numbers
+    - non-positive or non-finite D(p) rejected
+    - disconnected neighbour excluded, bridged neighbour included
+    - face, edge, and corner contact
+    - point component assignment on cell boundaries, missing and conflicting
+    - sphere-boundary tolerance
+    - image border versus internal crop; limited support
+    - `SkeletonResult` adapter; rotated anisotropic affine through files; GraphML fractional nodes
+    - unsupported settings
+  - `tests/test_edt_heat_visualization.py`: +3 (fixed range, constant values, legend title without unit, pick details and warnings).
+  - `tests/test_gui_edt_heat.py`: +6 (defaults, range clamping, hover help, method locking and restore, outdated status, per-α cache, distance cache independent of α, camera and selection kept, NIfTI bands on 0–1, stale ratio result cached not shown, settings rows without overlap at 1366×768, 1280×720, 850×560). Two existing tests now build `_pending` with the settings tuple.
+  - Full suite: 239 passed (192 before); no destructor warnings; compilation passed.
+- Performance (exact search, NumPy, no `tracemalloc`; peak RSS matched the distance run within ~10 MB in every case):
+  - L-system i4 (Lee94, 511 voxels): +0.2 s at α 1.0, 1.5, and 3.0.
+  - L-system i8 (1,333 voxels): +0.3 s.
+  - Ex vivo 480×380×270, 1.45 M foreground voxels, skimage skeleton of 178,687 voxels: distance 5.4 s; ratio 9.2 / 9.4 / 10.0 s at α 1.0 / 1.5 / 3.0. Peak RSS ~2.5 GB, set by loading.
+  - Same foreground, 44,672 jittered GraphML nodes: distance 5.4 s; ratio 6.5 / 6.8 s at α 1.5 / 3.0. Observed minimum 0.241 at α 3, just under 0.25, as expected for interpolated samples.
+  - Thick synthetic tube (radius 25 voxels, 390 samples, radius up to 75 voxels at α 3): +0.28 s; boxes are clipped to the foreground crop.
+  - `tracemalloc` inflated the first ex vivo timing to ~36 s; it is not representative.
+  - The supplied ex vivo `skel_vessyn_july_cleaned` NIfTI and GraphML did not pair with the foreground (voxels outside it; missing `centerline_voxel_points`) and were rejected with clear messages.
+- Limitations and risks:
+  - No display was available: the live tooltip hover, on-screen drawing, mouse interaction, and live resizing were not verified. Offscreen window grabs at 1366×768 and 850×560 were inspected; the 3D view itself is blank offscreen (no OpenGL).
+  - The ratio is local. It cannot detect a skeleton centred in the wrong structure, and 1 is not a proof of anatomical correctness.
+  - The lower bound is guaranteed only for exact voxel-centre samples, not for interpolated graph nodes.
+  - Search runs sample by sample in Python (~25 µs per sample here); much larger skeletons or radii will take proportionally longer.
+  - A centeredness measure based on Surface distance is deferred.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
+## 2026-09-30 15:51 AEST — Add Surface distance method to EDT Heat
+
+- Added a **Distance method** selector (Voxel EDT / Surface distance) beside Calculate in the EDT Heat tab, with a **?** tooltip holding the definitions. Surface distance is the shortest physical distance from each GraphML node to the foreground's unsmoothed 0.5 marching-cubes isosurface, to triangle interiors, edges, and vertices.
+  - NIfTI skeletons stay on Voxel EDT; the selector is disabled for them.
+  - GraphML remembers its last method during the session. Voxel EDT behaviour and values are unchanged, and `skelhub graphviz` is untouched.
+- New file: `skelhub/postprocessing/surface_distance.py`. It builds the surface (scikit-image Lewiner marching cubes, full affine, bounding-box crop plus one voxel of observed background), queries a VTK static cell locator, runs the containment checks, and provides `SurfaceCache`.
+- Modified files:
+  - `skelhub/postprocessing/edt.py`: `compute_edt_heat(..., method=, surface_cache=)`; `EdtHeatResult.distance_method` (default `voxel_edt`) and `metric_label`.
+  - `skelhub/visualization/edt_heat.py`: legend and selection labels follow the result's method; `show(reset_camera=False)`.
+  - `skelhub/gui/edt_tab.py`: selector, info tooltip, per-method result cache, surface cache, amber "not yet applied" status, and camera and selection kept when the same file pair is recalculated.
+  - `skelhub/gui/app.py`: the selector is disabled during jobs.
+  - Docs: `docs/GUI.md`, `docs/postprocessing.md`, `docs/architecture.md`, `README.md`.
+- Architecture:
+  - Surface work lives in its own postprocessing module. VTK is used there only for geometry queries; there is no Qt and no algorithm backend.
+  - The GUI passes the method and a `SurfaceCache` into the existing background job; rendering stays on the GUI thread.
+  - Result cache keys hold both file identities, the method, and the surface parameters. A result is discarded if the generation or method changed while it was computing.
+  - No surface-distance volume is built.
+- Validation policy (Surface distance, on top of all existing checks):
+  - Rejected: fewer than 2 voxels on any axis; no triangles; a closure mesh that does not close.
+  - Rejected: nodes beyond the voxel-centre hull [0, n−1]. The user chose rejection over closing at the image edge, since the observed surface does not cover that strip.
+  - Rejected: nodes inside a foreground voxel cell but outside the surface. The message explains that the two containment rules differ and suggests Voxel EDT.
+  - Nodes within 1e-6 × the smallest spacing of the surface count as on it, with distance 0.
+  - Nothing is projected onto the surface, and there is no fallback to Voxel EDT.
+  - Foreground at the image border: the calculation runs. The distance mesh stays open and a warning is shown. Inside tests use a separate background-padded closed mesh; it matches the open mesh inside the hull, and its caps never enter distances.
+- Tests:
+  - New `tests/test_surface_distance.py` (10 tests):
+    - a planar boundary separating voxel EDT (3.0 / 4.0 voxels) from surface distance (2.5 / 3.5)
+    - no cap contribution at open borders
+    - a chamfer-triangle interior closest point (0.5/√3)
+    - anisotropic, rotated, translated affine with crop offset
+    - fractional and on-surface nodes
+    - voxel-cell-inside but surface-outside rejection
+    - open-surface containment, valid and invalid
+    - border-strip rejection
+    - degenerate and empty surfaces
+    - NIfTI and unknown-method rejection
+    - surface-cache reuse and rebuild after a file change
+  - `tests/test_gui_edt_heat.py`: +4 tests for selector enablement and the remembered method, the outdated status, legend and selection labels, no recomputation on colour change, camera preservation across a method switch, the per-method cache, surface rejection messages, and discarding stale method results.
+  - Two existing assertions were updated for the renamed legend title ("EDT (mm)" → "Voxel EDT (mm)").
+  - Full suite: 192 passed; no destructor warnings; compilation passed.
+  - Real data: on the L-system foreground with its graphgen GraphML, all 14 nodes passed surface containment. Surface values were 0.37–0.5 below Voxel EDT. The first surface run took 0.53 s; the cached rerun took 0.06 s.
+  - The window was inspected offscreen at 1366×768 and 850×560.
+- Limitations and risks:
+  - No display was available, so the live tooltip hover, on-screen drawing, mouse interaction, and live resizing were not verified.
+  - The surface is inferred from the segmentation, not the true anatomy. It follows the staircase marching-cubes shape, and ambiguous diagonal contacts are resolved by Lewiner's rule, so nodes exactly at such contacts may be rejected.
+  - Inside tests use VTK ray casting (`vtkSelectEnclosedPoints`) on the closed copy; points extremely close to but outside the tolerance rely on its intersection tolerance.
+  - Distance queries loop over nodes in Python, so very large graphs will be slower.
+  - Only the most recent foreground surface is cached.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
+## 2026-09-30 14:23 AEST — Move GUI documentation to docs/GUI.md
+
+- Added `docs/GUI.md` for `skelhub gui`. It covers install and launch, window behaviour (jobs, progress, log, replacement prompts), each of the five tabs, and the full EDT Heat section: inputs, controls, checks, limitations. The page states that the GUI is under active development and currently separate from `skelhub graphviz`.
+- `docs/postprocessing.md`: removed the GUI details from the Overview. Added a "Graph Tools GUI" section with only the architecture (tab-to-service mapping, background jobs, shared containment rule) and the `skelhub.postprocessing.edt` method; it links to `GUI.md` for checks and usage.
+- `docs/visualization.md`: removed the EDT Heat section and added a pointer to `GUI.md`. The graphviz content is unchanged.
+- `README.md`: EDT Heat link now points to `GUI.md`, which is also listed in the docs links and repository tree. `docs/architecture.md` links to `GUI.md` and notes the development status.
+- Documentation only; no code or tests changed. Assumption: the per-tab descriptions in `GUI.md` were written from the current `skelhub/gui/app.py` behaviour and not re-verified in a live window.
+
+## 2026-09-30 12:56 AEST — Add EDT Heat tab to Graph Tools
+
+- Added a fifth `skelhub gui` tab, **EDT Heat**. It computes the foreground's physical Euclidean distance transform, samples it on a skeleton NIfTI (each occupied voxel) or GraphML (each node `voxel_pos`, trilinear for fractional positions), and shows the result in an embedded `pyvistaqt` viewer with a vertical legend. NIfTI uses discrete colour bands on physical voxel blocks. GraphML uses a continuous gradient on nodes, with neutral grey curved edges from `centerline_voxel_points`. Controls: four colour presets, band count (NIfTI only), node size and edge thickness (GraphML only), Reset/Fit, and click-to-inspect (EDT, voxel and physical position, node ID). The other four tabs and `skelhub graphviz` are unchanged.
+- New files:
+  - `skelhub/io/graphml_reader.py`
+  - `skelhub/postprocessing/edt.py`
+  - `skelhub/visualization/heatmap.py`
+  - `skelhub/visualization/edt_heat.py`
+  - `skelhub/gui/edt_tab.py`
+- Modified files:
+  - `skelhub/io/nifti_reader.py`: added `read_binary_mask`.
+  - `skelhub/io/__init__.py`
+  - `skelhub/postprocessing/checker.py`: moved containment into the module-level `points_in_foreground_cells`; report output unchanged.
+  - `skelhub/visualization/_graph_viewer_impl.py`: GraphML point/path parsing and node IDs now come from `graphml_reader` under the old private names; added `_voxel_block_geometry`.
+  - `skelhub/gui/app.py`: `PathRow` file filters, fifth tab, narrower tab min-width, group-box style, job-finished hook, viewer shutdown on close.
+  - `pyproject.toml`: added `pyvistaqt>=0.11` to the `gui` extra.
+- Architecture:
+  - Loading and validation live in I/O. The EDT and its sampling live in postprocessing, with no Qt, VTK, or algorithm backend. Colours, rendering, and picking live in visualization and work on any PyVista plotter. Widgets and job flow live in the GUI.
+  - Calculation uses the window's existing background worker; results are applied on the GUI thread.
+  - The viewer is created once, lazily, when the tab is shown. A re-entry guard stops a second viewer being built during creation.
+  - NIfTI blocks use one instanced `vtkGlyph3DMapper`, not one mesh per voxel.
+  - Colour changes rewrite one colour array in place: no EDT recomputation, and the camera stays put.
+  - Picking maps back to the original sample index. For voxels, the click ray is intersected with each voxel box in voxel-index space. For nodes, positions are projected to the screen and the front-most node under the cursor wins.
+- Coordinate, unit, and validation policy:
+  - Spacing = affine column lengths. Sheared grids and singular affines are rejected; rotated grids are accepted.
+  - Distance labels come from the NIfTI header unit. An unknown unit shows "unit unspecified", never mm, and adds a warning to the log.
+  - Rejected with a warning: missing or unreadable files; non-3D, non-finite, or non-binary data; empty foreground; all-foreground volume (no background); NIfTI shape mismatch; affine mismatch (corner offset above 0.001 voxel); empty skeleton; skeleton voxels or graph nodes outside the foreground (checker cell rule); missing or invalid `voxel_pos` or `centerline_voxel_points`; edge paths outside the volume; stored X/Y/Z or `centerline_world_points` disagreeing with the foreground affine. Nothing is resampled or registered.
+  - Graph geometry is placed with the foreground affine.
+- Assumptions (not separately confirmed): skeleton voxels or nodes outside the foreground count as incompatible inputs and are rejected, not coloured 0. GraphML edges without `centerline_voxel_points` are rejected rather than drawn straight. EDT is measured between voxel centres, and the volume border is not treated as background. The node ID shown is the GraphML `<node id>`, as in graphviz.
+- Tradeoffs:
+  - The EDT runs on the foreground bounding box plus a one-voxel margin. It is exact (tested against the full volume) and uses less memory. Only samples are cached, not the EDT volume.
+  - Band count is limited to 2–16, default 6.
+  - At the 850×560 minimum window the tab scrolls vertically; at 1366×768 it fits.
+- Tests:
+  - 30 new local tests in `tests/test_edt_heat_processing.py`, `tests/test_edt_heat_visualization.py`, and `tests/test_gui_edt_heat.py`, covering:
+    - EDT against a brute-force search with anisotropic spacing, and crop equivalence
+    - voxel and fractional-node sampling, physical placement, unit labels
+    - every rejection path listed above
+    - band, constant, and gradient mapping
+    - in-place recolouring with the camera kept
+    - voxel and node picking on an offscreen VTK renderer
+    - tab creation, control states, the background job, and GUI-thread delivery
+    - cache reuse, invalidation, stale-result discard, click-versus-drag, legend labels, single viewer creation, shutdown
+  - `tests/test_gui_smoke.py` now expects five tabs.
+  - Full suite: 178 passed. `git diff --check` and compilation passed.
+  - Real data: the L-system foreground with the Lee94 skeleton ran in 0.9 s (300×300×150). A graphgen GraphML of it (14 nodes, 13 edges) passed all checks in 0.8 s. The repository's older `Lnet_i4_0_tort_centreline.graphml` lacks `voxel_pos` and is rejected clearly. Offscreen renders and window grabs at 1366×768 and 850×560 were inspected.
+- Limitations and risks:
+  - No display was available, so embedded-viewer drawing, mouse rotate/pan/zoom, real click picking, and resizing with a live OpenGL context were not verified. Scene rendering and picking were verified on an offscreen EGL plotter, and the widgets on offscreen Qt.
+  - Spatial checks cannot prove shared file provenance.
+  - Interpolated node values approximate distances between voxel centres.
+  - No large-skeleton warning yet.
+  - `qtpy` is forced to PySide6 in-process because PyQt6 is also installed in this environment.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
 ## 2026-09-22 16:09 AEST — Add checkbox-driven PR versioning
 
 - Added `.github/PULL_REQUEST_TEMPLATE.md` with summary, changes, testing, breaking changes, and exactly one version choice: bugfix / refactoring (+0.0.1), minor (+0.1.0), major (+1.0.0), or no release. Minor/major increments reset lower components; multi-digit versions are supported.

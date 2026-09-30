@@ -14,6 +14,7 @@ import nibabel as nib
 import numpy as np
 
 from skelhub._version import get_version
+from skelhub.io.graphml_reader import graph_node_ids, parse_graphml_path, parse_graphml_point
 
 
 VisualizationFileKind = Literal["graphml", "nifti"]
@@ -760,12 +761,7 @@ def _extract_node_positions(graph: ig.Graph) -> np.ndarray:
     )
 
 
-def _extract_node_ids(graph: ig.Graph) -> tuple[str, ...]:
-    if "id" in graph.vs.attribute_names():
-        return tuple(str(value) for value in graph.vs["id"])
-    if "name" in graph.vs.attribute_names():
-        return tuple(str(value) for value in graph.vs["name"])
-    return tuple(str(index) for index in range(graph.vcount()))
+_extract_node_ids = graph_node_ids
 
 
 def _extract_edge_indices(graph: ig.Graph) -> np.ndarray:
@@ -774,28 +770,9 @@ def _extract_edge_indices(graph: ig.Graph) -> np.ndarray:
     return np.asarray([edge.tuple for edge in graph.es], dtype=int)
 
 
-def _parse_graphml_point(value: object, *, label: str) -> np.ndarray:
-    """Parse one JSON-encoded three-dimensional GraphML point."""
-    try:
-        point = np.asarray(json.loads(str(value)), dtype=float)
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{label} must be a JSON 3D point") from exc
-    if point.shape != (3,) or not np.isfinite(point).all():
-        raise ValueError(f"{label} must contain three finite coordinates")
-    return point
-
-
-def _parse_graphml_path(value: object, *, label: str) -> np.ndarray:
-    """Parse one JSON-encoded GraphML polyline."""
-    try:
-        points = np.asarray(json.loads(str(value)), dtype=float)
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{label} must be a JSON list of 3D points") from exc
-    if points.ndim != 2 or points.shape[1:] != (3,) or len(points) == 0:
-        raise ValueError(f"{label} must contain at least one 3D point")
-    if not np.isfinite(points).all():
-        raise ValueError(f"{label} must contain only finite coordinates")
-    return points
+# Shared with skelhub.io so postprocessing and viewers parse GraphML points identically.
+_parse_graphml_point = parse_graphml_point
+_parse_graphml_path = parse_graphml_path
 
 
 def _infer_voxel_to_world_affine(graph: ig.Graph, node_positions: np.ndarray) -> np.ndarray:
@@ -1190,9 +1167,14 @@ def _nifti_display_positions(nifti_data: NiftiVisualizationData) -> np.ndarray:
 
 def _nifti_voxel_geometry(nifti_data: NiftiVisualizationData, pv: Any) -> Any:
     """Build one voxel block transformed by the affine linear component."""
+    return _voxel_block_geometry(nifti_data.affine, pv)
+
+
+def _voxel_block_geometry(affine: np.ndarray, pv: Any) -> Any:
+    """Build one unit voxel block, centred at the origin, through an affine's linear part."""
     cube = pv.Cube(x_length=1.0, y_length=1.0, z_length=1.0)
     linear_transform = np.eye(4, dtype=float)
-    linear_transform[:3, :3] = np.asarray(nifti_data.affine, dtype=float)[:3, :3]
+    linear_transform[:3, :3] = np.asarray(affine, dtype=float)[:3, :3]
     return cube.transform(linear_transform, inplace=False)
 
 

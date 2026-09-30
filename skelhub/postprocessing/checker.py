@@ -5,6 +5,51 @@ from __future__ import annotations
 from typing import Callable
 
 
+FOREGROUND_CELL_TOLERANCE = 1e-9
+
+
+def points_in_foreground_cells(points, foreground):
+    """Return, per voxel-space point, whether it lies in a closed foreground cell.
+
+    Voxel ``(i, j, k)`` occupies the closed cell ``[i - 0.5, i + 0.5]`` (and so on
+    per axis). Every nonzero foreground value counts as occupied. A point on a
+    shared face, edge, or corner is inside when any touching cell is occupied.
+    """
+    import numpy as np
+
+    points = np.asarray(points, dtype=float).reshape((-1, 3))
+    contained = np.zeros(len(points), dtype=bool)
+    if len(points) == 0:
+        return contained
+
+    cell_radius = 0.5 + FOREGROUND_CELL_TOLERANCE
+    foreground_shape = np.asarray(foreground.shape, dtype=np.int64)
+    within_volume_extent = np.all(
+        (points >= -cell_radius)
+        & (points <= (foreground_shape - 1) + cell_radius),
+        axis=1,
+    )
+    lowest_candidates = np.ceil(points - cell_radius).astype(np.int64)
+    highest_candidates = np.floor(points + cell_radius).astype(np.int64)
+
+    # A point can be in up to two closed cells per axis. Checking their Cartesian
+    # product includes cells meeting the point at a shared face, edge, or corner.
+    for offset in np.ndindex(2, 2, 2):
+        candidates = lowest_candidates + np.asarray(offset, dtype=np.int64)
+        valid = within_volume_extent & np.all(
+            (candidates <= highest_candidates)
+            & (candidates >= 0)
+            & (candidates < foreground_shape),
+            axis=1,
+        )
+        unchecked = valid & ~contained
+        if np.any(unchecked):
+            contained[unchecked] = (
+                foreground[tuple(candidates[unchecked].T)] != 0
+            )
+    return contained
+
+
 def check_paths(
     foreground_input: str,
     skeleton_input: str,
@@ -83,40 +128,7 @@ def check_paths(
 
     def points_are_confined(points: np.ndarray, foreground: np.ndarray) -> bool:
         """Test whether every point lies in at least one closed foreground cell."""
-        if len(points) == 0:
-            return True
-
-        cell_radius = 0.5 + 1e-9
-        foreground_shape = np.asarray(foreground.shape, dtype=np.int64)
-        within_volume_extent = np.all(
-            (points >= -cell_radius)
-            & (points <= (foreground_shape - 1) + cell_radius),
-            axis=1,
-        )
-        if not np.all(within_volume_extent):
-            return False
-
-        lowest_candidates = np.ceil(points - cell_radius).astype(np.int64)
-        highest_candidates = np.floor(points + cell_radius).astype(np.int64)
-        contained = np.zeros(len(points), dtype=bool)
-
-        # A point can be in up to two closed cells per axis. Checking their Cartesian
-        # product includes cells meeting the point at a shared face, edge, or corner.
-        for offset in np.ndindex(2, 2, 2):
-            candidates = lowest_candidates + np.asarray(offset, dtype=np.int64)
-            valid = np.all(
-                (candidates <= highest_candidates)
-                & (candidates >= 0)
-                & (candidates < foreground_shape),
-                axis=1,
-            )
-            unchecked = valid & ~contained
-            if np.any(unchecked):
-                contained[unchecked] = (
-                    foreground[tuple(candidates[unchecked].T)] != 0
-                )
-
-        return bool(np.all(contained))
+        return bool(np.all(points_in_foreground_cells(points, foreground)))
 
 
     def report_graphml(graph, foreground: np.ndarray, foreground_affine: np.ndarray) -> None:
