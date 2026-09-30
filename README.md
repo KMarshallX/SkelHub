@@ -145,6 +145,7 @@ Key locations:
 - `skelhub.visualization` powers `skelhub graphviz`.
 - `skelhub.gui` powers `skelhub gui`, while topology calculations and report output stay separate from the desktop widgets.
 - `skelhub.postprocessing.edt` and `skelhub.postprocessing.surface_distance` compute voxel-EDT and surface-distance samples for the EDT Heat tab; `skelhub.visualization.heatmap` and `skelhub.visualization.edt_heat` handle its colours, rendering, and picking.
+- `skelhub.evaluation.centeredness` computes the local EDT ratio, a first centeredness indicator (EDT at a skeleton point ÷ largest EDT within α × EDT in the same 26-connected component; α 1.0–3.0, default 1.5). EDT Heat can colour by it; see [GUI](docs/GUI.md#local-edt-ratio).
 
 ## Structured Output
 

@@ -64,7 +64,12 @@ Topology summary of an undirected graph.
 
 ## EDT Heat
 
-Shows how far each part of a skeleton sits from the foreground boundary, in physical units.
+Shows how far each part of a skeleton sits from the foreground boundary, in physical units, or how centred it is locally (the local EDT ratio).
+
+**Colour by** picks what is shown:
+
+- **Distance** (default): the physical distance from the chosen **Distance method** below.
+- **Local EDT ratio**: a first centeredness indicator, described in [Local EDT ratio](#local-edt-ratio).
 
 ### Distance methods
 
@@ -88,11 +93,58 @@ Surface reconstruction:
 - The mesh is built from the foreground bounding box plus one voxel of observed background, so crop edges add no boundaries. It is reused while the foreground file is unchanged.
 - It is inferred from the segmentation, not the true anatomy: its accuracy is limited by the segmentation and its voxel size.
 
+### Local EDT ratio
+
+Compares the EDT at a skeleton point with the largest EDT close by. A centred point has the largest EDT in its neighbourhood.
+
+For a skeleton point $p$ with Voxel EDT $D(p)$:
+
+- search radius: $\rho(p) = \alpha \, D(p)$
+- candidates: $Q(p) = \{\, q \text{ a foreground voxel centre} : \operatorname{comp}(q) = \operatorname{comp}(p),\ \lVert p - q \rVert \le \rho(p) \,\}$
+- ratio: $r(p) = \dfrac{D(p)}{\max\left(\{D(p)\} \cup \{D(q) : q \in Q(p)\}\right)}$
+
+How it is computed:
+
+- EDT values, distances, and the radius are all physical, using the foreground affine's spacing. Rotated and anisotropic grids are handled.
+- $\operatorname{comp}$ is the 26-connected foreground component, i.e. voxels touching by a face, edge, or corner are connected. A nearby vessel that does not touch is never searched.
+- The EDT comes from the whole foreground; components only limit which voxels are searched.
+- Every foreground voxel in the ball is searched, not only skeleton voxels.
+- $D(p)$ always counts toward the maximum. This matters for graph nodes, whose $D(p)$ is interpolated at a fractional position.
+- A voxel centre exactly on the sphere counts as inside, within a relative tolerance of $10^{-6}$. This absorbs the float32 precision of NIfTI affines.
+- Graph nodes take their component from the foreground cell they sit in (the checker's rule). On a shared face, edge, or corner, all touching foreground cells are checked; a node with none, or with cells from different components, is rejected by node ID.
+- The raw ratio is shown; it is not rescaled.
+
+**Radius multiplier α**, beside Colour by:
+
+- Range 1.0–3.0, default 1.5, step 0.1. Enabled only for Local EDT ratio.
+- Hover the **?** icon for a reminder: search radius = α × EDT at that point, measured in physical units; only the same 26-connected component counts; larger α searches farther, may include wider neighbouring sections of the same component, and takes longer.
+
+Reading the value:
+
+- 1 means no larger EDT was found nearby. It does not prove the point is on the anatomically correct centreline.
+- For skeleton voxels, $\frac{1}{1+\alpha} \le r(p) \le 1$: 0.5 at α = 1, 0.4 at α = 1.5, 0.25 at α = 3. The EDT changes by at most the distance moved, so nothing inside the ball exceeds $(1+\alpha)\,D(p)$.
+- Near the wall, values plateau near that lower bound, because the search radius shrinks with $D(p)$. A low value says "off-centre", not how far off-centre.
+- Larger α never raises the ratio. It can reach into a wider neighbouring section or a junction of the same component and lower it.
+- Graph nodes use interpolated $D(p)$, so the lower bound is not guaranteed for them (0.241 was observed at α = 3, just under 0.25).
+
+Warnings (status tooltip, run log, and the selected sample's details):
+
+- **Search ball reaches beyond the image**: the ball crosses the voxel-centre domain $[0, n-1]$ on some axis. Only observed voxels are searched, so a larger EDT outside the image could be missed. The check is purely geometric; it also fires where the foreground does not reach that border.
+- **Limited neighbourhood support**: no other same-component voxel centre lies in the ball, so the maximum rests on $D(p)$ alone and the ratio is 1 by definition.
+- The calculation runs on the foreground bounding box plus one background voxel. That crop holds every foreground voxel, so it never drops candidates, and it does not trigger the border warning.
+
+Display:
+
+- Fixed 0–1 legend titled "Local EDT ratio", with no unit. NIfTI bands split 0–1 into equal ranges; GraphML nodes use the continuous gradient; edges stay grey. Equal values keep the 0–1 scale.
+- Clicking a sample shows the ratio, Voxel EDT and local maximum EDT (physical units), α and the search radius, voxel and physical position, node ID for GraphML, and any sample warnings.
+- **Distance method** is locked to Voxel EDT while Local EDT ratio is selected. The last distance method returns when you switch back to Distance.
+- A centeredness measure based on Surface distance is not available yet.
+
 ### Inputs and output
 
 - Foreground: binary NIfTI (`.nii` / `.nii.gz`).
 - Skeleton: binary NIfTI, or GraphML with node `voxel_pos`. Edges must have `centerline_voxel_points`.
-- **Calculate** runs loading, checks, and the distance calculation in the background with the selected method. Progress shows the loading stages; the EDT, surface reconstruction, and distance queries have no percentage.
+- **Calculate** runs loading, checks, and the calculation in the background with the selected settings. Progress shows the loading stages and the local EDT ratio's sample batches; the EDT, component labelling, surface reconstruction, and distance queries have no percentage.
 - NIfTI: one block per skeleton voxel, drawn at its physical size and orientation, coloured in discrete bands.
 - GraphML: nodes coloured on a continuous gradient. Edges follow `centerline_voxel_points` and are always neutral grey; they draw the shape only and carry no distance samples.
 
@@ -102,23 +154,24 @@ Surface reconstruction:
 - Color bands (2–16, NIfTI only): equal-width value ranges between the smallest and largest sample. If all samples are equal, one colour is used.
 - Node size and edge thickness (GraphML only). NIfTI blocks keep their physical voxel size.
 - **Reset / Fit view**. Drag rotates, Shift+drag pans, wheel or right-drag zooms.
-- Click a voxel or node to see its distance, voxel position, and physical position, plus the node ID for GraphML. Dragging does not select.
-- The legend title, selection details, status, and run log all name the method of the *displayed* result ("Voxel EDT (mm)" or "Surface distance (mm)"). The unit comes from the foreground header (mm, µm, m). If the header has no unit, the label says "unit unspecified"; it never assumes mm.
+- Click a voxel or node to see its value, voxel position, and physical position, plus the node ID for GraphML. Dragging does not select.
+- The legend title, selection details, status, and run log all describe the *displayed* result ("Voxel EDT (mm)", "Surface distance (mm)", or "Local EDT ratio" with its α). The unit comes from the foreground header (mm, µm, m). If the header has no unit, the label says "unit unspecified"; it never assumes mm. The ratio itself has no unit.
 - The side panel collapses with **Controls ▸**.
 
 Recalculation and caching:
 
 - Colour and size changes reuse the calculated samples and keep the camera.
-- Choosing another method does not clear the view. The status turns amber ("Showing … · … not yet applied") until you press Calculate.
-- Recalculating the same file pair with another method keeps the camera, the appearance settings, and the selected node.
-- Results are cached per file pair and method, so switching back to an already-calculated method is instant.
+- Changing Colour by, the method, or α does not clear the view. The status turns amber ("Showing … · … not yet applied") until you press Calculate. While a calculation runs, the status still names the displayed result.
+- Recalculating the same file pair with other settings keeps the camera, the appearance settings, and the selected sample.
+- Results are cached per file pair and settings (metric, method, and α with connectivity for the ratio), so returning to already-calculated settings is instant. α does not affect distance results or their cache.
+- If the settings change while a calculation runs, its result is cached but not shown.
 - Changing either input clears the view and the cache.
 
 ### Checks before calculation
 
 A failed check shows a warning, and nothing is drawn. Nothing is silently projected, resampled, or switched to the other method.
 
-Both methods:
+All settings:
 
 - Both files exist, are 3D and finite, and contain only the values 0 and 1.
 - The foreground is not empty and not entirely foreground (without background, there is no distance).
@@ -141,7 +194,14 @@ Surface distance adds:
 - Every node lies inside the reconstructed surface. The surface cuts across voxel cells at edges and corners, so a node can be inside a foreground voxel cell yet outside the surface. The warning says so and suggests Voxel EDT.
 - A node within $10^{-6} \times$ the smallest voxel spacing of the surface counts as on it, with distance 0.
 
-Where the foreground reaches the image border:
+Local EDT ratio adds:
+
+- α is a finite number between 1.0 and 3.0.
+- The distance method is Voxel EDT; Local EDT ratio with Surface distance is rejected.
+- Every sample has a positive, finite EDT.
+- Every graph node belongs to exactly one foreground component (see above).
+
+Where the foreground reaches the image border (Surface distance):
 
 - The calculation runs.
 - The surface is left open there, and a warning in the status and run log says distances are measured to the observed surface only; an unobserved boundary beyond the image could be closer.
@@ -153,6 +213,8 @@ Where the foreground reaches the image border:
 - Interpolated Voxel EDT values estimate the distance between voxel centres; they are not distances to a surface.
 - Surface distance follows the staircase-like marching-cubes surface of the voxel mask, and marching cubes resolves ambiguous diagonal contacts by its own rule. Nodes exactly at such contacts may be rejected as outside.
 - Surface distance currently supports GraphML only.
+- The local EDT ratio is a local check only. It cannot tell a well-centred skeleton from one that runs down the middle of the wrong structure, and a high value does not validate anatomy.
+- The local EDT ratio searches point by point. On a 480 × 380 × 270 ex vivo foreground with 178,687 skeleton voxels it added about 4–4.5 s to the 5.4 s distance run, almost independent of α. The full EDT and label volumes exist only during a calculation.
 - Distance queries run node by node. Very large graphs (hundreds of thousands of nodes) take noticeably longer.
 - Only the sampled values are cached; the full EDT volume is not kept. Only the most recent foreground surface is kept.
 - Large skeleton NIfTI files draw many instanced blocks, and there is no voxel-count warning yet.

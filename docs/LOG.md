@@ -1,5 +1,66 @@
 # Development Log
 
+## 2026-09-30 17:38 AEST — Add Local EDT ratio to EDT Heat
+
+- Added a **Local EDT ratio** option under a new **Colour by** selector (Distance / Local EDT ratio) in the EDT Heat tab. It is a first centeredness indicator: $r(p) = D(p) / \max(\{D(p)\} \cup \{D(q) : q \in Q(p)\})$, where $Q(p)$ holds the foreground voxel centres within $\alpha D(p)$ (physical) in the same 26-connected foreground component.
+  - Works for NIfTI skeleton voxels and GraphML nodes (ball centred at the fractional `voxel_pos`, trilinear $D(p)$).
+  - **Radius multiplier α** spin box: 1.0–3.0, default 1.5, step 0.1, enabled only for the ratio, with a **?** hover tooltip.
+  - Distance views, including Surface distance, are unchanged. Algorithm backends and `skelhub graphviz` are untouched.
+- New file: `skelhub/evaluation/centeredness.py`. It holds the kernel (`local_edt_ratio`), α validation, 26-connected labelling, component assignment for voxels and fractional points, and a `SkeletonResult` + `VolumeData` adapter (`local_edt_ratio_for_skeleton`). Pure NumPy/SciPy.
+- Modified files:
+  - `skelhub/postprocessing/edt.py`: `compute_edt_heat(..., metric=, alpha=)`. It reuses the one EDT crop, labels that crop once, and stores `edt_values`, `local_max_values`, `search_radii`, `component_ids`, `neighbour_counts`, `extends_beyond_image`, `alpha`, `connectivity`. New `EdtHeatResult` helpers: `is_ratio`, `settings_label`, `value_unit_label`, `value_title`, `value_range`, `sample_warnings`.
+  - `skelhub/visualization/heatmap.py`: optional fixed `value_range` for bands and gradient (0–1 for the ratio). The data-range output is unchanged.
+  - `skelhub/visualization/edt_heat.py`: legend title and range from the result; `HeatPick` shows ratio inputs (EDT, local max, α, radius) and sample warnings.
+  - `skelhub/gui/edt_tab.py`: settings row (Colour by, Distance method, α with help icons) above the Calculate/status row. Also: config-aware amber "not yet applied" status, cache keys with metric/method/α/connectivity, and in-flight results for changed settings cached but not shown. The method selector locks to Voxel EDT in ratio mode and restores the last choice afterwards.
+  - `skelhub/gui/app.py`: the new selectors are disabled during jobs.
+  - Docs: `docs/GUI.md`, `docs/evaluation.md`, `docs/postprocessing.md`, `docs/architecture.md`, `docs/visualization.md`, `README.md`.
+- Architecture:
+  - The numerics live in `evaluation/`, independent of Qt, VTK, and files. `postprocessing/edt.py` imports the kernel; the adapter imports the EDT helpers lazily, so there is no import cycle.
+  - The kernel is not exported from `skelhub.evaluation.__init__`, so importing evaluation does not start loading postprocessing.
+  - The GUI no longer bumps its generation on setting changes. It checks the result's settings against the current ones instead, so switching settings and back does not waste a finished job.
+- Assumptions and decisions:
+  - "Limited neighbourhood support" means no same-component voxel centre in the ball other than one at $p$ itself (within $10^{-9}$ × the smallest spacing). The ratio stays 1 and the sample is flagged.
+  - Ball-boundary tolerance is $10^{-6}$ relative. $10^{-9}$ was tried first; float32 NIfTI affines pushed exact on-sphere voxels ~3×10⁻⁸ outside, so the result depended on header rounding.
+  - The image-border warning is geometric: it fires whenever a ball crosses $[0, n-1]$ on any axis, even where the foreground does not reach that border, following the plan's wording.
+  - `alpha` passed with `metric="distance"` is an error rather than silently ignored.
+  - Conflicting component assignments cannot occur with 26-connectivity (cells sharing a point are 26-adjacent), but the check is kept for safety.
+- Tradeoffs:
+  - The second control row costs height. Page spacing went 8→6 px and top/bottom margins 12→10 px. At 1366×768 the page still does not scroll; the viewer is 302 px tall instead of 324. At 1280×720 the page scroll grows from 24 to 46 px, and at 850×560 from 184 to 206 px.
+  - The tab description was shortened so it does not set a minimum page width at 850 px.
+- Tests:
+  - New `tests/test_centeredness.py` (38 tests):
+    - brute-force agreement (whole-volume search) for voxel and fractional samples, isotropic and anisotropic
+    - centred and displaced samples with exact values
+    - lower bound held and reached; wall plateau at $1/(1+\alpha)$
+    - ratio non-increasing in α
+    - α accepted at 1.0, 1.5, 3.0; rejected below, above, NaN, ±inf, non-numbers
+    - non-positive or non-finite D(p) rejected
+    - disconnected neighbour excluded, bridged neighbour included
+    - face, edge, and corner contact
+    - point component assignment on cell boundaries, missing and conflicting
+    - sphere-boundary tolerance
+    - image border versus internal crop; limited support
+    - `SkeletonResult` adapter; rotated anisotropic affine through files; GraphML fractional nodes
+    - unsupported settings
+  - `tests/test_edt_heat_visualization.py`: +3 (fixed range, constant values, legend title without unit, pick details and warnings).
+  - `tests/test_gui_edt_heat.py`: +6 (defaults, range clamping, hover help, method locking and restore, outdated status, per-α cache, distance cache independent of α, camera and selection kept, NIfTI bands on 0–1, stale ratio result cached not shown, settings rows without overlap at 1366×768, 1280×720, 850×560). Two existing tests now build `_pending` with the settings tuple.
+  - Full suite: 239 passed (192 before); no destructor warnings; compilation passed.
+- Performance (exact search, NumPy, no `tracemalloc`; peak RSS matched the distance run within ~10 MB in every case):
+  - L-system i4 (Lee94, 511 voxels): +0.2 s at α 1.0, 1.5, and 3.0.
+  - L-system i8 (1,333 voxels): +0.3 s.
+  - Ex vivo 480×380×270, 1.45 M foreground voxels, skimage skeleton of 178,687 voxels: distance 5.4 s; ratio 9.2 / 9.4 / 10.0 s at α 1.0 / 1.5 / 3.0. Peak RSS ~2.5 GB, set by loading.
+  - Same foreground, 44,672 jittered GraphML nodes: distance 5.4 s; ratio 6.5 / 6.8 s at α 1.5 / 3.0. Observed minimum 0.241 at α 3, just under 0.25, as expected for interpolated samples.
+  - Thick synthetic tube (radius 25 voxels, 390 samples, radius up to 75 voxels at α 3): +0.28 s; boxes are clipped to the foreground crop.
+  - `tracemalloc` inflated the first ex vivo timing to ~36 s; it is not representative.
+  - The supplied ex vivo `skel_vessyn_july_cleaned` NIfTI and GraphML did not pair with the foreground (voxels outside it; missing `centerline_voxel_points`) and were rejected with clear messages.
+- Limitations and risks:
+  - No display was available: the live tooltip hover, on-screen drawing, mouse interaction, and live resizing were not verified. Offscreen window grabs at 1366×768 and 850×560 were inspected; the 3D view itself is blank offscreen (no OpenGL).
+  - The ratio is local. It cannot detect a skeleton centred in the wrong structure, and 1 is not a proof of anatomical correctness.
+  - The lower bound is guaranteed only for exact voxel-centre samples, not for interpolated graph nodes.
+  - Search runs sample by sample in Python (~25 µs per sample here); much larger skeletons or radii will take proportionally longer.
+  - A centeredness measure based on Surface distance is deferred.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
 ## 2026-09-30 15:51 AEST — Add Surface distance method to EDT Heat
 
 - Added a **Distance method** selector (Voxel EDT / Surface distance) beside Calculate in the EDT Heat tab, with a **?** tooltip holding the definitions. Surface distance is the shortest physical distance from each GraphML node to the foreground's unsmoothed 0.5 marching-cubes isosurface, to triangle interiors, edges, and vertices.

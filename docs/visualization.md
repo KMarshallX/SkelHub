@@ -2,7 +2,7 @@
 
 SkelHub provides `skelhub graphviz` for quick 3D inspection of vessel graphs and binary skeleton volumes.
 
-The Graph Tools desktop window (`skelhub gui`), including its EDT Heat viewer, is documented separately in [GUI](GUI.md). It is under active development and currently separate from `skelhub graphviz`.
+The Graph Tools desktop window (`skelhub gui`), including its EDT Heat viewer (boundary distance and local EDT ratio), is documented separately in [GUI](GUI.md). It is under active development and currently separate from `skelhub graphviz`.
 
 The viewer is lightweight and PyVista-based. It supports:
 
