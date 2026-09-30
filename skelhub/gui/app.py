@@ -18,6 +18,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from .charting import draw_histogram
+from .edt_tab import EdtHeatTab
 from .report import export_report, report_paths
 from .services import check_graph, clean_graph, crop_graph, existing_crop_outputs
 from .topology import TopologyResult
@@ -47,9 +48,12 @@ class Worker(QObject):
 class PathRow(QWidget):
     changed = Signal()
 
-    def __init__(self, *, directory: bool = False, output: bool = False):
+    DEFAULT_FILTER = "GraphML and NIfTI (*.graphml *.nii *.nii.gz);;All files (*)"
+
+    def __init__(self, *, directory: bool = False, output: bool = False, file_filter: str | None = None):
         super().__init__()
         self.directory, self.output = directory, output
+        self.file_filter = file_filter or self.DEFAULT_FILTER
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.edit = QLineEdit()
@@ -66,7 +70,7 @@ class PathRow(QWidget):
         elif self.output:
             value, _ = QFileDialog.getSaveFileName(self, "Select output", current, "GraphML (*.graphml);;All files (*)")
         else:
-            value, _ = QFileDialog.getOpenFileName(self, "Select input", current, "GraphML and NIfTI (*.graphml *.nii *.nii.gz);;All files (*)")
+            value, _ = QFileDialog.getOpenFileName(self, "Select input", current, self.file_filter)
         if value:
             self.edit.setText(value)
 
@@ -157,6 +161,7 @@ class Window(QMainWindow):
         self._build_check()
         self._build_crop()
         self._build_topology()
+        self._build_edt_heat()
 
         progress_panel = QFrame()
         progress_panel.setObjectName("progressPanel")
@@ -199,7 +204,7 @@ class Window(QMainWindow):
             QLabel#subtitle { color: #9fc8cb; font-size: 11px; }
             QLabel#headerMeta { color: #9fc8cb; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
             QTabWidget::pane { border: 1px solid #cddde1; background: white; border-radius: 0 7px 7px 7px; }
-            QTabBar::tab { min-width: 142px; padding: 10px 17px; margin-right: 5px; color: #43616c; background: #e6eff0; border: 1px solid #cddde1; border-bottom: none; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; }
+            QTabBar::tab { min-width: 104px; padding: 10px 14px; margin-right: 5px; color: #43616c; background: #e6eff0; border: 1px solid #cddde1; border-bottom: none; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; }
             QTabBar::tab:hover { background: #d8ecec; color: #1b5960; }
             QTabBar::tab:selected { background: #ffffff; color: #086e73; border-top: 3px solid #21a4a5; padding-top: 8px; font-weight: 700; }
             QLabel#sectionLabel { color: #173743; font-size: 17px; font-weight: 700; }
@@ -214,6 +219,8 @@ class Window(QMainWindow):
             QPushButton { padding: 7px 14px; border: 1px solid #b7cbd0; border-radius: 5px; background: #ffffff; color: #163643; }
             QPushButton:hover { background: #e3f2f2; border-color: #88b9bb; }
             QPushButton:disabled { color: #91a1a7; background: #ecf1f2; }
+            QGroupBox { font-weight: 600; color: #244b58; border: 1px solid #d5e2e6; border-radius: 6px; margin-top: 8px; padding: 8px 6px 6px 6px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }
             QPushButton#cancelButton { color: #8a3c32; border-color: #d6aaa2; background: #fff8f5; }
         """)
 
@@ -353,6 +360,11 @@ class Window(QMainWindow):
         charts.addWidget(self.cycle_chart)
         layout.addLayout(charts, 1)
 
+    def _build_edt_heat(self) -> None:
+        self.edt_tab = EdtHeatTab(PathRow, self._launch, self._log, self._error)
+        self._settings.append(self.edt_tab.calculate_button)
+        self.tabs.addTab(self.edt_tab, "EDT Heat")
+
     def _toggle_log(self, visible: bool) -> None:
         self.log.setVisible(visible)
         self.log_toggle.setText("▾ Run log" if visible else "▸ Run log")
@@ -465,6 +477,7 @@ class Window(QMainWindow):
         for widget in self._settings:
             widget.setEnabled(True)
         self.export_button.setEnabled(self.result is not None)
+        self.edt_tab.job_finished()
         if self.statusBar().currentMessage().endswith("running…"):
             self.statusBar().showMessage("Ready")
         self._thread = self._worker = None
@@ -677,6 +690,7 @@ class Window(QMainWindow):
             self._error("Wait for the current operation to finish before closing.")
             event.ignore()
         else:
+            self.edt_tab.shutdown()
             event.accept()
 
 
