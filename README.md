@@ -84,6 +84,8 @@ python -m pip install -e '.[gui]'
 skelhub gui
 ```
 
+The GUI is under active development and currently separate from `skelhub graphviz`. See [GUI](docs/GUI.md).
+
 ## CLI Usage
 
 Use the focused docs below:
@@ -92,6 +94,7 @@ Use the focused docs below:
 - [Evaluation](docs/evaluation.md)
 - [Postprocessing](docs/postprocessing.md)
 - [Visualization](docs/visualization.md)
+- [GUI](docs/GUI.md)
 - [Python API](docs/API.md)
 
 ## Repository Structure
@@ -100,6 +103,7 @@ Use the focused docs below:
 SkelHub/
 ├── docs/
 │   ├── API.md
+│   ├── GUI.md
 │   ├── StructuredOutput.md
 │   ├── algorithms.md
 │   ├── architecture.md
@@ -140,6 +144,7 @@ Key locations:
   workflow through the active Python environment.
 - `skelhub.visualization` powers `skelhub graphviz`.
 - `skelhub.gui` powers `skelhub gui`, while topology calculations and report output stay separate from the desktop widgets.
+- `skelhub.postprocessing.edt` computes and samples the foreground EDT for the EDT Heat tab; `skelhub.visualization.heatmap` and `skelhub.visualization.edt_heat` handle its colours, rendering, and picking.
 
 ## Structured Output
 

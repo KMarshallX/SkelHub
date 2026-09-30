@@ -1,5 +1,67 @@
 # Development Log
 
+## 2026-09-30 14:23 AEST — Move GUI documentation to docs/GUI.md
+
+- Added `docs/GUI.md` for `skelhub gui`. It covers install and launch, window behaviour (jobs, progress, log, replacement prompts), each of the five tabs, and the full EDT Heat section: inputs, controls, checks, limitations. The page states that the GUI is under active development and currently separate from `skelhub graphviz`.
+- `docs/postprocessing.md`: removed the GUI details from the Overview. Added a "Graph Tools GUI" section with only the architecture (tab-to-service mapping, background jobs, shared containment rule) and the `skelhub.postprocessing.edt` method; it links to `GUI.md` for checks and usage.
+- `docs/visualization.md`: removed the EDT Heat section and added a pointer to `GUI.md`. The graphviz content is unchanged.
+- `README.md`: EDT Heat link now points to `GUI.md`, which is also listed in the docs links and repository tree. `docs/architecture.md` links to `GUI.md` and notes the development status.
+- Documentation only; no code or tests changed. Assumption: the per-tab descriptions in `GUI.md` were written from the current `skelhub/gui/app.py` behaviour and not re-verified in a live window.
+
+## 2026-09-30 12:56 AEST — Add EDT Heat tab to Graph Tools
+
+- Added a fifth `skelhub gui` tab, **EDT Heat**. It computes the foreground's physical Euclidean distance transform, samples it on a skeleton NIfTI (each occupied voxel) or GraphML (each node `voxel_pos`, trilinear for fractional positions), and shows the result in an embedded `pyvistaqt` viewer with a vertical legend. NIfTI uses discrete colour bands on physical voxel blocks. GraphML uses a continuous gradient on nodes, with neutral grey curved edges from `centerline_voxel_points`. Controls: four colour presets, band count (NIfTI only), node size and edge thickness (GraphML only), Reset/Fit, and click-to-inspect (EDT, voxel and physical position, node ID). The other four tabs and `skelhub graphviz` are unchanged.
+- New files:
+  - `skelhub/io/graphml_reader.py`
+  - `skelhub/postprocessing/edt.py`
+  - `skelhub/visualization/heatmap.py`
+  - `skelhub/visualization/edt_heat.py`
+  - `skelhub/gui/edt_tab.py`
+- Modified files:
+  - `skelhub/io/nifti_reader.py`: added `read_binary_mask`.
+  - `skelhub/io/__init__.py`
+  - `skelhub/postprocessing/checker.py`: moved containment into the module-level `points_in_foreground_cells`; report output unchanged.
+  - `skelhub/visualization/_graph_viewer_impl.py`: GraphML point/path parsing and node IDs now come from `graphml_reader` under the old private names; added `_voxel_block_geometry`.
+  - `skelhub/gui/app.py`: `PathRow` file filters, fifth tab, narrower tab min-width, group-box style, job-finished hook, viewer shutdown on close.
+  - `pyproject.toml`: added `pyvistaqt>=0.11` to the `gui` extra.
+- Architecture:
+  - Loading and validation live in I/O. The EDT and its sampling live in postprocessing, with no Qt, VTK, or algorithm backend. Colours, rendering, and picking live in visualization and work on any PyVista plotter. Widgets and job flow live in the GUI.
+  - Calculation uses the window's existing background worker; results are applied on the GUI thread.
+  - The viewer is created once, lazily, when the tab is shown. A re-entry guard stops a second viewer being built during creation.
+  - NIfTI blocks use one instanced `vtkGlyph3DMapper`, not one mesh per voxel.
+  - Colour changes rewrite one colour array in place: no EDT recomputation, and the camera stays put.
+  - Picking maps back to the original sample index. For voxels, the click ray is intersected with each voxel box in voxel-index space. For nodes, positions are projected to the screen and the front-most node under the cursor wins.
+- Coordinate, unit, and validation policy:
+  - Spacing = affine column lengths. Sheared grids and singular affines are rejected; rotated grids are accepted.
+  - Distance labels come from the NIfTI header unit. An unknown unit shows "unit unspecified", never mm, and adds a warning to the log.
+  - Rejected with a warning: missing or unreadable files; non-3D, non-finite, or non-binary data; empty foreground; all-foreground volume (no background); NIfTI shape mismatch; affine mismatch (corner offset above 0.001 voxel); empty skeleton; skeleton voxels or graph nodes outside the foreground (checker cell rule); missing or invalid `voxel_pos` or `centerline_voxel_points`; edge paths outside the volume; stored X/Y/Z or `centerline_world_points` disagreeing with the foreground affine. Nothing is resampled or registered.
+  - Graph geometry is placed with the foreground affine.
+- Assumptions (not separately confirmed): skeleton voxels or nodes outside the foreground count as incompatible inputs and are rejected, not coloured 0. GraphML edges without `centerline_voxel_points` are rejected rather than drawn straight. EDT is measured between voxel centres, and the volume border is not treated as background. The node ID shown is the GraphML `<node id>`, as in graphviz.
+- Tradeoffs:
+  - The EDT runs on the foreground bounding box plus a one-voxel margin. It is exact (tested against the full volume) and uses less memory. Only samples are cached, not the EDT volume.
+  - Band count is limited to 2–16, default 6.
+  - At the 850×560 minimum window the tab scrolls vertically; at 1366×768 it fits.
+- Tests:
+  - 30 new local tests in `tests/test_edt_heat_processing.py`, `tests/test_edt_heat_visualization.py`, and `tests/test_gui_edt_heat.py`, covering:
+    - EDT against a brute-force search with anisotropic spacing, and crop equivalence
+    - voxel and fractional-node sampling, physical placement, unit labels
+    - every rejection path listed above
+    - band, constant, and gradient mapping
+    - in-place recolouring with the camera kept
+    - voxel and node picking on an offscreen VTK renderer
+    - tab creation, control states, the background job, and GUI-thread delivery
+    - cache reuse, invalidation, stale-result discard, click-versus-drag, legend labels, single viewer creation, shutdown
+  - `tests/test_gui_smoke.py` now expects five tabs.
+  - Full suite: 178 passed. `git diff --check` and compilation passed.
+  - Real data: the L-system foreground with the Lee94 skeleton ran in 0.9 s (300×300×150). A graphgen GraphML of it (14 nodes, 13 edges) passed all checks in 0.8 s. The repository's older `Lnet_i4_0_tort_centreline.graphml` lacks `voxel_pos` and is rejected clearly. Offscreen renders and window grabs at 1366×768 and 850×560 were inspected.
+- Limitations and risks:
+  - No display was available, so embedded-viewer drawing, mouse rotate/pan/zoom, real click picking, and resizing with a live OpenGL context were not verified. Scene rendering and picking were verified on an offscreen EGL plotter, and the widgets on offscreen Qt.
+  - Spatial checks cannot prove shared file provenance.
+  - Interpolated node values approximate distances between voxel centres.
+  - No large-skeleton warning yet.
+  - `qtpy` is forced to PySide6 in-process because PyQt6 is also installed in this environment.
+  - Tests remain local and ignored; `.gitignore` was not modified.
+
 ## 2026-09-22 16:09 AEST — Add checkbox-driven PR versioning
 
 - Added `.github/PULL_REQUEST_TEMPLATE.md` with summary, changes, testing, breaking changes, and exactly one version choice: bugfix / refactoring (+0.0.1), minor (+0.1.0), major (+1.0.0), or no release. Minor/major increments reset lower components; multi-digit versions are supported.
