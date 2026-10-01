@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import Callable
+
+import numpy as np
 
 from skelhub.postprocessing.checker import check_paths
 from skelhub.postprocessing.crop_escaping_graph_patches import main as crop_main
@@ -97,3 +100,64 @@ def existing_crop_outputs(arguments: list[str], progress: Progress | None = None
     if progress:
         progress(95, f"Output scan complete: {len(existing)} existing files would be replaced")
     return existing
+
+
+@dataclass(frozen=True, slots=True)
+class NiftiHeaderPreview:
+    """Header facts shown before evaluation; the voxel array is not read.
+
+    ``file_key`` (resolved path, mtime, size) identifies the file version that
+    was inspected. ``error`` is set when the header cannot be used.
+    """
+
+    path: str
+    file_key: tuple[str, int, int] | None
+    shape: tuple[int, ...] = ()
+    header_unit: str = "unknown"
+    stored_spacing: tuple[float, float, float] | None = None
+    error: str | None = None
+
+
+def file_identity(path: str) -> tuple[str, int, int] | None:
+    """Resolved path, modification time and size, or None when unreadable."""
+    try:
+        resolved = Path(path).resolve()
+        stat = resolved.stat()
+    except OSError:
+        return None
+    return str(resolved), int(stat.st_mtime_ns), int(stat.st_size)
+
+
+def inspect_nifti_header(path: str) -> NiftiHeaderPreview:
+    """Read shape, spatial unit and stored spacing from a NIfTI header.
+
+    Stored spacing is the affine column lengths in the header's own unit, the
+    same values the evaluator converts. Nothing is validated beyond what a
+    preview needs; the evaluator remains authoritative.
+    """
+    import nibabel as nib
+
+    from skelhub.evaluation.validation import header_spatial_unit
+
+    text = path.strip()
+    key = file_identity(text) if text else None
+    if not text:
+        return NiftiHeaderPreview(path=text, file_key=None, error="Select a file.")
+    if not text.lower().endswith((".nii", ".nii.gz")):
+        return NiftiHeaderPreview(path=text, file_key=key, error="Select a .nii or .nii.gz file.")
+    if key is None or not Path(text).is_file():
+        return NiftiHeaderPreview(path=text, file_key=None, error="File not found.")
+    try:
+        image = nib.load(text)
+        shape = tuple(int(size) for size in image.shape)
+        affine = np.asarray(image.affine, dtype=float)
+        header_unit = header_spatial_unit(image.header)
+    except Exception as exc:  # nibabel raises several concrete types for unreadable files
+        return NiftiHeaderPreview(path=text, file_key=key, error=f"Unable to read NIfTI header: {exc}")
+    if len(shape) != 3:
+        return NiftiHeaderPreview(path=text, file_key=key, shape=shape, header_unit=header_unit,
+                                  error=f"Skeleton must be a 3D volume; got shape {shape}.")
+    spacing = None
+    if affine.shape == (4, 4) and np.isfinite(affine).all():
+        spacing = tuple(float(value) for value in np.linalg.norm(affine[:3, :3], axis=0))
+    return NiftiHeaderPreview(path=text, file_key=key, shape=shape, header_unit=header_unit, stored_spacing=spacing)

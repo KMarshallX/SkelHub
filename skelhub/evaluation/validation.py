@@ -22,6 +22,8 @@ SUPPORTED_RADIUS_UNITS = ("voxels", "um")
 CANONICAL_SPATIAL_UNITS = {"meter": "meter", "mm": "mm", "um": "um", "micron": "um"}
 SPATIAL_UNIT_TO_UM = {"meter": 1_000_000.0, "mm": 1_000.0, "um": 1.0}
 UNKNOWN_SPATIAL_UNITS = ("unknown", "")
+# NIfTI xyzt_units spatial codes (low three bits); the time unit is irrelevant here.
+_NIFTI_SPATIAL_CODES = {0: "unknown", 1: "meter", 2: "mm", 3: "micron"}
 
 # Largest |cos angle| between voxel axes still treated as orthogonal.
 SHEAR_TOLERANCE = 1e-5
@@ -81,6 +83,25 @@ class ToleranceSpec:
     requested_unit: str
     tolerance_um: float
     is_primary: bool
+
+
+def header_spatial_unit(header: object) -> str:
+    """Spatial-unit label of a NIfTI header, ``unknown`` when there is no header.
+
+    nibabel's ``get_xyzt_units`` raises ``KeyError`` for undefined unit codes,
+    including undefined time codes. This reads the spatial bits only and
+    returns ``unrecognized code N`` for undefined ones, which
+    :func:`resolve_spatial_unit` then rejects.
+    """
+    if header is None:
+        return "unknown"
+    try:
+        code = int(np.asarray(header["xyzt_units"]).item()) & 0x07
+    except (KeyError, TypeError, ValueError, IndexError):
+        if not hasattr(header, "get_xyzt_units"):
+            return "unknown"
+        return header.get_xyzt_units()[0] or "unknown"
+    return _NIFTI_SPATIAL_CODES.get(code, f"unrecognized code {code}")
 
 
 def resolve_spatial_unit(
@@ -227,7 +248,7 @@ def read_skeleton_nifti(path: str | Path, *, label: str) -> RawSkeletonNifti:
     return RawSkeletonNifti(
         data=np.asarray(image.dataobj),
         affine=np.array(image.affine, dtype=float),
-        header_unit=image.header.get_xyzt_units()[0] or "unknown",
+        header_unit=header_spatial_unit(image.header),
         header_spacing=tuple(float(value) for value in image.header.get_zooms()[:3]),
         path=str(volume_path),
     )
@@ -277,10 +298,7 @@ def volume_input_from_volume_data(
 
     A missing header counts as unknown units, so ``supplied_unit`` is then required.
     """
-    header = volume.header
-    header_unit = "unknown"
-    if header is not None and hasattr(header, "get_xyzt_units"):
-        header_unit = header.get_xyzt_units()[0] or "unknown"
+    header_unit = header_spatial_unit(volume.header)
     values = volume.data if data is None else data
     if data is not None and np.shape(data) != np.shape(volume.data):
         raise ValueError(

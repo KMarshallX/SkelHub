@@ -19,6 +19,7 @@ from matplotlib.figure import Figure
 
 from .charting import draw_histogram
 from .edt_tab import EdtHeatTab
+from .evaluate_tab import EvaluateTab
 from .report import export_report, report_paths
 from .services import check_graph, clean_graph, crop_graph, existing_crop_outputs
 from .topology import TopologyResult
@@ -162,6 +163,7 @@ class Window(QMainWindow):
         self._build_crop()
         self._build_topology()
         self._build_edt_heat()
+        self._build_evaluate()
         # Styled delegates make combo popups follow the stylesheet's item colours; the
         # default menu-style delegate drew hovered items as white text on white.
         for combo in self.findChildren(QComboBox):
@@ -208,7 +210,7 @@ class Window(QMainWindow):
             QLabel#subtitle { color: #9fc8cb; font-size: 11px; }
             QLabel#headerMeta { color: #9fc8cb; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
             QTabWidget::pane { border: 1px solid #cddde1; background: white; border-radius: 0 7px 7px 7px; }
-            QTabBar::tab { min-width: 104px; padding: 10px 14px; margin-right: 5px; color: #43616c; background: #e6eff0; border: 1px solid #cddde1; border-bottom: none; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; }
+            QTabBar::tab { min-width: 96px; padding: 10px 14px; margin-right: 5px; color: #43616c; background: #e6eff0; border: 1px solid #cddde1; border-bottom: none; border-radius: 7px 7px 0 0; font-size: 12px; font-weight: 600; }
             QTabBar::tab:hover { background: #d8ecec; color: #1b5960; }
             QTabBar::tab:selected { background: #ffffff; color: #086e73; border-top: 3px solid #21a4a5; padding-top: 8px; font-weight: 700; }
             QLabel#sectionLabel { color: #173743; font-size: 17px; font-weight: 700; }
@@ -376,6 +378,11 @@ class Window(QMainWindow):
                                self.edt_tab.method_combo, self.edt_tab.alpha_spin))
         self.tabs.addTab(self.edt_tab, "EDT Heat")
 
+    def _build_evaluate(self) -> None:
+        # Evaluate enables itself from its own input state after each job (see _job_done).
+        self.evaluate_tab = EvaluateTab(PathRow, self._launch, self._log, self._error, self._confirm_outputs)
+        self.tabs.addTab(self.evaluate_tab, "Evaluate")
+
     def _toggle_log(self, visible: bool) -> None:
         self.log.setVisible(visible)
         self.log_toggle.setText("▾ Run log" if visible else "▸ Run log")
@@ -489,6 +496,7 @@ class Window(QMainWindow):
             widget.setEnabled(True)
         self.export_button.setEnabled(self.result is not None)
         self.edt_tab.job_finished()
+        self.evaluate_tab.job_finished()
         if self.statusBar().currentMessage().endswith("running…"):
             self.statusBar().showMessage("Ready")
         self._thread = self._worker = None
