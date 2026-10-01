@@ -1,5 +1,52 @@
 # Development Log
 
+## 2026-10-01 23:07 AEST — Add an Evaluate tab to `skelhub gui`
+
+- **What changed**:
+  - New **Evaluate** tab (sixth tab) running the existing evaluation through `skelhub.api.evaluate_prediction_path` on the window's background worker.
+  - Inputs: prediction and reference NIfTI rows (NIfTI-only Browse filter). Header preview shows shape, header unit, effective unit and spacing in µm, read after a 400 ms pause in typing or when editing finishes.
+  - Spatial units, per file:
+    - known header units are filled in and locked, and never sent as overrides
+    - unknown units start at "Select spatial unit…" and block Evaluate until chosen; only these are passed as `pred_spatial_unit` / `ref_spatial_unit`
+    - unsupported codes and non-3D files are errors
+  - Tolerances: comma- and/or space-separated values, order kept, first value primary. Unit is µm (default) or voxels. Voxel tolerances on anisotropic grids are explained and blocked.
+  - Results:
+    - status, primary tolerance and primary F1 cards
+    - coverage, supporting counts, distance (µm), topology (with Betti-count agreement) and endpoint tables
+    - warnings, and N/A values with their reasons as tooltips
+  - Freshness: any input or setting change, a file changed on disk (checked before evaluating and exporting), or a failed rerun marks results outdated and disables export.
+  - **Export JSON…** uses `write_evaluation_json`, with a JSON save dialog and the window's existing overwrite confirmation.
+- **Files**:
+  - Added: `skelhub/gui/evaluate_tab.py`.
+  - Modified:
+    - `skelhub/gui/app.py`: tab registration, `job_finished` hook, tab `min-width` 104 → 96 px so six tabs fit the 850 px minimum width without scroll arrows.
+    - `skelhub/gui/services.py`: `inspect_nifti_header`, `file_identity`, `NiftiHeaderPreview`.
+    - `skelhub/evaluation/validation.py`: see the backend fix below.
+  - Docs: `docs/GUI.md` (Evaluate section, six tabs), `docs/postprocessing.md` (tab → service line). `docs/evaluation.md` is unchanged.
+- **Backend fix** (no contract change):
+  - nibabel's `get_xyzt_units` raised `KeyError` for undefined unit codes (spatial 4–7, or an undefined time code), so the CLI showed a traceback.
+  - New `header_spatial_unit` reads only the spatial bits. Undefined spatial codes are now rejected through `resolve_spatial_unit` as "unsupported spatial unit 'unrecognized code N'", which is what `docs/evaluation.md` already describes. A valid spatial code with an undefined time code now works.
+- **Architecture**:
+  - The tab is built like EDT Heat: the window passes in the row widget, launcher, log, error dialog and overwrite confirmation, so there is no import of `app.py`.
+  - The tab computes no metrics. Unit and tolerance checks call the evaluation's `resolve_spatial_unit` and `normalize_tolerances`; the GUI only splits tolerance text into numbers.
+  - Results are rendered on the GUI thread from the returned `EvaluationResult`. A run is described by a frozen `EvaluationRequest` (paths, file identity, declared units, tolerances, unit); a result is current only while that request still matches the controls and the files on disk.
+- **Assumptions and decisions**:
+  - Header previews are read on the GUI thread. They are small header reads, debounced, and guarded against stale paths.
+  - Evaluate stays enabled on a preview shape mismatch, with an inline note, so the evaluation itself rejects it and its error is shown.
+  - A file changed on disk is re-read before running or exporting, which resets a declared unit for that file.
+  - Backend warnings are shown word for word; a note explains that `--pred-spatial-unit` / `--ref-spatial-unit` in them are the GUI's unit selections.
+  - JSON export writes synchronously; it is small.
+- **Tests**:
+  - New `tests/test_gui_evaluate.py` (40): registration and layout at 1366×768, 1280×720 and the minimum size, with no tab-bar scrolling for any current tab; locked known units; unknown-unit flow and independence; spacing previews; reset on path change; stale previews; unsupported codes; tolerance parsing; anisotropic voxel tolerances; API arguments on a worker thread; shape and affine rejection; unchanged files; table values; empty statuses and N/A; outdated marking; disk changes; failed reruns; canonical export; cancel and overwrite.
+  - `tests/test_evaluation_spatial_units.py` +1 (undefined unit codes).
+  - Tab-list assertions updated in `tests/test_gui_smoke.py` and `tests/test_gui_edt_heat.py`.
+  - All GUI and evaluation tests: 161 passed. The layout was also checked visually with offscreen screenshots at 1366×768 and 850×560.
+- **Limitations**:
+  - Evaluation cannot be cancelled. The worker thread has no safe stop, so no cancel button was added.
+  - Changes on disk are detected only when evaluating, exporting, or after an input or setting change, not continuously.
+  - Header reads on a very slow network filesystem could briefly block the window.
+  - Large volumes need the same memory as `skelhub evaluate` (about 0.65 GB for 300×300×150).
+
 ## 2026-10-01 22:28 AEST — Allow declared spatial units for NIfTI headers with unknown units
 
 - **What changed**:
