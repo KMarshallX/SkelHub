@@ -17,7 +17,7 @@ skelhub gui
 
 ## Window
 
-- Five top tabs: **Clean**, **Check**, **Crop patches**, **TopoStats**, **EDT Heat**.
+- Six top tabs: **Clean**, **Check**, **Crop patches**, **TopoStats**, **EDT Heat**, **Evaluate**.
 - One job runs at a time. While it runs, the tabs are disabled, and closing the window is refused.
 - A progress panel shows the current stage. Stages with a measurable fraction show a percentage. Other stages, such as graph conversion, the exact cycle basis, and the EDT, show an animated bar instead.
 - The run log opens with timestamps while a job runs. After a success it closes again (if it opened automatically); after a failure it stays open.
@@ -61,6 +61,46 @@ Topology summary of an undirected graph.
 - Histograms, stacked vertically: node degree, and vertices per cycle in an unweighted minimum cycle basis.
 - Runs in a separate process. Counts and the degree histogram appear before the cycle basis finishes, and **Cancel TopoStats** stops the process. The exact cycle basis has no percentage or ETA; elapsed time and a log line every five seconds show it is still working.
 - **Export Report** writes JSON, CSV, and PNG files. Nothing is written otherwise.
+
+## Evaluate
+
+Compares a predicted skeleton NIfTI with a reference skeleton, using the same evaluation as `skelhub evaluate`. For metric definitions and input rules, see [Evaluation](evaluation.md).
+
+### Inputs and spatial units
+
+- Select a **Prediction skeleton NIfTI** and a **Reference skeleton NIfTI** (`.nii` or `.nii.gz`) with **Browse…** or by typing a path.
+- Each file's header is read when you pick it (or shortly after you stop typing). The voxel data is not loaded for this. Below each file you see its shape, the header unit, the effective unit and the voxel spacing in µm.
+- **Spatial unit**, set separately for each file:
+  - **Known header unit** (µm, mm or metres): filled in and locked, with "From NIfTI header." It cannot be overridden.
+  - **Unknown header unit**: the dropdown starts at "Select spatial unit…" and **Evaluate** stays disabled until you choose. Afterwards it reads "User supplied; header unit is unknown."
+  - **Unsupported unit code or non-3D file**: shown as an error, and evaluation stays unavailable.
+- A unit choice labels the stored spacing and coordinate values; it does not change the spacing. Stored spacing 0.05 with mm gives 50 µm; 50 with µm gives 50 µm; 1 with µm gives 1 µm. Files are never modified.
+- Choosing a different file clears that file's unit choice and preview.
+- Shape differences are flagged before the run. Shape and affine mismatches are still rejected by the evaluation, and the error appears in a warning dialog.
+
+### Tolerances
+
+- **Tolerances**: one or more numbers separated by commas and/or spaces, for example `50, 100`. The field starts empty.
+- The order is kept: the first value is the **primary** tolerance, and each tolerance is reported separately. Zero means exact matching. Negative, duplicate, non-finite and non-numeric values are rejected as you type.
+- **Tolerance unit**: µm (default) or voxels. This unit is separate from the files' spatial units. Voxel tolerances need isotropic spacing; on anisotropic files the tab explains this and keeps **Evaluate** disabled until you choose µm.
+
+### Results
+
+- **Evaluate** runs as a background job with an animated progress bar and run-log messages.
+- **Summary**:
+  - status (Evaluated, Empty prediction, Empty reference, Both skeletons empty)
+  - the primary tolerance
+  - F1 at the primary tolerance, which is not an overall quality score
+- **Tables**:
+  - geometry coverage per tolerance (precision, recall, F1)
+  - supporting matched and unmatched voxel counts
+  - distances in µm (directional means, symmetric mean, symmetric P95, Hausdorff)
+  - topology (β₀, β₁, β₂: reference, prediction, signed difference, absolute error) with **Betti-count agreement**
+  - endpoint diagnostics
+- **Unavailable values** show as **N/A**; hover to see the reason. They are never shown as zero.
+- **Warnings**, including declared-unit provenance, appear above the tables and in the run log.
+- **Outdated results**: changing a file, a declared unit, the tolerances or the tolerance unit marks the results "Results are outdated — run evaluation again." Changes to a file on disk are detected when you evaluate or export. A failed rerun keeps the old results marked as outdated.
+- **Export JSON…** writes the same JSON report as `skelhub evaluate --json-output`, with full precision, warnings and unit provenance. It is enabled only for a current result, including empty-input results. An existing file is replaced only after you confirm.
 
 ## EDT Heat
 

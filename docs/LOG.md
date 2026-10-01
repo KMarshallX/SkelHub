@@ -1,5 +1,122 @@
 # Development Log
 
+## 2026-10-01 23:07 AEST — Add an Evaluate tab to `skelhub gui`
+
+- **What changed**:
+  - New **Evaluate** tab (sixth tab) running the existing evaluation through `skelhub.api.evaluate_prediction_path` on the window's background worker.
+  - Inputs: prediction and reference NIfTI rows (NIfTI-only Browse filter). Header preview shows shape, header unit, effective unit and spacing in µm, read after a 400 ms pause in typing or when editing finishes.
+  - Spatial units, per file:
+    - known header units are filled in and locked, and never sent as overrides
+    - unknown units start at "Select spatial unit…" and block Evaluate until chosen; only these are passed as `pred_spatial_unit` / `ref_spatial_unit`
+    - unsupported codes and non-3D files are errors
+  - Tolerances: comma- and/or space-separated values, order kept, first value primary. Unit is µm (default) or voxels. Voxel tolerances on anisotropic grids are explained and blocked.
+  - Results:
+    - status, primary tolerance and primary F1 cards
+    - coverage, supporting counts, distance (µm), topology (with Betti-count agreement) and endpoint tables
+    - warnings, and N/A values with their reasons as tooltips
+  - Freshness: any input or setting change, a file changed on disk (checked before evaluating and exporting), or a failed rerun marks results outdated and disables export.
+  - **Export JSON…** uses `write_evaluation_json`, with a JSON save dialog and the window's existing overwrite confirmation.
+- **Files**:
+  - Added: `skelhub/gui/evaluate_tab.py`.
+  - Modified:
+    - `skelhub/gui/app.py`: tab registration, `job_finished` hook, tab `min-width` 104 → 96 px so six tabs fit the 850 px minimum width without scroll arrows.
+    - `skelhub/gui/services.py`: `inspect_nifti_header`, `file_identity`, `NiftiHeaderPreview`.
+    - `skelhub/evaluation/validation.py`: see the backend fix below.
+  - Docs: `docs/GUI.md` (Evaluate section, six tabs), `docs/postprocessing.md` (tab → service line). `docs/evaluation.md` is unchanged.
+- **Backend fix** (no contract change):
+  - nibabel's `get_xyzt_units` raised `KeyError` for undefined unit codes (spatial 4–7, or an undefined time code), so the CLI showed a traceback.
+  - New `header_spatial_unit` reads only the spatial bits. Undefined spatial codes are now rejected through `resolve_spatial_unit` as "unsupported spatial unit 'unrecognized code N'", which is what `docs/evaluation.md` already describes. A valid spatial code with an undefined time code now works.
+- **Architecture**:
+  - The tab is built like EDT Heat: the window passes in the row widget, launcher, log, error dialog and overwrite confirmation, so there is no import of `app.py`.
+  - The tab computes no metrics. Unit and tolerance checks call the evaluation's `resolve_spatial_unit` and `normalize_tolerances`; the GUI only splits tolerance text into numbers.
+  - Results are rendered on the GUI thread from the returned `EvaluationResult`. A run is described by a frozen `EvaluationRequest` (paths, file identity, declared units, tolerances, unit); a result is current only while that request still matches the controls and the files on disk.
+- **Assumptions and decisions**:
+  - Header previews are read on the GUI thread. They are small header reads, debounced, and guarded against stale paths.
+  - Evaluate stays enabled on a preview shape mismatch, with an inline note, so the evaluation itself rejects it and its error is shown.
+  - A file changed on disk is re-read before running or exporting, which resets a declared unit for that file.
+  - Backend warnings are shown word for word; a note explains that `--pred-spatial-unit` / `--ref-spatial-unit` in them are the GUI's unit selections.
+  - JSON export writes synchronously; it is small.
+- **Tests**:
+  - New `tests/test_gui_evaluate.py` (40): registration and layout at 1366×768, 1280×720 and the minimum size, with no tab-bar scrolling for any current tab; locked known units; unknown-unit flow and independence; spacing previews; reset on path change; stale previews; unsupported codes; tolerance parsing; anisotropic voxel tolerances; API arguments on a worker thread; shape and affine rejection; unchanged files; table values; empty statuses and N/A; outdated marking; disk changes; failed reruns; canonical export; cancel and overwrite.
+  - `tests/test_evaluation_spatial_units.py` +1 (undefined unit codes).
+  - Tab-list assertions updated in `tests/test_gui_smoke.py` and `tests/test_gui_edt_heat.py`.
+  - All GUI and evaluation tests: 161 passed. The layout was also checked visually with offscreen screenshots at 1366×768 and 850×560.
+- **Limitations**:
+  - Evaluation cannot be cancelled. The worker thread has no safe stop, so no cancel button was added.
+  - Changes on disk are detected only when evaluating, exporting, or after an input or setting change, not continuously.
+  - Header reads on a very slow network filesystem could briefly block the window.
+  - Large volumes need the same memory as `skelhub evaluate` (about 0.65 GB for 300×300×150).
+
+## 2026-10-01 22:28 AEST — Allow declared spatial units for NIfTI headers with unknown units
+
+- **What changed**:
+  - New `skelhub evaluate` options `--pred-spatial-unit` / `--ref-spatial-unit` (`meter`, `mm`, `um`, `micron` as an alias of `um`; no default).
+  - Matching keywords `pred_spatial_unit` / `ref_spatial_unit` on `skelhub.api.evaluate_prediction_path`, `evaluate_skeleton_files` and `evaluate_skeleton_result` (applied to `input_volume` / `reference`).
+  - Rules: a known header unit is used; an equivalent declaration is accepted with the header as source; a conflicting declaration is rejected; an `unknown` header uses the declaration and adds a warning, or is rejected with flag instructions; unsupported header or declared units are rejected.
+  - A declaration labels the stored numbers and never rescales them. One factor converts header spacing, the affine linear part and the translation, but not the homogeneous row.
+  - Prediction and reference shapes are now compared before units are resolved, so a shape mismatch is reported first.
+  - Provenance: one warning per declared input, giving the input, the unknown header unit, the effective unit and the resulting spacing in µm. It appears in the normal terminal report, `EvaluationResult.warnings` and the JSON. `metadata` keeps `source_spatial_units` (the header value, `null` for arrays) and adds `effective_spatial_units` and `spatial_unit_sources` (`header`/`user`). The verbose terminal report also prints the units.
+- **Files**:
+  - `skelhub/evaluation/validation.py`: `resolve_spatial_unit`, `ResolvedSpatialUnit`, `unit_factor_to_um`, `read_skeleton_nifti` / `prepare_skeleton_nifti`, `require_matching_shapes`. `SkeletonVolumeInput.units` replaces the stored `spatial_unit`, which is now a property. `_unit_factor` was removed.
+  - `skelhub/evaluation/evaluator.py`, `skelhub/evaluation/reporting.py`, `skelhub/api.py`, `skelhub/cli/main.py`.
+  - Docs: `docs/evaluation.md` (new "Unknown header units" section and related lines), `docs/API.md`.
+- **Assumptions**:
+  - Effective units use canonical names (`micron` becomes `um`). `source_spatial_units` keeps the raw header string.
+  - For in-memory arrays, `spacing_unit` is recorded as source `user` with header unit `null`. No warning is given, because no header claimed `unknown`.
+  - A `VolumeData` without a NIfTI header counts as `unknown`, so it can be evaluated with a declaration. Previously it was always rejected.
+- **Tests**:
+  - New `tests/test_evaluation_spatial_units.py` (27 cases): resolution table, aliases, conflicts, invalid values, mm/µm grid equivalence, translation conversion, no inheritance between inputs, 1 µm labelling, shape-first errors, shear/header/binary checks still enforced, unchanged files and in-memory metadata, CLI/API/`SkeletonResult` integration, warnings in terminal and JSON, unchanged known-unit results.
+  - Two expected error-message assertions updated in `tests/test_evaluation_interfaces.py`.
+  - Evaluation tests: 84 passed.
+  - Manual check: the lsys `Lnet_i12_4` pair now evaluates with `--pred-spatial-unit um --ref-spatial-unit um` and gives the same numbers as the earlier header-patched run; the input file checksum is unchanged.
+- **Limitations**:
+  - The user must know the stored unit; a wrong declaration (for example `mm` for µm values) gives distances off by 1000×. The warning shows the effective spacing so this can be spotted.
+  - `scripts/run_eval.sh` has no dedicated flags; pass the new options after `--`.
+
+## 2026-10-01 16:36 AEST — Replace v1 evaluation with coverage, displacement, topology and endpoint metrics
+
+- **What changed** (`skelhub evaluate`, Python API, report schema `2.0`):
+  - Geometry coverage: directional precision $|\{p : d(p,S_r) \le \tau\}| / |S_p|$, recall $|\{r : d(r,S_p) \le \tau\}| / |S_r|$ and F1, one result per tolerance. Each direction has its own matched/unmatched voxel counts.
+  - Displacement (µm): directional means, symmetric mean, symmetric P95 = max of the directional P95s (NumPy `linear`), and Hausdorff distance. Distances come from an exact physical EDT on the bounding box of both skeletons.
+  - Topology: $\beta_0$ (26-conn components), $\beta_2$ (6-conn enclosed background), $\chi$ (scikit-image, connectivity 3), $\beta_1 = \beta_0 + \beta_2 - \chi$, on the original skeletons after cropping and padding. Reports counts, signed and absolute differences, and "Betti-count agreement".
+  - Endpoint diagnostics: 26-neighbour degree-1 voxel counts and their difference.
+  - Empty-input statuses: `ok`, `empty_prediction` (zero coverage, null distances), `empty_reference` and `both_empty` (null geometry, with reasons). Strict JSON with no NaN.
+  - Validation: binary 3D inputs; known units only (`unknown` rejected, per user decision); full affine comparison in µm (tolerance $10^{-3}$ × smallest spacing); equivalent units accepted; sheared grids rejected; NIfTI pixdim must match the affine.
+  - Tolerances: `-b/--buffer-radius` takes one or more values (first is primary, no default). `--buffer-radius-unit` keeps its `voxels` default, per user decision; voxel radii are converted to µm on isotropic grids and rejected on anisotropic ones. Duplicate, negative and nonfinite values are rejected.
+- **Files**:
+  - Modified: `skelhub/core/models.py` (new `ToleranceMatch`, `DistanceSummary`, `GeometryResult`, `BettiNumbers`, `CountComparison`, `TopologyResult`, rewritten `EvaluationResult`), `skelhub/core/__init__.py`, `skelhub/evaluation/{validation,geometry,evaluator,reporting,__init__}.py`, `skelhub/api.py`, `skelhub/cli/main.py`.
+  - Added: `skelhub/evaluation/topology.py`, `skelhub/evaluation/endpoints.py`.
+  - Removed: `skelhub/evaluation/morphology.py` (v1 OCC/BCC/E normalization; endpoint counting moved to `endpoints.py`).
+  - Docs: `docs/evaluation.md` (v2 first; v1 kept below as "Legacy v1 evaluation — historical reference", tag `v0.6.0`), `docs/API.md`, `docs/StructuredOutput.md`, `docs/architecture.md`, `README.md`.
+- **Intentional compatibility breaks**:
+  - `TP`, `FP`, `FN`, `Cp`, `Cr`, `OCC`, `BCC`, `E`, the clipped/normalized variants, `P`, `buffer_radius*` and `input_path` were removed from `EvaluationResult`. JSON `raw_metrics`/`normalized_metrics` were replaced. No legacy mode; use tag `v0.6.0` for v1.
+  - `evaluate_skeleton_volumes` now requires `spacing_unit`. An optional shared `affine` was added.
+  - Previously accepted inputs are now rejected: unknown units, affine mismatches (for example a 100-unit origin shift), sheared grids, and voxel tolerances on anisotropic grids.
+- **New API**: `evaluate_skeleton_result(prediction, reference, *, input_volume, buffer_radius, ...)` in `skelhub.evaluation` and `skelhub.api`. `input_volume` supplies the prediction's affine and units.
+- **Assumptions and tradeoffs**:
+  - A relative slack of $10^{-5}$ applies to $d \le \tau$, isotropy and pixdim checks. This absorbs float32 header rounding; without it a 50 µm tolerance misses axial neighbours at 0.05 mm spacing.
+  - A voxel-unit tolerance is multiplied by the mean spacing; this only applies on isotropic grids.
+  - With `empty_reference`, all coverage counts are null, not just the scores.
+  - EDT rather than a k-d tree, as the plan suggested: identical exact distances, but $O(N)$ memory over the shared bounding box (about 0.65 GB peak, 4 s, for a 300×300×150 pair).
+- **Tests** (local only; `tests/` is gitignored):
+  - `tests/test_evaluation_metrics.py`: 23 analytic geometry, topology and endpoint cases.
+  - `tests/test_evaluation_interfaces.py`: 34 validation, empty-input, JSON, CLI and entrypoint-agreement cases.
+  - Full suite: 304 passed.
+  - Manual CLI run on a header-patched lsys MCP/ground-truth pair.
+- **Limitations and risks**:
+  - The lsys data in `test_data/` (and therefore `scripts/run_eval.sh` on it) has `unknown` units and is now rejected until its headers declare units.
+  - The `Lnet_i12_4` lsys reference reports $\beta_1 = 118$; this looks like crossing or touching branches in the rasterized ground truth. Not investigated.
+  - Deferred: GraphML input, dataset aggregation/Macro-F1, endpoint/junction matching, branch recovery, path connectivity, branch length/tortuosity.
+
+## 2026-10-01 15:01 AEST — Document evaluation limitations and counterexamples
+
+- Updated `docs/evaluation.md` with consolidated limitations covering mixed-count completeness, tolerance-only geometry, missing 3D cycle counts, count-only structure comparisons, forgiving score normalization, incomplete spatial validation, and the framework/input scope.
+- Added reproducible counterexamples for duplicate-voxel completeness inflation, a missing half-line, an empty prediction, a broken loop, and accepted affine mismatch. Corrected the documented morphology sign to match current code, including zero-reference handling.
+- Clarified physical-radius semantics and proposed 50 µm as the initial tolerance for 50 µm fixtures, with 100 µm only as an optional sensitivity result. Recorded the user's decision to defer GraphML support.
+- Described a future voxel-only cycle metric using foreground components, enclosed background cavities and Euler characteristic. Recommendations are explicitly unimplemented; no runtime behaviour, dependencies or CLI defaults changed.
+- Validation: reproduced all tabulated metric values and the accepted 100-unit affine translation; checked the proposed voxel Betti calculation on a line, closed loop, broken loop and hollow shell; executed the documentation example; `git diff --check` passed.
+- Limitations: these are diagnostic examples rather than a full metric validation suite. Cycles depend on the declared digital connectivity and equal cycle counts do not establish structural correspondence. Broader algorithm tests were not needed for this documentation-only update.
+
 ## 2026-09-30 23:04 AEST — Fix EDT Heat GraphML thread safety, help tooltips, and dropdown colours
 
 - **GraphML warning in the terminal** (laplskel `0001.graphml`, which stores a node data attribute `id`):

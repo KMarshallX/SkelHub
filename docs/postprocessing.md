@@ -229,6 +229,7 @@ Architecture:
   - Check → `skelhub.postprocessing.checker` (also used by `scripts/checker.sh`)
   - Crop patches → `skelhub.postprocessing.crop_escaping_graph_patches` (also used by its script)
   - TopoStats → `skelhub.gui.topology`, which converts NIfTI inputs through `graphgen` and caches the graph
+  - Evaluate → `skelhub.api.evaluate_prediction_path` (the `skelhub evaluate` path); header previews use `skelhub.gui.services.inspect_nifti_header` and the evaluation's own unit and tolerance validation
   - EDT Heat → `skelhub.postprocessing.edt` and `skelhub.postprocessing.surface_distance`, plus `skelhub.evaluation.centeredness` for the local EDT ratio, drawn with `skelhub.visualization.edt_heat`
 - Jobs run off the GUI thread: a worker thread for most tools, a child process for TopoStats. Services report progress through a callback, and pass `None` for stages without a measurable fraction.
 - The checker and EDT Heat share one containment rule, `checker.points_in_foreground_cells`.

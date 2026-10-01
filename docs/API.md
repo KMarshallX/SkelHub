@@ -68,14 +68,27 @@ from skelhub.api import evaluate_prediction_path
 evaluation = evaluate_prediction_path(
     "pred.nii.gz",
     "ref.nii.gz",
-    buffer_radius=1.0,
-    buffer_radius_unit="voxels",
+    buffer_radius=[50, 100],  # first value is the primary tolerance
+    buffer_radius_unit="um",
 )
 
-print(evaluation.Cp)
-print(evaluation.Cr)
-print(evaluation.P)
+print(evaluation.status)                          # "ok", "empty_prediction", ...
+print(evaluation.geometry.primary.f1)
+print(evaluation.geometry.distances.symmetric_p95_um)
+print(evaluation.topology.comparison(1))          # cycles, reference vs prediction
 ```
+
+To evaluate a backend result directly, pass the `VolumeData` it ran on as the prediction grid:
+
+```python
+from skelhub.api import evaluate_skeleton_result
+
+evaluation = evaluate_skeleton_result(result, reference_volume, input_volume=volume, buffer_radius=[1, 2])
+```
+
+If a NIfTI header's unit is `unknown`, declare it with `pred_spatial_unit="mm"` / `ref_spatial_unit="mm"` (also accepted by `evaluate_skeleton_result`). A declaration cannot override a known header unit.
+
+There is no combined score. See [Evaluation](evaluation.md) for formulas and input rules.
 
 ## Generate GraphML
 

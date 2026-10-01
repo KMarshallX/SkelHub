@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.core import EvaluationResult, SkeletonResult, VolumeData, get_backend
-from skelhub.evaluation import evaluate_skeleton_files
+from skelhub.evaluation import evaluate_skeleton_files, evaluate_skeleton_result  # noqa: F401 re-exported
 from skelhub.io import read_nifti, write_nifti
 from skelhub.postprocessing.feature import (
     FeatureExtractionResult,
@@ -49,16 +49,24 @@ def evaluate_prediction_path(
     pred_path: str | Path,
     ref_path: str | Path,
     *,
-    buffer_radius: float,
+    buffer_radius: float | Sequence[float],
     buffer_radius_unit: str = "voxels",
+    pred_spatial_unit: str | None = None,
+    ref_spatial_unit: str | None = None,
     log: Callable[[str], None] | None = None,
 ) -> EvaluationResult:
-    """Run the framework-level voxel-based evaluation on a prediction/reference pair."""
+    """Run the framework-level voxel-based evaluation on a prediction/reference pair.
+
+    ``buffer_radius`` is one tolerance or a sequence of tolerances; the first is primary.
+    ``pred_spatial_unit`` / ``ref_spatial_unit`` label NIfTI headers whose unit is unknown.
+    """
     return evaluate_skeleton_files(
         str(pred_path),
         str(ref_path),
         buffer_radius=buffer_radius,
         buffer_radius_unit=buffer_radius_unit,
+        pred_spatial_unit=pred_spatial_unit,
+        ref_spatial_unit=ref_spatial_unit,
         log=log,
     )
 

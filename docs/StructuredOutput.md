@@ -39,18 +39,19 @@ Graph extraction should stay in postprocessing unless a backend is naturally gra
 
 ## EvaluationResult
 
-`EvaluationResult` records voxel-based v1 evaluation output.
+`EvaluationResult` records voxel-based evaluation output (schema `2.0`).
 
 It includes:
 
-- `TP`, `FP`, `FN`
-- completeness `Cp`
-- correctness `Cr`
-- raw, clipped, and normalized `OCC`, `BCC`, and `E`
-- global score `P`
-- buffer radius metadata
-- connectivity metadata
-- warnings
+- `status`: `ok`, `empty_prediction`, `empty_reference` or `both_empty`
+- `geometry`: `tolerances` (one `ToleranceMatch` per requested tolerance, in order; `primary` is the first) with precision, recall, F1 and matched/unmatched prediction and reference voxel counts; `distances` (`DistanceSummary`, µm) or `None`; reasons when unavailable
+- `topology`: reference and prediction `BettiNumbers` (`beta_0`, `beta_1`, `beta_2`, Euler characteristic), `comparison(k)` and `betti_count_agreement`
+- `endpoints`: reference and prediction endpoint counts with signed and absolute difference
+- `config`: requested and µm tolerances, connectivity and metric definitions
+- `metadata`: paths, shape, spacing and affine in µm, source units, foreground voxel counts
+- `warnings`
+
+There is no combined score. The v1 fields (`TP`, `FP`, `FN`, `Cp`, `Cr`, `OCC`, `BCC`, `E`, `P`) were removed after v0.6.0.
 
 For metric details, see [Evaluation](evaluation.md).
 

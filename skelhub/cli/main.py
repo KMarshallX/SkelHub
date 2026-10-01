@@ -339,14 +339,33 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         "--buffer-radius",
         required=True,
         type=float,
-        help="Buffer dilation radius used by the geometry-preservation metric.",
+        nargs="+",
+        metavar="RADIUS",
+        help=(
+            "One or more geometry tolerances, each reported separately; the first is primary. "
+            "Zero means exact voxel-centre matching."
+        ),
     )
     eval_parser.add_argument(
         "--buffer-radius-unit",
         choices=("voxels", "um"),
         default="voxels",
-        help="Unit for --buffer-radius. Use 'um' for physical micrometers.",
+        help=(
+            "Unit for --buffer-radius. 'voxels' is converted to um and needs isotropic spacing; "
+            "use 'um' on anisotropic grids."
+        ),
     )
+    for role, name in (("pred", "--pred"), ("ref", "--ref")):
+        eval_parser.add_argument(
+            f"--{role}-spatial-unit",
+            choices=("meter", "mm", "um", "micron"),
+            default=None,
+            help=(
+                f"Unit of the stored spacing/affine values in {name}, used only when its header unit is "
+                "'unknown' ('micron' = 'um'). It labels the existing numbers; it does not set new spacing "
+                "and cannot override a known header unit. Separate from --buffer-radius-unit."
+            ),
+        )
     eval_parser.add_argument(
         "--json-output",
         help="Optional path to write a structured JSON evaluation report.",
@@ -437,6 +456,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 args.ref,
                 buffer_radius=args.buffer_radius,
                 buffer_radius_unit=args.buffer_radius_unit,
+                pred_spatial_unit=args.pred_spatial_unit,
+                ref_spatial_unit=args.ref_spatial_unit,
                 log=print if args.verbose else None,
             )
             print(format_evaluation_report(result, verbose=args.verbose))
