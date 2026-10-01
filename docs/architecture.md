@@ -12,7 +12,7 @@ Current implementation details:
 - `skelhub.core.models` defines `VolumeData`, `SkeletonResult`, `GraphResult`, and `EvaluationResult`.
 - `skelhub.core.registry` registers backends by algorithm name.
 - `skelhub.api` is the framework orchestration layer that loads inputs, dispatches to a backend, writes outputs, and routes evaluation requests.
-- `skelhub.evaluation` is intentionally separated into validation, geometry, morphology, reporting, and orchestration helpers so voxel-based evaluation stays decoupled from backend internals and graphification.
+- `skelhub.evaluation` is intentionally separated into validation (inputs, units, affines, tolerances), geometry, topology, endpoints, reporting, and orchestration helpers so voxel-based evaluation stays decoupled from backend internals and graphification. `morphology.py` (v1 `OCC`/`BCC`/`E`) was removed; its endpoint count moved to `endpoints.py`.
 - `skelhub.visualization` contains the optional PyVista-based GraphML/NIfTI viewer used by `skelhub graphviz`. Graph nodes and optional edge paths are normalized into world-space viewer data during loading, while rendering remains independent of GraphML backend details. Its legacy `graph_viewer` import path is kept as a compatibility facade, while focused modules group constants, typed models, loading, session state, scene rendering, layout, camera behavior, controls, interaction, and launcher entrypoints.
 - `skelhub.gui` is an optional PySide6 desktop layer for Graph Tools. It calls reusable postprocessing services and keeps topology analysis, graphgen caching, and report writing separate from widgets. `skelhub gui` loads the optional dependencies only at launch. It is under active development and separate from `skelhub graphviz`; see [GUI](GUI.md).
 - The EDT Heat tab is split across the layers:
@@ -34,7 +34,7 @@ Compatibility notes:
 
 - The unified run path now supports multiple algorithms, including `mcp`, `lee94`, `laplacian`, and `l1_skeleton`, through the same registry-driven CLI and API route.
 - The unified evaluation path currently operates on paired binary skeleton volumes and remains purely voxel-based; it does not depend on graph-generation code yet or backend-specific result internals.
-- The evaluation modules are structured so a future `SkeletonResult` wrapper can reuse the same array-level evaluator rather than reimplementing metrics.
+- File, array and `SkeletonResult` evaluation entrypoints validate into one internal volume type and share the same metric code.
 - The original top-level MCP modules remain in place for compatibility and traceability while the framework package becomes the primary path.
 - Graph-native backends such as `laplacian` must adapt to `SkeletonResult.skeleton` by rasterizing their internal graph output; optional graph files remain backend extras rather than replacing the common volume contract.
 
