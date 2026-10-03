@@ -18,6 +18,7 @@ from skelhub.api import (
 from skelhub.visualization import GraphVisualizationError
 from skelhub.core import list_backends
 from skelhub.evaluation import format_evaluation_report, write_evaluation_json
+from skelhub.evaluation.validation import SELECTABLE_SPATIAL_UNITS
 
 
 class _SkelHubHelpFormatter(argparse.ArgumentDefaultsHelpFormatter):
@@ -355,14 +356,22 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
             "use 'um' on anisotropic grids."
         ),
     )
-    for role, name in (("pred", "--pred"), ("ref", "--ref")):
+    eval_parser.add_argument(
+        "--foreground",
+        default=None,
+        help=(
+            "Optional shared binary foreground mask NIfTI on the skeletons' grid. Adds the foreground "
+            "EDT-sum agreement; without it that metric is not computed."
+        ),
+    )
+    for role, name in (("pred", "--pred"), ("ref", "--ref"), ("foreground", "--foreground")):
         eval_parser.add_argument(
             f"--{role}-spatial-unit",
-            choices=("meter", "mm", "um", "micron"),
+            choices=SELECTABLE_SPATIAL_UNITS,
             default=None,
             help=(
                 f"Unit of the stored spacing/affine values in {name}, used only when its header unit is "
-                "'unknown' ('micron' = 'um'). It labels the existing numbers; it does not set new spacing "
+                "'unknown'. It labels the existing numbers; it does not set new spacing "
                 "and cannot override a known header unit. Separate from --buffer-radius-unit."
             ),
         )
@@ -450,6 +459,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "evaluate":
+        if args.foreground_spatial_unit is not None and args.foreground is None:
+            parser.exit(status=2, message="skelhub evaluate: error: --foreground-spatial-unit requires --foreground.\n")
         try:
             result = evaluate_prediction_path(
                 args.pred,
@@ -458,6 +469,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 buffer_radius_unit=args.buffer_radius_unit,
                 pred_spatial_unit=args.pred_spatial_unit,
                 ref_spatial_unit=args.ref_spatial_unit,
+                foreground_path=args.foreground,
+                foreground_spatial_unit=args.foreground_spatial_unit,
                 log=print if args.verbose else None,
             )
             print(format_evaluation_report(result, verbose=args.verbose))

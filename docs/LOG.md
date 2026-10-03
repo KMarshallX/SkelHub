@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-10-03 16:16 AEST — Optional foreground EDT-sum agreement; cm/nm unit declarations (schema 2.1)
+
+- **What changed**:
+  - New optional metric, **Foreground EDT-sum Agreement**: one full-volume EDT of a shared binary foreground mask (µm), sampled at every prediction and reference skeleton voxel. Per skeleton: EDT sum, mean EDT, voxel count, outside-mask count and fraction. Comparison: signed and absolute relative difference of the sums, as fractions of the reference sum.
+  - Inputs: `--foreground` / `--foreground-spatial-unit` (CLI); `foreground_path` / `foreground_spatial_unit` (`evaluate_prediction_path`, `evaluate_skeleton_files`); `foreground_mask` (`evaluate_skeleton_volumes`); `foreground` / `foreground_spatial_unit` (`evaluate_skeleton_result`). A unit without a mask is rejected.
+  - Units: declarations are now `cm`, `mm`, `um`, `nm` (CLI choices and GUI selections for all three inputs; GUI shows µm). Headers still read as metre, mm and micron (→ `um`). Python keeps the legacy `meter` / `micron` spellings; the CLI no longer offers them.
+  - Reports: terminal section after geometry displacement (also non-verbose), percentages for relative differences and outside fractions; JSON `foreground_edt_agreement` (null without a mask) with its own definition id `skelhub-foreground-edt-sum-v1`, boundary policy and mask provenance; per-field `unavailable` reasons. `schema_version` 2.0 → 2.1; 2.0 fields and `skelhub-voxel-v2` unchanged.
+  - GUI Evaluate tab: optional **Shared foreground mask** row with Clear, unit selector and header details; new results section; mask path, file identity and declared unit are part of `EvaluationRequest`, so adding, changing, clearing, editing on disk or re-declaring the mask marks results outdated. Each input's header details now sit on its spatial-unit line, which keeps **Evaluate** visible at 1366×768 with three inputs.
+- **Files**:
+  - Added: `skelhub/evaluation/foreground_edt.py`.
+  - Modified: `skelhub/core/models.py`, `skelhub/core/__init__.py` (`ForegroundEdtSummary`, `ForegroundMaskInfo`, `ForegroundEdtAgreement`, `EvaluationResult.foreground_edt`, schema 2.1); `skelhub/evaluation/validation.py` (unit tables, `prepare_foreground_mask`, `validate_foreground_grid`); `skelhub/evaluation/evaluator.py`; `skelhub/evaluation/reporting.py`; `skelhub/api.py`; `skelhub/cli/main.py`; `skelhub/gui/evaluate_tab.py`; `skelhub/gui/services.py` (non-3D preview message no longer says "Skeleton").
+  - Docs: `docs/evaluation.md`, `docs/GUI.md`, `docs/StructuredOutput.md`, `docs/API.md`, `docs/architecture.md`, `README.md`.
+- **Decisions and assumptions**:
+  - The mask goes through the skeleton validation (binary, 3D, affine, orthogonality, header spacing, units), then all-zero and all-one masks are rejected; an invalid mask rejects the run.
+  - EDT uses the reference spacing in µm (all grids are already validated equal). No padding, no crop; foreground on any image face adds a warning.
+  - Outside-mask skeleton voxels sample 0 and stay in sums and denominators, with a warning per skeleton.
+  - Reference sum 0 gives null relative differences with a reason that says whether the reference is empty or lies outside the mask.
+  - `metadata.source_spatial_units` still records the raw header label (`micron`); the effective unit is `um`. Mask provenance lives in the new JSON block, so existing `metadata` and `config` are unchanged for every run.
+  - Foreground warnings appear in `EvaluationResult.warnings` and again in `foreground_edt.warnings` (shown in the GUI section).
+  - A known header unit that is not a choice (metres) is shown as the locked dropdown's placeholder rather than added as an item.
+- **Tests**:
+  - New `tests/test_evaluation_foreground_edt.py` (42): analytic anisotropic box distances; identical, fewer-voxel, off-centre and equal-sum-but-different skeletons; outside-mask samples; empty and zero-sum cases; boundary-touching mask without padding; skeleton-crop counterexample; no-mask parity with masked runs; invalid masks and grid mismatches; cm/mm/um/nm grids with translation (files and arrays); mixed declarations; metre/mm/micron headers; unknown and conflicting mask units; legacy spellings; array/file/`SkeletonResult`/CLI parity; JSON schema, null reasons and provenance; terminal order and percentages.
+  - `tests/test_gui_evaluate.py` +13 (unit choices, optional mask, API capture on the worker thread, results rendering, unavailable values, stale results, invalid and mismatched masks, canonical export); layout check covers the mask rows.
+  - Updated for intended changes: schema `2.1`, CLI unit choices, `unavailable` gains `foreground_edt_agreement` for no-mask runs.
+  - Full suite: 428 passed. Layout checked with offscreen screenshots at 1366×768 and 850×560.
+- **Limitations and risks**:
+  - The full-volume EDT costs about 50 bytes per voxel at peak (measured ≈ 0.63 GB extra for 300×300×150; ≈ 1.1 s). It cannot be cropped.
+  - Masks touching the image boundary can overestimate clearance there; this is warned, not corrected.
+  - The sum depends on sampling, orientation and resolution, and is not a branch-length integral. Equal sums do not show spatial or topological agreement.
+  - CLI change: `--*-spatial-unit micron` must become `um`. Files whose unknown-unit values are in metres can no longer be declared on the CLI (no `m` choice); Python's legacy `meter` still works.
+
 ## 2026-10-01 23:07 AEST — Add an Evaluate tab to `skelhub gui`
 
 - **What changed**:

@@ -39,7 +39,7 @@ Graph extraction should stay in postprocessing unless a backend is naturally gra
 
 ## EvaluationResult
 
-`EvaluationResult` records voxel-based evaluation output (schema `2.0`).
+`EvaluationResult` records voxel-based evaluation output (schema `2.1`).
 
 It includes:
 
@@ -47,6 +47,7 @@ It includes:
 - `geometry`: `tolerances` (one `ToleranceMatch` per requested tolerance, in order; `primary` is the first) with precision, recall, F1 and matched/unmatched prediction and reference voxel counts; `distances` (`DistanceSummary`, µm) or `None`; reasons when unavailable
 - `topology`: reference and prediction `BettiNumbers` (`beta_0`, `beta_1`, `beta_2`, Euler characteristic), `comparison(k)` and `betti_count_agreement`
 - `endpoints`: reference and prediction endpoint counts with signed and absolute difference
+- `foreground_edt`: `ForegroundEdtAgreement` (reference and prediction `ForegroundEdtSummary`, `ForegroundMaskInfo` provenance, signed and absolute relative difference, warnings), or `None` when no foreground mask was supplied (`foreground_edt_unavailable_reason`)
 - `config`: requested and µm tolerances, connectivity and metric definitions
 - `metadata`: paths, shape, spacing and affine in µm, source units, foreground voxel counts
 - `warnings`

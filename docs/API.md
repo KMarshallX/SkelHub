@@ -86,7 +86,9 @@ from skelhub.api import evaluate_skeleton_result
 evaluation = evaluate_skeleton_result(result, reference_volume, input_volume=volume, buffer_radius=[1, 2])
 ```
 
-If a NIfTI header's unit is `unknown`, declare it with `pred_spatial_unit="mm"` / `ref_spatial_unit="mm"` (also accepted by `evaluate_skeleton_result`). A declaration cannot override a known header unit.
+If a NIfTI header's unit is `unknown`, declare it with `pred_spatial_unit="mm"` / `ref_spatial_unit="mm"` (also accepted by `evaluate_skeleton_result`). Declared units are `cm`, `mm`, `um` or `nm`; the legacy `meter` and `micron` still work. A declaration cannot override a known header unit.
+
+Pass `foreground_path="mask.nii.gz"` (or `foreground=` a `VolumeData` for `evaluate_skeleton_result`) to add the optional foreground EDT-sum agreement, read as `evaluation.foreground_edt`. `foreground_spatial_unit=` labels the mask's unknown header unit.
 
 There is no combined score. See [Evaluation](evaluation.md) for formulas and input rules.
 

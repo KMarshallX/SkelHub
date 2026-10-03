@@ -18,7 +18,7 @@ Current status:
 
 - Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
 - CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`, `skelhub gui`
-- Evaluation: v2 metrics include voxel-based coverage (precision/recall/F1 per tolerance), displacement, Betti-number topology and endpoint diagnostics for paired 3D binary skeleton volumes
+- Evaluation: v2 metrics include voxel-based coverage (precision/recall/F1 per tolerance), displacement, Betti-number topology, endpoint diagnostics and an optional foreground EDT-sum agreement (with a shared foreground mask) for paired 3D binary skeleton volumes
 - Visualization: PyVista-based viewer for GraphML graphs with selectable straight,
   continuous-centreline, or voxel-path edges, plus binary NIfTI volumes
 

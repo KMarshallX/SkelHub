@@ -156,7 +156,7 @@ def inspect_nifti_header(path: str) -> NiftiHeaderPreview:
         return NiftiHeaderPreview(path=text, file_key=key, error=f"Unable to read NIfTI header: {exc}")
     if len(shape) != 3:
         return NiftiHeaderPreview(path=text, file_key=key, shape=shape, header_unit=header_unit,
-                                  error=f"Skeleton must be a 3D volume; got shape {shape}.")
+                                  error=f"Expected a 3D volume; got shape {shape}.")
     spacing = None
     if affine.shape == (4, 4) and np.isfinite(affine).all():
         spacing = tuple(float(value) for value in np.linalg.norm(affine[:3, :3], axis=0))

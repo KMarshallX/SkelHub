@@ -41,7 +41,8 @@ class SkeletonResult:
     graph: GraphResult | None = None
 
 
-EVALUATION_SCHEMA_VERSION = "2.0"
+EVALUATION_SCHEMA_VERSION = "2.1"
+FOREGROUND_EDT_NO_MASK_REASON = "No foreground mask supplied"
 
 
 @dataclass(slots=True)
@@ -144,11 +145,60 @@ class TopologyResult:
 
 
 @dataclass(slots=True)
+class ForegroundEdtSummary:
+    """Foreground EDT sampled at every voxel of one skeleton, in micrometres.
+
+    Skeleton voxels outside the mask sample zero and stay in the sum and the
+    mean's denominator. ``mean_edt_um`` and ``outside_mask_fraction`` are
+    ``None`` for an empty skeleton; ``unavailable_reason`` then says why.
+    """
+
+    edt_sum_um: float
+    skeleton_voxels: int
+    outside_mask_voxels: int
+    mean_edt_um: float | None = None
+    outside_mask_fraction: float | None = None
+    unavailable_reason: str | None = None
+
+
+@dataclass(slots=True)
+class ForegroundMaskInfo:
+    """Provenance of the shared foreground mask used for the EDT."""
+
+    path: str | None
+    header_spatial_unit: str | None
+    effective_spatial_unit: str
+    spatial_unit_source: str
+    foreground_voxels: int
+    touches_image_boundary: bool
+
+
+@dataclass(slots=True)
+class ForegroundEdtAgreement:
+    """Foreground EDT-sum agreement between prediction and reference.
+
+    Relative differences are fractions of the reference sum:
+    ``(prediction - reference) / reference`` and its absolute value. Both are
+    ``None`` when the reference sum is zero. Matching sums do not show spatial
+    or topological agreement.
+    """
+
+    reference: ForegroundEdtSummary
+    prediction: ForegroundEdtSummary
+    mask: ForegroundMaskInfo
+    signed_relative_difference: float | None = None
+    absolute_relative_difference: float | None = None
+    relative_difference_unavailable_reason: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class EvaluationResult:
-    """Standardized voxel-based evaluation result (schema 2.0).
+    """Standardized voxel-based evaluation result (schema 2.1).
 
     ``status`` is one of ``ok``, ``empty_prediction``, ``empty_reference`` or
     ``both_empty``. There is no combined quality score by design.
+    ``foreground_edt`` is ``None`` when no foreground mask was supplied.
     """
 
     message: str
@@ -162,3 +212,9 @@ class EvaluationResult:
     config: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    foreground_edt: ForegroundEdtAgreement | None = None
+
+    @property
+    def foreground_edt_unavailable_reason(self) -> str | None:
+        """Why the foreground EDT-sum agreement is missing, or ``None`` when it was computed."""
+        return FOREGROUND_EDT_NO_MASK_REASON if self.foreground_edt is None else None

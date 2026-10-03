@@ -1,4 +1,7 @@
-"""Evaluate tab: compare a predicted skeleton NIfTI with a reference using the evaluation API."""
+"""Evaluate tab: compare a predicted skeleton NIfTI with a reference using the evaluation API.
+
+An optional shared foreground mask adds the foreground EDT-sum agreement.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,9 +18,12 @@ from PySide6.QtWidgets import (
 
 from skelhub.api import evaluate_prediction_path
 from skelhub.core import EvaluationResult
+from skelhub.core import ForegroundEdtAgreement
 from skelhub.evaluation import write_evaluation_json
+from skelhub.evaluation.reporting import FOREGROUND_EDT_NOT_COMPUTED, FOREGROUND_EDT_TITLE
 from skelhub.evaluation.validation import (
-    CANONICAL_SPATIAL_UNITS, UNKNOWN_SPATIAL_UNITS, normalize_tolerances, resolve_spatial_unit, unit_factor_to_um,
+    HEADER_SPATIAL_UNITS, SELECTABLE_SPATIAL_UNITS, UNKNOWN_SPATIAL_UNITS, normalize_tolerances, resolve_spatial_unit,
+    unit_factor_to_um,
 )
 
 from .edt_tab import NIFTI_FILTER, OUTDATED_COLOR, HelpIcon
@@ -26,8 +32,9 @@ from .services import NiftiHeaderPreview, file_identity, inspect_nifti_header
 
 Launch = Callable[[str, Callable, Callable[[object], None]], None]
 
-# Display label -> backend value; "micron" headers map onto the µm entry.
-SPATIAL_UNIT_CHOICES = (("µm", "um"), ("mm", "mm"), ("metres", "meter"))
+# Display labels for declarable units and for known header units; "micron" headers map onto the µm entry.
+UNIT_LABELS = {"cm": "cm", "mm": "mm", "um": "µm", "nm": "nm", "meter": "metres"}
+SPATIAL_UNIT_CHOICES = tuple((UNIT_LABELS[unit], unit) for unit in SELECTABLE_SPATIAL_UNITS)
 TOLERANCE_UNIT_CHOICES = (("µm", "um"), ("voxels", "voxels"))
 UNIT_PLACEHOLDER = "Select spatial unit…"
 FROM_HEADER = "From NIfTI header."
@@ -37,8 +44,18 @@ UNIT_HELP = (
     "<p>A spatial-unit selection labels the existing spacing and coordinate values. "
     "It does not change the voxel spacing.</p>"
     "<p>Stored spacing 0.05, selected mm → 50 µm<br>Stored spacing 50, selected µm → 50 µm<br>"
-    "Stored spacing 1, selected µm → 1 µm</p>"
-    "<p>Known header units are used as they are and cannot be changed here. The input files are never modified.</p>"
+    "Stored spacing 1, selected µm → 1 µm<br>Stored spacing 0.005, selected cm → 50 µm</p>"
+    "<p>Known header units (metres, mm, µm) are used as they are and cannot be changed here. "
+    "The input files are never modified.</p>"
+)
+FOREGROUND_TITLE = "Shared foreground mask"
+FOREGROUND_OPTIONAL = "Optional. Adds the foreground EDT-sum agreement; leave empty to skip it."
+FOREGROUND_HELP = (
+    "<p>One binary mask (0/1) for both skeletons, on the same grid. One Euclidean distance transform of the "
+    "whole mask is sampled at every prediction and reference skeleton voxel and summed, in µm. Voxels outside "
+    "the mask count as zero.</p>"
+    "<p>Matching sums do not show spatial or topological agreement: voxel count and clearance can compensate. "
+    "Sampling, orientation and resolution change the sum; it is not a branch-length integral.</p>"
 )
 TOLERANCE_PLACEHOLDER = "e.g. 50, 100"
 TOLERANCE_RULE = "Each tolerance is reported separately. The first is primary."
@@ -56,7 +73,8 @@ OUTDATED_TEXT = "Results are outdated — run evaluation again."
 RUNNING_TEXT = "Evaluation running — the results below are from the previous run."
 FAILED_RUN_TEXT = "Evaluation rejected or failed. Review the warning and run log."
 FAILED_TEXT = "The last evaluation failed. The results shown are from an earlier run and are outdated."
-FLAG_NOTE = "(--pred-spatial-unit and --ref-spatial-unit in these warnings are the Spatial unit selections above.)"
+FLAG_NOTE = ("(--pred-spatial-unit, --ref-spatial-unit and --foreground-spatial-unit in these warnings are the "
+             "Spatial unit selections above.)")
 NOT_AVAILABLE = "N/A"
 PREVIEW_DELAY_MS = 400
 STATUS_LABELS = {
@@ -105,6 +123,9 @@ class EvaluationRequest:
     ref_spatial_unit: str | None
     tolerances: tuple[float, ...]
     tolerance_unit: str
+    foreground_path: str | None = None
+    foreground_key: tuple[str, int, int] | None = None
+    foreground_spatial_unit: str | None = None
 
 
 def run_evaluation(request: EvaluationRequest, progress: Callable[[int | None, str], None]) -> EvaluationResult:
@@ -116,15 +137,20 @@ def run_evaluation(request: EvaluationRequest, progress: Callable[[int | None, s
         buffer_radius_unit=request.tolerance_unit,
         pred_spatial_unit=request.pred_spatial_unit,
         ref_spatial_unit=request.ref_spatial_unit,
+        foreground_path=request.foreground_path,
+        foreground_spatial_unit=request.foreground_spatial_unit,
         log=lambda message: progress(None, f"Evaluate: {message}"),
     )
 
 
 class InputSide:
-    """One input file row with its spatial-unit selector and header preview."""
+    """One input file row with its spatial-unit selector and header preview.
 
-    def __init__(self, role: str, title: str, row: QWidget, on_change: Callable[[], None]):
-        self.role, self.title, self.row = role, title, row
+    An ``optional`` input with an empty path is ready and is not evaluated.
+    """
+
+    def __init__(self, role: str, title: str, row: QWidget, on_change: Callable[[], None], *, optional: bool = False):
+        self.role, self.title, self.row, self.optional = role, title, row, optional
         self._on_change = on_change
         self.preview: NiftiHeaderPreview | None = None
         self.unit_combo = QComboBox()
@@ -148,16 +174,22 @@ class InputSide:
         self.timer.timeout.connect(self.inspect)
         row.changed.connect(self.path_changed)
         row.edit.editingFinished.connect(self.inspect_if_due)
-        self.clear("Select a .nii or .nii.gz file.")
+        self.clear(self._empty_message())
+
+    def _empty_message(self) -> str:
+        return FOREGROUND_OPTIONAL if self.optional else "Select a .nii or .nii.gz file."
 
     def unit_row(self) -> QWidget:
+        """Unit selector, its note and the header details on one line (details wrap when narrow)."""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        layout.addWidget(self.unit_combo)
-        layout.addWidget(self.unit_help)
-        layout.addWidget(self.unit_note, 1)
+        layout.addWidget(self.unit_combo, 0, Qt.AlignTop)
+        layout.addWidget(self.unit_help, 0, Qt.AlignTop)
+        layout.addWidget(self.unit_note, 0, Qt.AlignVCenter)
+        layout.addSpacing(6)
+        layout.addWidget(self.details, 1, Qt.AlignVCenter)
         return widget
 
     # ----- metadata --------------------------------------------------------------
@@ -166,7 +198,7 @@ class InputSide:
 
     def path_changed(self) -> None:
         """Forget the old file's metadata and unit choice at once, then re-read after a pause."""
-        self.clear("Reading header…" if self.path() else "Select a .nii or .nii.gz file.")
+        self.clear("Reading header…" if self.path() else self._empty_message())
         self.timer.start()
         self._on_change()
 
@@ -188,9 +220,13 @@ class InputSide:
         self.unit_combo.blockSignals(True)
         self.unit_combo.setCurrentIndex(-1)
         self.unit_combo.setEnabled(False)
+        self.unit_combo.setPlaceholderText(UNIT_PLACEHOLDER)
         known = self.known_header_unit()
         if known is not None:
-            self.unit_combo.setCurrentIndex(self.unit_combo.findData(known))
+            index = self.unit_combo.findData(known)
+            self.unit_combo.setCurrentIndex(index)
+            if index < 0:  # a known header unit that is not a declaration choice, such as metres
+                self.unit_combo.setPlaceholderText(UNIT_LABELS.get(known, known))
         elif self.header_is_unknown():
             self.unit_combo.setEnabled(True)
         self.unit_combo.blockSignals(False)
@@ -202,6 +238,7 @@ class InputSide:
         self.unit_combo.blockSignals(True)
         self.unit_combo.setCurrentIndex(-1)
         self.unit_combo.setEnabled(False)
+        self.unit_combo.setPlaceholderText(UNIT_PLACEHOLDER)
         self.unit_combo.blockSignals(False)
         self.unit_note.setText("")
         self.unit_note.setStyleSheet("")
@@ -216,7 +253,7 @@ class InputSide:
     def known_header_unit(self) -> str | None:
         if self.preview is None or self.preview.error is not None:
             return None
-        return CANONICAL_SPATIAL_UNITS.get(self.preview.header_unit)
+        return HEADER_SPATIAL_UNITS.get(self.preview.header_unit)
 
     def header_is_unknown(self) -> bool:
         return (self.preview is not None and self.preview.error is None
@@ -232,7 +269,7 @@ class InputSide:
     def problem(self) -> str | None:
         """Why this input cannot be evaluated yet, or None when it is ready."""
         if not self.path():
-            return f"Select the {self.title.lower()}."
+            return None if self.optional else f"Select the {self.title.lower()}."
         if self.preview is None:
             return f"Reading the {self.title.lower()} header…"
         if self.preview.error is not None:
@@ -297,7 +334,7 @@ class InputSide:
 
     @staticmethod
     def _unit_label(value: str) -> str:
-        return {choice: label for label, choice in SPATIAL_UNIT_CHOICES}.get(value, value)
+        return UNIT_LABELS.get(value, value)
 
 
 class EvaluateTab(QWidget):
@@ -344,10 +381,24 @@ class EvaluateTab(QWidget):
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.pred = InputSide("pred", "Prediction skeleton", path_row(file_filter=NIFTI_FILTER), self._inputs_changed)
         self.ref = InputSide("ref", "Reference skeleton", path_row(file_filter=NIFTI_FILTER), self._inputs_changed)
+        self.foreground = InputSide("foreground", FOREGROUND_TITLE, path_row(file_filter=NIFTI_FILTER),
+                                    self._inputs_changed, optional=True)
+        self.sides = (self.pred, self.ref, self.foreground)
         for side in (self.pred, self.ref):
             form.addRow(f"{side.title} NIfTI", side.row)
             form.addRow("Spatial unit", side.unit_row())
-            form.addRow("", side.details)
+        foreground_row = QWidget()
+        row_layout = QHBoxLayout(foreground_row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        row_layout.addWidget(self.foreground.row, 1)
+        self.foreground_clear = QPushButton("Clear")
+        self.foreground_clear.setToolTip("Remove the foreground mask; the EDT-sum agreement is then not computed.")
+        self.foreground_clear.clicked.connect(self.foreground.row.edit.clear)
+        row_layout.addWidget(self.foreground_clear)
+        row_layout.addWidget(HelpIcon(FOREGROUND_HELP))
+        form.addRow(f"{FOREGROUND_TITLE} NIfTI", foreground_row)
+        form.addRow("Spatial unit", self.foreground.unit_row())
         return box
 
     def _build_settings(self) -> QGroupBox:
@@ -434,6 +485,7 @@ class EvaluateTab(QWidget):
         column.addWidget(self._section("Supporting voxel counts", self.counts_table))
         self.distance_table = self._table(["Distance", "Value (µm)"])
         column.addWidget(self._section("Geometry displacement", self.distance_table))
+        column.addWidget(self._build_foreground_results())
         self.topology_table = self._table(["Measure", "Reference", "Prediction", "Signed difference", "Absolute error"])
         self.betti_label = QLabel("Betti-count agreement: —")
         self.betti_help = HelpIcon(BETTI_HELP)
@@ -456,6 +508,29 @@ class EvaluateTab(QWidget):
         link.setObjectName("sectionDescription")
         column.addWidget(link)
         return box
+
+    def _build_foreground_results(self) -> QGroupBox:
+        self.foreground_status = QLabel(FOREGROUND_EDT_NOT_COMPUTED)
+        self.foreground_status.setObjectName("sectionDescription")
+        self.foreground_status.setWordWrap(True)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.foreground_status, 1)
+        self.foreground_help = HelpIcon(FOREGROUND_HELP)
+        status_row.addWidget(self.foreground_help)
+        self.foreground_table = self._table([
+            "Skeleton", "EDT sum (µm)", "Mean EDT (µm)", "Voxels", "Outside mask", "Outside fraction",
+        ])
+        self.foreground_table.hide()
+        self.foreground_difference = QLabel()
+        self.foreground_difference.setWordWrap(True)
+        self.foreground_difference.hide()
+        self.foreground_notes = QLabel()
+        self.foreground_notes.setWordWrap(True)
+        self.foreground_notes.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.foreground_notes.setStyleSheet(f"color: {OUTDATED_COLOR};")
+        self.foreground_notes.hide()
+        return self._section(FOREGROUND_EDT_TITLE, status_row, self.foreground_table, self.foreground_difference,
+                             self.foreground_notes)
 
     @staticmethod
     def _card(caption: str) -> tuple[QFrame, QLabel]:
@@ -515,7 +590,7 @@ class EvaluateTab(QWidget):
 
     def flush_previews(self) -> None:
         """Read any header whose debounce timer is still pending (used before running)."""
-        for side in (self.pred, self.ref):
+        for side in self.sides:
             side.inspect_if_due()
 
     def tolerance_values(self) -> tuple[tuple[float, ...] | None, str | None]:
@@ -542,7 +617,7 @@ class EvaluateTab(QWidget):
         return str(self.tolerance_unit_combo.currentData())
 
     def readiness_problem(self) -> str | None:
-        for side in (self.pred, self.ref):
+        for side in self.sides:
             problem = side.problem()
             if problem is not None:
                 return problem
@@ -555,12 +630,16 @@ class EvaluateTab(QWidget):
             return None
         values, _error = self.tolerance_values()
         pred_key, ref_key = file_identity(self.pred.path()), file_identity(self.ref.path())
-        if pred_key is None or ref_key is None or values is None:
+        foreground_path = self.foreground.path() or None
+        foreground_key = file_identity(foreground_path) if foreground_path else None
+        if pred_key is None or ref_key is None or values is None or (foreground_path and foreground_key is None):
             return None
         return EvaluationRequest(
             pred_path=self.pred.path(), ref_path=self.ref.path(), pred_key=pred_key, ref_key=ref_key,
             pred_spatial_unit=self.pred.supplied_unit(), ref_spatial_unit=self.ref.supplied_unit(),
             tolerances=values, tolerance_unit=self.tolerance_unit(),
+            foreground_path=foreground_path, foreground_key=foreground_key,
+            foreground_spatial_unit=self.foreground.supplied_unit() if foreground_path else None,
         )
 
     def result_is_current(self) -> bool:
@@ -570,8 +649,9 @@ class EvaluateTab(QWidget):
         return self.current_request() == self.result_request
 
     def refresh_controls(self) -> None:
-        for side in (self.pred, self.ref):
+        for side in self.sides:
             side.update_labels()
+        self.foreground_clear.setEnabled(bool(self.foreground.row.edit.text()))
         values, error = self.tolerance_values()
         if self.tolerance_edit.text().strip() and error:
             self.tolerance_status.setText(error)
@@ -590,13 +670,17 @@ class EvaluateTab(QWidget):
         if problem is not None:
             self.readiness.setText(problem)
         else:
-            shapes = (self.pred.preview.shape, self.ref.preview.shape)  # type: ignore[union-attr]
-            self.readiness.setText(
-                "Ready to evaluate." if shapes[0] == shapes[1] else
-                f"Shapes differ ({' × '.join(map(str, shapes[0]))} vs {' × '.join(map(str, shapes[1]))}); "
-                "evaluation will be rejected."
-            )
+            self.readiness.setText(self._shape_note())
         self._update_freshness()
+
+    def _shape_note(self) -> str:
+        sides = [side for side in self.sides if side.path() and side.preview is not None]
+        shapes = [side.preview.shape for side in sides]  # type: ignore[union-attr]
+        if len(set(shapes)) <= 1:
+            return "Ready to evaluate."
+        listed = "; ".join(f"{side.title.lower()} {' × '.join(map(str, side.preview.shape))}"  # type: ignore[union-attr]
+                           for side in sides)
+        return f"Shapes differ ({listed}); evaluation will be rejected."
 
     def _update_freshness(self) -> None:
         current = self.result_is_current()
@@ -615,7 +699,7 @@ class EvaluateTab(QWidget):
     def _refresh_changed_files(self) -> bool:
         """Re-read headers of files that changed on disk; True when anything was re-read."""
         changed = False
-        for side in (self.pred, self.ref):
+        for side in self.sides:
             if side.is_stale_on_disk():
                 self._log(f"Evaluate: {side.title} changed on disk; header re-read")
                 side.inspect()
@@ -635,7 +719,10 @@ class EvaluateTab(QWidget):
         tolerances = ", ".join(f"{value:g}" for value in request.tolerances)
         self._log(f"Evaluate: {Path(request.pred_path).name} vs {Path(request.ref_path).name}; "
                   f"tolerances {tolerances} {request.tolerance_unit}")
-        for side, supplied in ((self.pred, request.pred_spatial_unit), (self.ref, request.ref_spatial_unit)):
+        if request.foreground_path:
+            self._log(f"Evaluate: {FOREGROUND_TITLE.lower()} {Path(request.foreground_path).name}")
+        for side, supplied in ((self.pred, request.pred_spatial_unit), (self.ref, request.ref_spatial_unit),
+                               (self.foreground, request.foreground_spatial_unit)):
             if supplied is not None:
                 self._log(f"Evaluate: {side.title} unit supplied as {supplied} (header unit unknown)")
         self.refresh_controls()
@@ -682,7 +769,7 @@ class EvaluateTab(QWidget):
         self.run_label.setToolTip(f"{request.pred_path}\n{request.ref_path}")
         if result.warnings:
             text = "Warnings:\n" + "\n".join(f"• {warning}" for warning in result.warnings)
-            if request.pred_spatial_unit or request.ref_spatial_unit:
+            if request.pred_spatial_unit or request.ref_spatial_unit or request.foreground_spatial_unit:
                 text += f"\n{FLAG_NOTE}"
             self.warnings_label.setText(text)
             self.warnings_label.show()
@@ -717,6 +804,7 @@ class EvaluateTab(QWidget):
              (f"{getattr(distances, field):.3f}", repr(getattr(distances, field)))]
             for label, field in names
         ])
+        self._display_foreground(result.foreground_edt)
         rows = []
         for k, name in ((0, "Connected components, β₀"), (1, "Independent cycles, β₁"), (2, "Enclosed cavities, β₂")):
             comparison = topology.comparison(k)
@@ -731,6 +819,60 @@ class EvaluateTab(QWidget):
             "Endpoints", str(endpoints.reference), str(endpoints.prediction),
             f"{endpoints.signed_difference:+d}", str(endpoints.absolute_error),
         ]])
+
+    def _display_foreground(self, agreement: ForegroundEdtAgreement | None) -> None:
+        """Show the foreground EDT-sum agreement exactly as the result holds it."""
+        computed = agreement is not None
+        for widget in (self.foreground_table, self.foreground_difference):
+            widget.setVisible(computed)
+        if agreement is None:
+            self.foreground_status.setText(FOREGROUND_EDT_NOT_COMPUTED)
+            self.foreground_notes.hide()
+            return
+        mask = agreement.mask
+        source = "from header" if mask.spatial_unit_source == "header" else "user supplied"
+        self.foreground_status.setText(
+            f"Mask: {Path(mask.path).name if mask.path else 'in-memory array'}  ·  "
+            f"units {UNIT_LABELS.get(mask.effective_spatial_unit, mask.effective_spatial_unit)} ({source})  ·  "
+            f"{mask.foreground_voxels} foreground voxels  ·  "
+            f"touches image boundary: {'yes' if mask.touches_image_boundary else 'no'}")
+        self.foreground_status.setToolTip(mask.path or "")
+        rows = []
+        for name, summary in (("Reference", agreement.reference), ("Prediction", agreement.prediction)):
+            reason = summary.unavailable_reason
+            rows.append([
+                name,
+                (f"{summary.edt_sum_um:.6g}", repr(summary.edt_sum_um)),
+                (NOT_AVAILABLE, reason) if summary.mean_edt_um is None else
+                (f"{summary.mean_edt_um:.3f}", repr(summary.mean_edt_um)),
+                str(summary.skeleton_voxels),
+                str(summary.outside_mask_voxels),
+                (NOT_AVAILABLE, reason) if summary.outside_mask_fraction is None else
+                (self._percent(summary.outside_mask_fraction), repr(summary.outside_mask_fraction)),
+            ])
+        self._fill(self.foreground_table, rows)
+        if agreement.signed_relative_difference is None:
+            self.foreground_difference.setText(
+                f"Relative difference: {NOT_AVAILABLE} — {agreement.relative_difference_unavailable_reason}")
+            self.foreground_difference.setToolTip("")
+        else:
+            self.foreground_difference.setText(
+                "Relative difference (prediction − reference) / reference: "
+                f"{self._percent(agreement.signed_relative_difference, signed=True)}  ·  "
+                f"absolute {self._percent(agreement.absolute_relative_difference)}")
+            self.foreground_difference.setToolTip(
+                f"signed {agreement.signed_relative_difference!r}\nabsolute {agreement.absolute_relative_difference!r}")
+        notes = [summary.unavailable_reason for summary in (agreement.reference, agreement.prediction)
+                 if summary.unavailable_reason]
+        notes += agreement.warnings
+        self.foreground_notes.setText("\n".join(f"• {note}" for note in notes))
+        self.foreground_notes.setVisible(bool(notes))
+
+    @staticmethod
+    def _percent(fraction: float | None, *, signed: bool = False) -> str:
+        if fraction is None:
+            return NOT_AVAILABLE
+        return f"{100.0 * fraction:{'+' if signed else ''}.2f}%"
 
     @staticmethod
     def _tolerance_text(tolerance_um: float, requested: float, unit: str) -> str:
@@ -749,8 +891,7 @@ class EvaluateTab(QWidget):
                 item = QTableWidgetItem(text)
                 if tip:
                     item.setToolTip(tip)
-                if column > 0:
-                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                item.setTextAlignment(Qt.AlignCenter)
                 table.setItem(row_index, column, item)
         self._fit_height(table)
 
