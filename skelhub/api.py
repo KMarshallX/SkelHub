@@ -53,12 +53,16 @@ def evaluate_prediction_path(
     buffer_radius_unit: str = "voxels",
     pred_spatial_unit: str | None = None,
     ref_spatial_unit: str | None = None,
+    foreground_path: str | Path | None = None,
+    foreground_spatial_unit: str | None = None,
     log: Callable[[str], None] | None = None,
 ) -> EvaluationResult:
     """Run the framework-level voxel-based evaluation on a prediction/reference pair.
 
     ``buffer_radius`` is one tolerance or a sequence of tolerances; the first is primary.
     ``pred_spatial_unit`` / ``ref_spatial_unit`` label NIfTI headers whose unit is unknown.
+    ``foreground_path`` adds the optional foreground EDT-sum agreement from one shared
+    binary foreground mask; ``foreground_spatial_unit`` labels its unknown header unit.
     """
     return evaluate_skeleton_files(
         str(pred_path),
@@ -67,6 +71,8 @@ def evaluate_prediction_path(
         buffer_radius_unit=buffer_radius_unit,
         pred_spatial_unit=pred_spatial_unit,
         ref_spatial_unit=ref_spatial_unit,
+        foreground_path=None if foreground_path is None else str(foreground_path),
+        foreground_spatial_unit=foreground_spatial_unit,
         log=log,
     )
 

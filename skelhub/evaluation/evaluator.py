@@ -1,7 +1,8 @@
 """Voxel-based evaluation entrypoints for binary 3D skeleton volumes.
 
 Three entrypoints (files, in-memory arrays, ``SkeletonResult``) validate their
-inputs into ``SkeletonVolumeInput`` objects and share one metric path.
+inputs into ``SkeletonVolumeInput`` objects and share one metric path. Each
+accepts an optional shared foreground mask for the foreground EDT-sum agreement.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from skelhub.core import (
 )
 
 from .endpoints import count_endpoints
+from .foreground_edt import compute_foreground_edt_agreement
 from .geometry import (
     PERCENTILE,
     PERCENTILE_METHOD,
@@ -33,14 +35,18 @@ from .geometry import (
 from .topology import BACKGROUND_CONNECTIVITY, FOREGROUND_CONNECTIVITY, compute_betti_numbers
 from .validation import (
     AFFINE_MATCH_FRACTION,
+    FOREGROUND_LABEL,
     RELATIVE_TOLERANCE,
     SkeletonVolumeInput,
     array_affine,
+    header_spatial_unit,
     normalize_tolerances,
+    prepare_foreground_mask,
     prepare_skeleton_nifti,
     prepare_skeleton_volume,
     read_skeleton_nifti,
     require_matching_shapes,
+    validate_foreground_grid,
     validate_matching_inputs,
     volume_input_from_volume_data,
 )
@@ -65,6 +71,8 @@ def evaluate_skeleton_files(
     buffer_radius_unit: str = "voxels",
     pred_spatial_unit: str | None = None,
     ref_spatial_unit: str | None = None,
+    foreground_path: str | Path | None = None,
+    foreground_spatial_unit: str | None = None,
     log: Log = None,
 ) -> EvaluationResult:
     """Evaluate two on-disk binary 3D skeleton NIfTI volumes.
@@ -72,14 +80,31 @@ def evaluate_skeleton_files(
     Units come from each header and the full affines must agree after
     conversion to micrometres. ``pred_spatial_unit`` / ``ref_spatial_unit``
     label headers whose unit is unknown; they cannot override a known unit.
+    ``foreground_path`` is an optional shared binary foreground mask NIfTI on
+    the same grid; ``foreground_spatial_unit`` labels its unknown header unit.
     """
+    _require_foreground_for_unit(foreground_path, foreground_spatial_unit)
     _log(log, "Validating inputs...")
     raw_pred = read_skeleton_nifti(pred_path, label="Prediction skeleton")
     raw_ref = read_skeleton_nifti(ref_path, label="Reference skeleton")
     require_matching_shapes(raw_pred.data.shape, raw_ref.data.shape)
+    raw_foreground = None
+    if foreground_path is not None:
+        raw_foreground = read_skeleton_nifti(foreground_path, label=FOREGROUND_LABEL)
+        _require_foreground_shape(raw_foreground.data.shape, raw_ref.data.shape)
     pred = prepare_skeleton_nifti(raw_pred, label="Prediction skeleton", supplied_unit=pred_spatial_unit, role="pred")
     ref = prepare_skeleton_nifti(raw_ref, label="Reference skeleton", supplied_unit=ref_spatial_unit, role="ref")
-    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log)
+    foreground = None
+    if raw_foreground is not None:
+        foreground = prepare_foreground_mask(
+            raw_foreground.data,
+            raw_foreground.affine,
+            raw_foreground.header_unit,
+            supplied_unit=foreground_spatial_unit,
+            path=raw_foreground.path,
+            header_spacing=raw_foreground.header_spacing,
+        )
+    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log, foreground)
 
 
 def evaluate_skeleton_volumes(
@@ -93,21 +118,28 @@ def evaluate_skeleton_volumes(
     affine: np.ndarray | None = None,
     pred_label: str = "Prediction skeleton",
     ref_label: str = "Reference skeleton",
+    foreground_mask: np.ndarray | None = None,
     log: Log = None,
 ) -> EvaluationResult:
     """Evaluate two in-memory binary 3D skeletons on one shared voxel grid.
 
-    Same-grid contract: both arrays use the same voxel-to-world transform,
-    ``diag(spacing)`` or the explicit ``affine`` (whose column lengths must equal
-    ``spacing``), expressed in ``spacing_unit`` (``mm``, ``um``, ``micron`` or
-    ``meter``).
+    Same-grid contract: both arrays, and the optional binary ``foreground_mask``,
+    use the same voxel-to-world transform, ``diag(spacing)`` or the explicit
+    ``affine`` (whose column lengths must equal ``spacing``), expressed in
+    ``spacing_unit`` (``cm``, ``mm``, ``um`` or ``nm``; legacy ``meter`` and
+    ``micron`` are still accepted).
     """
     _log(log, "Validating inputs...")
     shared_affine = array_affine(spacing, affine)
     require_matching_shapes(np.shape(pred_skel), np.shape(ref_skel))
+    if foreground_mask is not None:
+        _require_foreground_shape(np.shape(foreground_mask), np.shape(ref_skel))
     pred = prepare_skeleton_volume(pred_skel, shared_affine, None, supplied_unit=spacing_unit, label=pred_label)
     ref = prepare_skeleton_volume(ref_skel, shared_affine, None, supplied_unit=spacing_unit, label=ref_label)
-    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log)
+    foreground = None
+    if foreground_mask is not None:
+        foreground = prepare_foreground_mask(foreground_mask, shared_affine, None, supplied_unit=spacing_unit, role=None)
+    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log, foreground)
 
 
 def evaluate_skeleton_result(
@@ -119,6 +151,8 @@ def evaluate_skeleton_result(
     buffer_radius_unit: str = "voxels",
     pred_spatial_unit: str | None = None,
     ref_spatial_unit: str | None = None,
+    foreground: VolumeData | None = None,
+    foreground_spatial_unit: str | None = None,
     log: Log = None,
 ) -> EvaluationResult:
     """Evaluate a backend ``SkeletonResult`` against a reference skeleton volume.
@@ -127,9 +161,14 @@ def evaluate_skeleton_result(
     units define the prediction's grid. ``reference`` uses its own affine and
     header units. ``pred_spatial_unit`` / ``ref_spatial_unit`` label unknown
     (or missing) header units of ``input_volume`` / ``reference``.
+    ``foreground`` is an optional shared binary foreground mask on the same
+    grid; ``foreground_spatial_unit`` labels its unknown (or missing) header unit.
     """
+    _require_foreground_for_unit(foreground, foreground_spatial_unit)
     _log(log, "Validating inputs...")
     require_matching_shapes(np.shape(prediction.skeleton), np.shape(reference.data))
+    if foreground is not None:
+        _require_foreground_shape(np.shape(foreground.data), np.shape(reference.data))
     pred = volume_input_from_volume_data(
         input_volume,
         data=prediction.skeleton,
@@ -140,7 +179,17 @@ def evaluate_skeleton_result(
     ref = volume_input_from_volume_data(
         reference, label="Reference skeleton", supplied_unit=ref_spatial_unit, role="ref"
     )
-    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log)
+    mask = None
+    if foreground is not None:
+        mask = prepare_foreground_mask(
+            foreground.data,
+            foreground.affine,
+            header_spatial_unit(foreground.header),
+            supplied_unit=foreground_spatial_unit,
+            path=foreground.path,
+            header_spacing=foreground.spacing,
+        )
+    return _evaluate_prepared_inputs(pred, ref, buffer_radius, buffer_radius_unit, log, mask)
 
 
 def _evaluate_prepared_inputs(
@@ -149,8 +198,11 @@ def _evaluate_prepared_inputs(
     buffer_radius: Radius,
     buffer_radius_unit: str,
     log: Log,
+    foreground: SkeletonVolumeInput | None = None,
 ) -> EvaluationResult:
     validate_matching_inputs(pred, ref)
+    if foreground is not None:
+        validate_foreground_grid(foreground, pred, ref)
     spacing_um = ref.spacing_um
     tolerances = normalize_tolerances(buffer_radius, buffer_radius_unit, spacing_um)
 
@@ -169,6 +221,20 @@ def _evaluate_prepared_inputs(
         background_connectivity=BACKGROUND_CONNECTIVITY,
     )
     endpoints = CountComparison(reference=count_endpoints(ref.data), prediction=count_endpoints(pred.data))
+
+    foreground_edt = None
+    if foreground is not None:
+        _log(log, "Computing foreground EDT-sum agreement...")
+        foreground_edt = compute_foreground_edt_agreement(
+            foreground.data,
+            pred.data,
+            ref.data,
+            spacing_um,
+            path=foreground.path,
+            header_spatial_unit=foreground.units.header_unit,
+            effective_spatial_unit=foreground.units.effective_unit,
+            spatial_unit_source=foreground.units.source,
+        )
 
     return EvaluationResult(
         message=_message(status, geometry),
@@ -207,9 +273,11 @@ def _evaluate_prepared_inputs(
             "ref_voxels": ref_voxels,
         },
         warnings=[
-            *(volume.units.warning for volume in (pred, ref) if volume.units.warning),
+            *(volume.units.warning for volume in (pred, ref, foreground) if volume is not None and volume.units.warning),
             *_status_warnings(status),
+            *(foreground_edt.warnings if foreground_edt else ()),
         ],
+        foreground_edt=foreground_edt,
     )
 
 
@@ -242,6 +310,22 @@ def _compute_geometry(
         coverage_unavailable_reason=reason,
         distances_unavailable_reason=reason,
     )
+
+
+def _require_foreground_for_unit(foreground: object, foreground_spatial_unit: str | None) -> None:
+    if foreground is None and foreground_spatial_unit is not None:
+        raise ValueError(
+            "A foreground spatial unit was given without a foreground mask "
+            "(--foreground-spatial-unit needs --foreground; Python: foreground_spatial_unit needs a foreground)."
+        )
+
+
+def _require_foreground_shape(foreground_shape, ref_shape) -> None:
+    if tuple(foreground_shape) != tuple(ref_shape):
+        raise ValueError(
+            f"{FOREGROUND_LABEL} and skeletons must have matching shapes. "
+            f"Got foreground={tuple(foreground_shape)}, skeletons={tuple(ref_shape)}."
+        )
 
 
 def _status(pred_voxels: int, ref_voxels: int) -> str:

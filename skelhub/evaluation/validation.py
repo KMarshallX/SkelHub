@@ -18,12 +18,20 @@ from skelhub.core import VolumeData
 
 
 SUPPORTED_RADIUS_UNITS = ("voxels", "um")
-# Accepted spatial-unit names and their canonical form; nibabel reports micrometres as "micron".
-CANONICAL_SPATIAL_UNITS = {"meter": "meter", "mm": "mm", "um": "um", "micron": "um"}
-SPATIAL_UNIT_TO_UM = {"meter": 1_000_000.0, "mm": 1_000.0, "um": 1.0}
+# Units a user can declare (CLI choices and GUI selections).
+SELECTABLE_SPATIAL_UNITS = ("cm", "mm", "um", "nm")
+# Recognized NIfTI header units (nibabel names) and their canonical form.
+HEADER_SPATIAL_UNITS = {"meter": "meter", "mm": "mm", "micron": "um"}
+# Every unit name accepted from Python callers: the selectable units plus the
+# legacy spellings "meter" and "micron" kept for API compatibility.
+CANONICAL_SPATIAL_UNITS = {**{unit: unit for unit in SELECTABLE_SPATIAL_UNITS}, "meter": "meter", "micron": "um"}
+SPATIAL_UNIT_TO_UM = {"meter": 1_000_000.0, "cm": 10_000.0, "mm": 1_000.0, "um": 1.0, "nm": 0.001}
 UNKNOWN_SPATIAL_UNITS = ("unknown", "")
 # NIfTI xyzt_units spatial codes (low three bits); the time unit is irrelevant here.
 _NIFTI_SPATIAL_CODES = {0: "unknown", 1: "meter", 2: "mm", 3: "micron"}
+
+_SELECTABLE_TEXT = ", ".join(SELECTABLE_SPATIAL_UNITS)
+FOREGROUND_LABEL = "Foreground mask"
 
 # Largest |cos angle| between voxel axes still treated as orthogonal.
 SHEAR_TOLERANCE = 1e-5
@@ -114,12 +122,13 @@ def resolve_spatial_unit(
 ) -> ResolvedSpatialUnit:
     """Decide which unit labels the stored spacing and affine values.
 
-    - Known header unit: used as is; a supplied unit must be equivalent.
+    - Known header unit (``meter``, ``mm``, ``micron``): used as is; a supplied
+      unit must be equivalent.
     - Unknown header unit: the supplied unit is used and a warning is recorded.
     - No header (``header_unit=None``): the supplied unit is required, without a warning.
 
     A supplied unit only labels the stored numbers; it never rescales them.
-    ``role`` (``pred`` or ``ref``) names the CLI flag in messages.
+    ``role`` (``pred``, ``ref`` or ``foreground``) names the CLI flag in messages.
     """
     flag = f"--{role}-spatial-unit" if role else "a spatial unit"
     supplied = None
@@ -128,20 +137,20 @@ def resolve_spatial_unit(
         if supplied is None:
             raise ValueError(
                 f"Unsupported spatial unit '{supplied_unit}' supplied for {label}. "
-                f"Expected one of {sorted(CANONICAL_SPATIAL_UNITS)}."
+                f"Expected one of {_SELECTABLE_TEXT} (Python also accepts the legacy 'meter' and 'micron')."
             )
 
     if header_unit is None:
         if supplied is None:
-            raise ValueError(f"{label} needs a spatial unit, one of {sorted(CANONICAL_SPATIAL_UNITS)}.")
+            raise ValueError(f"{label} needs a spatial unit, one of {_SELECTABLE_TEXT}.")
         return ResolvedSpatialUnit(header_unit=None, effective_unit=supplied, source="user")
 
     if header_unit in UNKNOWN_SPATIAL_UNITS:
         if supplied is None:
             hint = (
-                f"Supply {flag} mm or {flag} um (Python: {role}_spatial_unit=...)"
+                f"Supply {flag} (one of {_SELECTABLE_TEXT}, e.g. {flag} mm; Python: {role}_spatial_unit=...)"
                 if role
-                else "Supply a spatial unit"
+                else f"Supply a spatial unit (one of {_SELECTABLE_TEXT})"
             )
             raise ValueError(
                 f"{label} has unknown spatial units. {hint} using the unit of the stored spacing and "
@@ -159,11 +168,11 @@ def resolve_spatial_unit(
         )
         return ResolvedSpatialUnit(header_unit=header_unit, effective_unit=supplied, source="user", warning=warning)
 
-    known = CANONICAL_SPATIAL_UNITS.get(header_unit)
+    known = HEADER_SPATIAL_UNITS.get(header_unit)
     if known is None:
         raise ValueError(
             f"{label} header has unsupported spatial unit '{header_unit}'. "
-            f"Supported: {sorted(CANONICAL_SPATIAL_UNITS)}."
+            f"Supported header units: {sorted(HEADER_SPATIAL_UNITS)}."
         )
     if supplied is not None and supplied != known:
         raise ValueError(
@@ -174,8 +183,8 @@ def resolve_spatial_unit(
 
 
 def unit_factor_to_um(unit: str) -> float:
-    """Micrometres per stored coordinate unit, for any accepted unit name."""
-    return SPATIAL_UNIT_TO_UM[CANONICAL_SPATIAL_UNITS[unit]]
+    """Micrometres per stored coordinate unit, for any accepted declared or header unit name."""
+    return SPATIAL_UNIT_TO_UM[CANONICAL_SPATIAL_UNITS.get(unit) or HEADER_SPATIAL_UNITS[unit]]
 
 
 def prepare_skeleton_volume(
@@ -346,21 +355,86 @@ def array_affine(
 def validate_matching_inputs(pred: SkeletonVolumeInput, ref: SkeletonVolumeInput) -> None:
     """Require the same voxel grid and the same physical voxel-to-world transform."""
     require_matching_shapes(pred.data.shape, ref.data.shape)
+    _require_same_physical_grid(pred, ref, "Prediction and reference skeletons", ("pred", "ref"))
 
-    tolerance = AFFINE_MATCH_FRACTION * min(min(pred.spacing_um), min(ref.spacing_um))
-    difference = np.abs(pred.affine_um[:3] - ref.affine_um[:3])
+
+def prepare_foreground_mask(
+    data: np.ndarray,
+    affine: np.ndarray,
+    header_unit: str | None,
+    *,
+    supplied_unit: str | None = None,
+    role: str | None = "foreground",
+    path: str | None = None,
+    header_spacing: Sequence[float] | None = None,
+) -> SkeletonVolumeInput:
+    """Validate a shared foreground mask with the skeleton rules, then reject constant masks.
+
+    The mask must be binary 3D with a usable affine and resolved units, exactly
+    like a skeleton. An all-zero mask has no foreground and an all-one mask has
+    no observed background, so neither defines a foreground EDT.
+    """
+    mask = prepare_skeleton_volume(
+        data,
+        affine,
+        header_unit,
+        label=FOREGROUND_LABEL,
+        supplied_unit=supplied_unit,
+        role=role,
+        path=path,
+        header_spacing=header_spacing,
+    )
+    if not mask.data.any():
+        raise ValueError(f"{FOREGROUND_LABEL} is all zero; it has no foreground for the EDT.")
+    if mask.data.all():
+        raise ValueError(
+            f"{FOREGROUND_LABEL} is all one; it has no background inside the image, so the EDT is undefined. "
+            "SkelHub does not pad masks."
+        )
+    return mask
+
+
+def validate_foreground_grid(
+    foreground: SkeletonVolumeInput,
+    pred: SkeletonVolumeInput,
+    ref: SkeletonVolumeInput,
+) -> None:
+    """Require the foreground mask to share both skeletons' shape and physical grid."""
+    for skeleton, name, role in ((ref, "reference", "ref"), (pred, "prediction", "pred")):
+        if tuple(foreground.data.shape) != tuple(skeleton.data.shape):
+            raise ValueError(
+                f"{FOREGROUND_LABEL} and {name} skeleton must have matching shapes. "
+                f"Got foreground={tuple(foreground.data.shape)}, {role}={tuple(skeleton.data.shape)}."
+            )
+        _require_same_physical_grid(
+            foreground, skeleton, f"{FOREGROUND_LABEL} and {name} skeleton", ("foreground", role)
+        )
+
+
+def _require_same_physical_grid(
+    first: SkeletonVolumeInput,
+    second: SkeletonVolumeInput,
+    subject: str,
+    roles: tuple[str, str],
+) -> None:
+    tolerance = AFFINE_MATCH_FRACTION * min(min(first.spacing_um), min(second.spacing_um))
+    difference = np.abs(first.affine_um[:3] - second.affine_um[:3])
     if float(difference.max()) > tolerance:
         linear_diff = float(difference[:, :3].max())
-        origin_diff = pred.affine_um[:3, 3] - ref.affine_um[:3, 3]
+        origin_diff = first.affine_um[:3, 3] - second.affine_um[:3, 3]
         raise ValueError(
-            "Prediction and reference skeletons are not on the same physical grid "
+            f"{subject} are not on the same physical grid "
             f"(affines compared in um, tolerance {tolerance:.3g} um). "
-            f"Origin difference pred-ref: {tuple(np.round(origin_diff, 6))} um; "
+            f"Origin difference {roles[0]}-{roles[1]}: {tuple(np.round(origin_diff, 6))} um; "
             f"largest spacing/orientation entry difference: {linear_diff:.6g} um. "
-            f"Prediction units '{pred.units.effective_unit}' (from {pred.units.source}), "
-            f"reference units '{ref.units.effective_unit}' (from {ref.units.source}). "
+            f"{_role_name(roles[0])} units '{first.units.effective_unit}' (from {first.units.source}), "
+            f"{_role_name(roles[1]).lower()} units '{second.units.effective_unit}' (from {second.units.source}). "
             "SkelHub does not register or resample; align the inputs first."
         )
+
+
+def _role_name(role: str) -> str:
+    return {"pred": "Prediction", "ref": "Reference", "foreground": "Foreground"}[role]
 
 
 def normalize_tolerances(
