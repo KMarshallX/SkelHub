@@ -1,11 +1,12 @@
 # Evaluation
 
-SkelHub evaluation is algorithm-agnostic. It compares a predicted skeleton with a reference skeleton on the same voxel grid and reports four groups of measurements separately:
+SkelHub evaluation is algorithm-agnostic. It compares a predicted skeleton with a reference skeleton on the same voxel grid and reports these groups of measurements separately:
 
 1. **Geometry coverage**: precision, recall and F1 at each requested tolerance.
 2. **Geometry displacement**: how far apart the two skeletons are, in µm.
-3. **Topology**: components, cycles and cavities (voxel Betti numbers).
-4. **Endpoint diagnostics**: endpoint counts.
+3. **Foreground EDT-sum agreement** (optional, needs a foreground mask): summed foreground clearance at each skeleton's voxels.
+4. **Topology**: components, cycles and cavities (voxel Betti numbers).
+5. **Endpoint diagnostics**: endpoint counts.
 
 There is no combined score and no pass/fail verdict. For Python usage, see [API](API.md). For result fields, see [Structured Output](StructuredOutput.md).
 
@@ -14,6 +15,7 @@ The voxel evaluation that came before (schema v1: `Cp`, `Cr`, `OCC`, `BCC`, `E`,
 ## Input scope
 
 - Paired 3D binary skeleton volumes, values in $\{0, 1\}$.
+- Optionally, one binary foreground mask shared by both skeletons, on the same grid.
 - `.nii` / `.nii.gz` files, in-memory NumPy arrays, or a backend `SkeletonResult`.
 - GraphML input is not supported yet.
 - SkelHub does not register, resample, thin, prune or repair inputs.
@@ -28,12 +30,14 @@ skelhub evaluate \
   --ref reference_skeleton.nii.gz \
   --buffer-radius 50 100 \
   --buffer-radius-unit um \
+  --foreground foreground_mask.nii.gz \
   --json-output report.json
 ```
 
 - `-b/--buffer-radius` is required and takes one or more values. The first value is the **primary** tolerance; the others are reported separately. There is no default tolerance.
 - `--buffer-radius-unit` is `voxels` (default) or `um`.
-- `--pred-spatial-unit` / `--ref-spatial-unit` (`meter`, `mm`, `um`, `micron`) label a header whose unit is `unknown`. See [Unknown header units](#unknown-header-units).
+- `--foreground` (optional) adds the [foreground EDT-sum agreement](#foreground-edt-sum-agreement).
+- `--pred-spatial-unit` / `--ref-spatial-unit` / `--foreground-spatial-unit` (`cm`, `mm`, `um`, `nm`) label a header whose unit is `unknown`. See [Unknown header units](#unknown-header-units). `--foreground-spatial-unit` without `--foreground` is rejected.
 - `-v/--verbose` adds spatial-unit provenance, supporting counts, directional distances, Hausdorff distance and the Euler characteristic.
 
 Python:
@@ -52,6 +56,11 @@ result = evaluate_skeleton_volumes(pred, ref, spacing=(0.05, 0.05, 0.05), spacin
 
 # Backend output: `input_volume` is the VolumeData the backend ran on; it defines the prediction grid.
 result = evaluate_skeleton_result(skeleton_result, reference_volume, input_volume=volume, buffer_radius=[1, 2])
+
+# Optional foreground mask, one keyword per entry point:
+#   files: foreground_path=..., foreground_spatial_unit=...   arrays: foreground_mask=<array on the same grid>
+#   SkeletonResult: foreground=<VolumeData>, foreground_spatial_unit=...
+print(result.foreground_edt)                  # None when no mask was supplied
 ```
 
 `buffer_radius` takes a single number or a sequence; both go through the same code path. All three entry points share the same metric code and give identical results for identical inputs.
@@ -61,16 +70,17 @@ result = evaluate_skeleton_result(skeleton_result, reference_volume, input_volum
 Validation runs before any metric is computed. Invalid input raises a clear error instead of producing a score.
 
 - **Binary 3D arrays** of matching shape.
-- **Known spatial units**: `mm`, `micron`/`um` or `meter`, taken from the header. A header that says `unknown` needs a declared unit (below); without one it is rejected. Units are never guessed from coordinate sizes.
+- **Known spatial units**: NIfTI headers in metres, mm or micrometres (`micron`, treated as `um`). A header that says `unknown` needs a declared unit (below); without one it is rejected. Units are never guessed from coordinate sizes.
+- **Unit factors to µm**: cm = 10,000; mm = 1,000; um = 1; nm = 0.001; metre (header or legacy Python spelling) = 1,000,000. All spacing and the full affine, translation included, are converted to µm.
 - **Same physical grid**: both full voxel-to-world affines (spacing, orientation and origin) are converted to µm and must agree. The tolerance is $10^{-3}$ of the smallest voxel spacing. Equivalent grids written in different units, such as 0.05 mm and 50 µm, are accepted. An origin shift, a flipped axis or a unit mismatch is rejected.
 - **Orthogonal grids only**: anisotropic spacing and rotated or permuted axes are supported. Sheared affines are rejected, because distances use per-axis spacing, which is exact only on orthogonal grids.
 - **Consistent headers**: NIfTI `pixdim` spacing must match the affine column lengths within a relative error of $10^{-5}$.
-- **In-memory arrays** (same-grid contract): both arrays use one transform, either $\mathrm{diag}(\text{spacing})$ or an explicit `affine` whose column lengths equal `spacing`, expressed in `spacing_unit`.
+- **In-memory arrays** (same-grid contract): both arrays (and `foreground_mask`) use one transform, either $\mathrm{diag}(\text{spacing})$ or an explicit `affine` whose column lengths equal `spacing`, expressed in `spacing_unit`.
 - **`SkeletonResult`**: the prediction takes its affine and header units from `input_volume`, and its shape must match. Both `VolumeData` objects need header units or a declared unit.
 
 ### Unknown header units
 
-Some NIfTI files store spacing and affine values without saying which unit they use (header unit `unknown`). You can declare that unit for each input:
+Some NIfTI files store spacing and affine values without saying which unit they use (header unit `unknown`). You can declare that unit for each input, as `cm`, `mm`, `um` or `nm`:
 
 ```bash
 skelhub evaluate --pred pred.nii.gz --ref ref.nii.gz \
@@ -78,12 +88,12 @@ skelhub evaluate --pred pred.nii.gz --ref ref.nii.gz \
   --buffer-radius 50 --buffer-radius-unit um
 ```
 
-In Python, use `pred_spatial_unit=` / `ref_spatial_unit=` on `evaluate_prediction_path`, `evaluate_skeleton_files` and `evaluate_skeleton_result`. For `evaluate_skeleton_result`, they apply to `input_volume` and `reference`. A `VolumeData` without a header counts as `unknown`. The array evaluator is unchanged; it already requires `spacing_unit`.
+In Python, use `pred_spatial_unit=` / `ref_spatial_unit=` / `foreground_spatial_unit=` on `evaluate_prediction_path`, `evaluate_skeleton_files` and `evaluate_skeleton_result`. For `evaluate_skeleton_result`, they apply to `input_volume`, `reference` and `foreground`. A `VolumeData` without a header counts as `unknown`. The array evaluator requires `spacing_unit`. Python also accepts the legacy spellings `meter` and `micron` (= `um`); the CLI does not.
 
 | Header unit | Declared unit                    | Result                                     |
 | ----------- | -------------------------------- | ------------------------------------------ |
 | known       | none                             | header unit used                           |
-| known       | equivalent (`um` = `micron`) | accepted; the header stays the source      |
+| known       | equivalent (`micron` = `um`)     | accepted; the header stays the source      |
 | known       | different                        | rejected; a known unit is never overridden |
 | `unknown` | supported                        | declared unit used, with a warning         |
 | `unknown` | none                             | rejected, with instructions                |
@@ -93,7 +103,8 @@ In Python, use `pred_spatial_unit=` / `ref_spatial_unit=` on `evaluate_predictio
 - Each input is resolved on its own. A unit is never borrowed from the other file, the file name, the spacing values or the tolerance.
 - The input files and in-memory headers, affines and arrays are not modified.
 - All other checks still apply after the unit is resolved. Shape mismatches are reported before missing units. Affine mismatches, shear, header/affine disagreement and non-binary data are still rejected.
-- **Provenance:** every declared unit adds a warning, shown in the normal terminal report and kept in `EvaluationResult.warnings` and the JSON. It names the input, says the header unit was unknown, and gives the effective unit and the resulting spacing in µm. `metadata` records `source_spatial_units` (what the header said: `null` for arrays), `effective_spatial_units` (canonical: `meter`, `mm` or `um`) and `spatial_unit_sources` (`header` or `user`).
+- `cm` and `nm` exist only as declarations. SkelHub never writes unit codes into NIfTI headers.
+- **Provenance:** every declared unit adds a warning, shown in the normal terminal report and kept in `EvaluationResult.warnings` and the JSON. It names the input, says the header unit was unknown, and gives the effective unit and the resulting spacing in µm. `metadata` records `source_spatial_units` (what the header said: `null` for arrays), `effective_spatial_units` (canonical: `meter`, `cm`, `mm`, `um` or `nm`) and `spatial_unit_sources` (`header` or `user`). The mask's units are recorded in `foreground_edt_agreement.mask`.
 
 ## Tolerances
 
@@ -144,6 +155,38 @@ $$
 - $Q_{0.95}$ uses NumPy's default `linear` percentile interpolation.
 - Main output: $D_{\mathrm{mean}}$ and $D_{95}$. Detailed output: directional means, P95s and maxima. Diagnostic: Hausdorff $H$, which exposes isolated outliers that $D_{95}$ can hide.
 
+## Foreground EDT-sum agreement
+
+Optional. It runs only when a foreground mask is supplied; otherwise it is reported as "Not computed—no foreground mask supplied" and every other metric is unchanged.
+
+**Mask rules.** One binary 3D mask (values 0 and 1 only) shared by both skeletons. It must have the skeletons' shape and physical grid, and passes the same affine, orthogonality, header-spacing and unit checks. All-zero and all-one masks are rejected. An invalid mask rejects the whole evaluation. The mask is never resampled, registered, thresholded or thinned.
+
+**Definition.** Let $F$ be the mask and $\mathrm{EDT}_F(x)$ the Euclidean distance, in µm, from voxel centre $x$ to the nearest background voxel centre of $F$ ($0$ for background voxels). One `scipy.ndimage.distance_transform_edt` runs on the **full** mask with physical spacing. For each skeleton $S \in \{S_p, S_r\}$:
+
+$$
+\Sigma(S) = \sum_{x \in S} \mathrm{EDT}_F(x), \qquad
+\bar{e}(S) = \frac{\Sigma(S)}{|S|}, \qquad
+o(S) = \frac{|\{x \in S : x \notin F\}|}{|S|},
+$$
+
+$$
+\delta = \frac{\Sigma(S_p) - \Sigma(S_r)}{\Sigma(S_r)}, \qquad |\delta| = \frac{|\Sigma(S_p) - \Sigma(S_r)|}{\Sigma(S_r)}.
+$$
+
+- Skeleton voxels outside the mask sample $0$. They stay in the sum and in $|S|$, and each skeleton with any adds a warning.
+- Sums use float64. Reported per skeleton: EDT sum, mean EDT, voxel count, outside-mask count and fraction. JSON stores $\delta$, $|\delta|$ and $o$ as fractions; reports show them as percentages.
+- **Boundary policy**: only background observed inside the image counts. The mask is not padded or cropped. Cropping to the skeletons' bounding box would drop the background that sets the distances. When foreground touches an image face, a warning says clearance near that face may be overestimated.
+
+| Case                   | Result                                                                    |
+| ---------------------- | ------------------------------------------------------------------------- |
+| No mask                | `foreground_edt_agreement` is `null`; reason "No foreground mask supplied" |
+| Empty skeleton         | sum 0, voxels 0, outside 0; mean and outside fraction `null`, with a reason |
+| $\Sigma(S_r) = 0$     | $\delta$ and $\lvert\delta\rvert$ `null`, with a reason                  |
+
+Empty inputs keep their usual `status`.
+
+**Interpretation.** $\delta < 0$: the prediction has less total clearance than the reference (fewer voxels, or voxels closer to the boundary); $\delta > 0$: more. Matching sums do **not** show spatial or topological agreement: voxel count and clearance can cancel out, so read $\delta$ next to coverage and topology. The sum depends on sampling, branch orientation and resolution. It is not a physical branch-length integral.
+
 ## Topology
 
 Computed on each **original** skeleton, never on a tolerance buffer. Foreground uses 26-connectivity and background uses 6-connectivity.
@@ -181,12 +224,12 @@ Matching counts between two empty inputs do not override the status. JSON output
 
 ## Report structure
 
-The terminal report shows the status; F1, precision and recall at the primary tolerance, then at each other tolerance; the symmetric mean and P95 distance; reference → prediction counts for components, cycles and cavities; Betti-count agreement; endpoint counts; and warnings.
+The terminal report shows the status; F1, precision and recall at the primary tolerance, then at each other tolerance; the symmetric mean and P95 distance; the foreground EDT-sum agreement (or "Not computed"); reference → prediction counts for components, cycles and cavities; Betti-count agreement; endpoint counts; and warnings.
 
-JSON (`--json-output`, schema `2.0`):
+JSON (`--json-output`, schema `2.1`):
 
 ```text
-schema_version   "2.0"
+schema_version   "2.1"
 status           ok | empty_prediction | empty_reference | both_empty
 metadata         message, pred_path, ref_path, shape, spacing_um, affine_um,
                  source_spatial_units, effective_spatial_units, spatial_unit_sources
@@ -203,11 +246,19 @@ topology         connectivity, reference/prediction {beta_0, beta_1, beta_2, eul
                  beta_0/beta_1/beta_2 {reference, prediction, signed_difference, absolute_error},
                  betti_count_agreement
 endpoint_diagnostics  {reference, prediction, signed_difference, absolute_error}
+foreground_edt_agreement  null without a mask, else:
+                 definition ("skelhub-foreground-edt-sum-v1"), distance, boundary_policy,
+                 mask {path, header_spatial_unit, effective_spatial_unit, spatial_unit_source,
+                       foreground_voxels, touches_image_boundary},
+                 reference / prediction {edt_sum_um, mean_edt_um, skeleton_voxels,
+                                         outside_mask_voxels, outside_mask_fraction},
+                 signed_relative_difference, absolute_relative_difference, warnings
 warnings         list of strings
-unavailable      {"geometry.coverage": reason, "geometry.distances": reason} when null
+unavailable      field -> reason for every null, e.g. "geometry.distances",
+                 "foreground_edt_agreement", "foreground_edt_agreement.prediction.mean_edt_um"
 ```
 
-The schema version marks the report format. It is not a switch: SkelHub has no legacy mode.
+The schema version marks the report format. It is not a switch: SkelHub has no legacy mode. Schema 2.1 only adds `foreground_edt_agreement` (and its `unavailable` entries); every 2.0 field keeps its name and meaning, and `metric_definitions` stays `skelhub-voxel-v2`.
 
 ## Interpretation
 
@@ -228,8 +279,11 @@ The schema version marks the report format. It is not a switch: SkelHub has no l
 - A tolerance can hide short gaps and nearby duplicate voxels.
 - Equal Betti counts do not prove structural correspondence: a missing loop can be offset by an extra one elsewhere.
 - Endpoint counts are sensitive to digital geometry: small spurs, thick spots and staircase patterns change neighbour counts. Matching counts do not show that endpoints correspond.
-- Coordinate restrictions: files with `unknown` units need `--pred-spatial-unit` / `--ref-spatial-unit`; sheared grids are rejected; voxel-unit tolerances need isotropic spacing; inputs must already share one grid.
+- Coordinate restrictions: files with `unknown` units need `--pred-spatial-unit` / `--ref-spatial-unit` / `--foreground-spatial-unit`; sheared grids are rejected; voxel-unit tolerances need isotropic spacing; inputs must already share one grid.
 - Distance transforms use $O(N)$ memory over the shared bounding box. A 300×300×150 pair peaks at roughly 0.65 GB.
+- The foreground EDT runs on the **full** mask volume (it cannot be cropped). It adds about 50 bytes per voxel at peak: about 0.63 GB for 300×300×150. It runs after the geometry transforms are released.
+- Foreground EDT values near an image face that the mask touches can be too large, because the background beyond the image is unknown.
+- The EDT sum depends on sampling, orientation and resolution: the same vessel voxelized differently gives a different sum. It is not a branch-length integral.
 
 ## Legacy v1 evaluation — historical reference
 

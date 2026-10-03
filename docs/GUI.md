@@ -69,14 +69,15 @@ Compares a predicted skeleton NIfTI with a reference skeleton, using the same ev
 ### Inputs and spatial units
 
 - Select a **Prediction skeleton NIfTI** and a **Reference skeleton NIfTI** (`.nii` or `.nii.gz`) with **Browse…** or by typing a path.
-- Each file's header is read when you pick it (or shortly after you stop typing). The voxel data is not loaded for this. Below each file you see its shape, the header unit, the effective unit and the voxel spacing in µm.
-- **Spatial unit**, set separately for each file:
-  - **Known header unit** (µm, mm or metres): filled in and locked, with "From NIfTI header." It cannot be overridden.
+- **Shared foreground mask NIfTI** is optional. It is one binary (0/1) mask for both skeletons, on the same grid, and adds the foreground EDT-sum agreement. **Clear** removes it; without a mask that metric is shown as not computed.
+- Each file's header is read when you pick it (or shortly after you stop typing). The voxel data is not loaded for this. Next to each file's unit you see its shape, the header unit, the effective unit and the voxel spacing in µm.
+- **Spatial unit**, set separately for each of the three files. The choices are cm, mm, µm and nm:
+  - **Known header unit** (mm, µm or metres): filled in and locked, with "From NIfTI header." It cannot be overridden. Metres are shown but are not a choice.
   - **Unknown header unit**: the dropdown starts at "Select spatial unit…" and **Evaluate** stays disabled until you choose. Afterwards it reads "User supplied; header unit is unknown."
   - **Unsupported unit code or non-3D file**: shown as an error, and evaluation stays unavailable.
 - A unit choice labels the stored spacing and coordinate values; it does not change the spacing. Stored spacing 0.05 with mm gives 50 µm; 50 with µm gives 50 µm; 1 with µm gives 1 µm. Files are never modified.
 - Choosing a different file clears that file's unit choice and preview.
-- Shape differences are flagged before the run. Shape and affine mismatches are still rejected by the evaluation, and the error appears in a warning dialog.
+- Shape differences (including the mask's) are flagged before the run. Shape and affine mismatches, and invalid masks (non-binary, all zero, all one), are rejected by the evaluation, and the error appears in a warning dialog.
 
 ### Tolerances
 
@@ -95,11 +96,12 @@ Compares a predicted skeleton NIfTI with a reference skeleton, using the same ev
   - geometry coverage per tolerance (precision, recall, F1)
   - supporting matched and unmatched voxel counts
   - distances in µm (directional means, symmetric mean, symmetric P95, Hausdorff)
+  - **Foreground EDT-sum Agreement**: mask, units and boundary contact; EDT sum, mean EDT, voxel count and outside-mask count and percentage for each skeleton; the signed and absolute relative difference as percentages; and its warnings. Matching sums do not mean matching skeletons; hover **?** for why.
   - topology (β₀, β₁, β₂: reference, prediction, signed difference, absolute error) with **Betti-count agreement**
   - endpoint diagnostics
 - **Unavailable values** show as **N/A**; hover to see the reason. They are never shown as zero.
 - **Warnings**, including declared-unit provenance, appear above the tables and in the run log.
-- **Outdated results**: changing a file, a declared unit, the tolerances or the tolerance unit marks the results "Results are outdated — run evaluation again." Changes to a file on disk are detected when you evaluate or export. A failed rerun keeps the old results marked as outdated.
+- **Outdated results**: changing a file (including adding, changing or clearing the mask), a declared unit, the tolerances or the tolerance unit marks the results "Results are outdated — run evaluation again." Changes to a file on disk are detected when you evaluate or export. A failed rerun keeps the old results marked as outdated.
 - **Export JSON…** writes the same JSON report as `skelhub evaluate --json-output`, with full precision, warnings and unit provenance. It is enabled only for a current result, including empty-input results. An existing file is replaced only after you confirm.
 
 ## EDT Heat
