@@ -90,6 +90,27 @@ If a NIfTI header's unit is `unknown`, declare it with `pred_spatial_unit="mm"` 
 
 Pass `foreground_path="mask.nii.gz"` (or `foreground=` a `VolumeData` for `evaluate_skeleton_result`) to add the optional foreground EDT-sum agreement, read as `evaluation.foreground_edt`. `foreground_spatial_unit=` labels the mask's unknown header unit.
 
+GraphML pairs use the same function. The representation comes from the file extensions, and mixed pairs are rejected:
+
+```python
+evaluation = evaluate_prediction_path(
+    "pred.graphml",
+    "ref.graphml",
+    coordinate_image_path="original_image.nii.gz",  # required; only its header is read
+    buffer_radius=[50, 100],
+    buffer_radius_unit="um",
+    sample_step_um=None,             # None = automatic: 0.1 x smallest voxel spacing
+    coordinate_spatial_unit=None,    # labels an unknown coordinate-image header unit
+)
+
+print(evaluation.input_representation)                      # "graphml"
+print(evaluation.geometry.primary.matched_reference_length_um)
+print(evaluation.geometry.distances.hausdorff_upper_bound_um)
+print(evaluation.graph.sampling.resolved_step_um, evaluation.graph.reference.total_length_um)
+```
+
+`skelhub.evaluation.evaluate_graph_files` is the underlying GraphML entry point. Options that do not apply raise `ValueError`: `foreground_*` or `pred/ref_spatial_unit` with GraphML, and `coordinate_*` or `sample_step_um` with NIfTI.
+
 There is no combined score. See [Evaluation](evaluation.md) for formulas and input rules.
 
 ## Generate GraphML

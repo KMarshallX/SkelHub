@@ -7,7 +7,12 @@ from typing import Callable, Sequence
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.core import EvaluationResult, SkeletonResult, VolumeData, get_backend
-from skelhub.evaluation import evaluate_skeleton_files, evaluate_skeleton_result  # noqa: F401 re-exported
+from skelhub.evaluation import (  # noqa: F401 re-exported
+    evaluate_graph_files,
+    evaluate_paths,
+    evaluate_skeleton_files,
+    evaluate_skeleton_result,
+)
 from skelhub.io import read_nifti, write_nifti
 from skelhub.postprocessing.feature import (
     FeatureExtractionResult,
@@ -55,24 +60,38 @@ def evaluate_prediction_path(
     ref_spatial_unit: str | None = None,
     foreground_path: str | Path | None = None,
     foreground_spatial_unit: str | None = None,
+    coordinate_image_path: str | Path | None = None,
+    coordinate_spatial_unit: str | None = None,
+    sample_step_um: float | None = None,
     log: Callable[[str], None] | None = None,
 ) -> EvaluationResult:
-    """Run the framework-level voxel-based evaluation on a prediction/reference pair.
+    """Evaluate a NIfTI–NIfTI or GraphML–GraphML prediction/reference pair.
 
     ``buffer_radius`` is one tolerance or a sequence of tolerances; the first is primary.
-    ``pred_spatial_unit`` / ``ref_spatial_unit`` label NIfTI headers whose unit is unknown.
+    The pair's representation comes from the file extensions; mixed pairs are rejected.
+
+    NIfTI: ``pred_spatial_unit`` / ``ref_spatial_unit`` label headers whose unit is unknown.
     ``foreground_path`` adds the optional foreground EDT-sum agreement from one shared
     binary foreground mask; ``foreground_spatial_unit`` labels its unknown header unit.
+
+    GraphML: ``coordinate_image_path`` (required) is the NIfTI whose voxel grid both graphs
+    use; ``coordinate_spatial_unit`` labels its unknown header unit; ``sample_step_um``
+    overrides the automatic maximum sampling interval ``0.1 * min(spacing_um)``.
+
+    Options that do not apply to the detected representation raise ``ValueError``.
     """
-    return evaluate_skeleton_files(
-        str(pred_path),
-        str(ref_path),
+    return evaluate_paths(
+        pred_path,
+        ref_path,
         buffer_radius=buffer_radius,
         buffer_radius_unit=buffer_radius_unit,
         pred_spatial_unit=pred_spatial_unit,
         ref_spatial_unit=ref_spatial_unit,
-        foreground_path=None if foreground_path is None else str(foreground_path),
+        foreground_path=foreground_path,
         foreground_spatial_unit=foreground_spatial_unit,
+        coordinate_image_path=coordinate_image_path,
+        coordinate_spatial_unit=coordinate_spatial_unit,
+        sample_step_um=sample_step_um,
         log=log,
     )
 

@@ -73,6 +73,7 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 - The `graph_original` GraphML keeps straight continuous edge samples in `centerline_voxel_points`. This field describes the graph's native per-edge geometry; it does not replace the separate quadratic-Bezier rule used to rasterize the NIfTI output.
 - If one component reaches the Laplacian contraction iteration cap, SkelHub warns and continues with that component's latest contracted graph.
 - `--graph_output` writes one aggregate cleaned graph; `--graph_original` writes one aggregate refined graph used for rasterization.
+- Both exports can be compared with `skelhub evaluate` as GraphML pairs, with the input NIfTI as `--coordinate-image`. `--graph_original` edges use their stored `centerline_voxel_points`. `--graph_output` edges store no `centerline_voxel_points`, so evaluation uses each straight node-to-node segment and warns. A zero-length edge (stored as one point) makes evaluation reject the file. See [Evaluation](evaluation.md#graphml-inputs-and-sampling).
 
 ### Citation
 

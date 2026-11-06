@@ -212,6 +212,44 @@ def prepare_skeleton_volume(
         raise ValueError(f"{label} has no voxels (shape {array.shape}).")
     _require_binary(array, label=label)
 
+    frame = prepare_spatial_frame(
+        affine, header_unit, label=label, supplied_unit=supplied_unit, role=role, header_spacing=header_spacing
+    )
+    return SkeletonVolumeInput(
+        data=array != 0,
+        affine_um=frame.affine_um,
+        spacing_um=frame.spacing_um,
+        units=frame.units,
+        label=label,
+        path=path,
+    )
+
+
+@dataclass(slots=True)
+class SpatialFrame:
+    """A validated voxel-to-world transform in micrometres and the unit it was read with."""
+
+    affine_um: np.ndarray
+    spacing_um: tuple[float, float, float]
+    units: ResolvedSpatialUnit
+
+
+def prepare_spatial_frame(
+    affine: np.ndarray,
+    header_unit: str | None,
+    *,
+    label: str,
+    supplied_unit: str | None = None,
+    role: str | None = None,
+    header_spacing: Sequence[float] | None = None,
+) -> SpatialFrame:
+    """Validate an affine, resolve its unit and convert it to micrometres.
+
+    The affine must be finite 4x4 with bottom row [0, 0, 0, 1], non-singular and
+    orthogonal (no shear). Its unit comes from :func:`resolve_spatial_unit`.
+    ``header_spacing`` (NIfTI zooms), when given, must equal the affine column
+    lengths after the same unit conversion.
+    """
     affine_um = _validated_affine(affine, label=label)
     units = resolve_spatial_unit(
         header_unit,
@@ -232,15 +270,7 @@ def prepare_skeleton_volume(
                 f"column lengths {tuple(np.round(spacing_um, 6))} um. Fix the NIfTI header so "
                 "pixdim and the sform/qform describe the same grid."
             )
-
-    return SkeletonVolumeInput(
-        data=array != 0,
-        affine_um=affine_um,
-        spacing_um=spacing_um,
-        units=units,
-        label=label,
-        path=path,
-    )
+    return SpatialFrame(affine_um=affine_um, spacing_um=spacing_um, units=units)
 
 
 def read_skeleton_nifti(path: str | Path, *, label: str) -> RawSkeletonNifti:

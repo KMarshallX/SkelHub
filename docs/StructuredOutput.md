@@ -39,20 +39,20 @@ Graph extraction should stay in postprocessing unless a backend is naturally gra
 
 ## EvaluationResult
 
-`EvaluationResult` records voxel-based evaluation output (schema `2.1`).
+`EvaluationResult` records NIfTI or GraphML evaluation output (schema `3.0`, evaluation v3).
 
 It includes:
 
+- `input_representation`: `nifti` or `graphml`
 - `status`: `ok`, `empty_prediction`, `empty_reference` or `both_empty`
-- `geometry`: `tolerances` (one `ToleranceMatch` per requested tolerance, in order; `primary` is the first) with precision, recall, F1 and matched/unmatched prediction and reference voxel counts; `distances` (`DistanceSummary`, µm) or `None`; reasons when unavailable
-- `topology`: reference and prediction `BettiNumbers` (`beta_0`, `beta_1`, `beta_2`, Euler characteristic), `comparison(k)` and `betti_count_agreement`
-- `endpoints`: reference and prediction endpoint counts with signed and absolute difference
-- `foreground_edt`: `ForegroundEdtAgreement` (reference and prediction `ForegroundEdtSummary`, `ForegroundMaskInfo` provenance, signed and absolute relative difference, warnings), or `None` when no foreground mask was supplied (`foreground_edt_unavailable_reason`)
-- `config`: requested and µm tolerances, connectivity and metric definitions
-- `metadata`: paths, shape, spacing and affine in µm, source units, foreground voxel counts
+- `geometry`: `tolerances` (one `ToleranceMatch` per requested tolerance, in order; `primary` is the first) with precision, recall and F1; supporting values are matched/unmatched prediction and reference **voxel counts** (NIfTI) or **lengths in µm** (`*_length_um`, GraphML), and the other family is `None`. `distances` (`DistanceSummary`, µm) or `None`; for GraphML, `hausdorff_is_approximate` is True and `sampling_error_bound_um` / `hausdorff_upper_bound_um` give the bound. Reasons when unavailable.
+- `topology`: reference and prediction `BettiNumbers` (`beta_0`, `beta_1`, `beta_2`, Euler characteristic), `comparison(k)` and `betti_count_agreement`. Voxel connectivities are `None` for GraphML, whose topology comes from the stored edges (`beta_2` is structurally 0).
+- `endpoints`: reference and prediction endpoint counts (NIfTI: voxels with one 26-neighbour; GraphML: degree-1 nodes) with signed and absolute difference
+- `foreground_edt`: `ForegroundEdtAgreement` (reference and prediction `ForegroundEdtSummary`, `ForegroundMaskInfo` provenance, signed and absolute relative difference, warnings), or `None` when no foreground mask was supplied and always for GraphML (`foreground_edt_unavailable_reason`)
+- `graph`: `GraphEvaluationInfo` for GraphML, else `None`: `coordinate_image` (`CoordinateImageInfo`: path, shape, units, spacing and affine in µm), `sampling` (`GraphSamplingInfo`: mode, requested and resolved step, rule, Hausdorff bound) and `prediction` / `reference` (`GraphInputSummary`: state, node/edge/isolated/self-loop/parallel counts, total length, segments, edge-path source, reversed paths, skipped repeats, points outside the image, length samples)
+- `config`: requested and µm tolerances, connectivity or graph topology definition, and metric definitions (`skelhub-voxel-v2` or `skelhub-graph-v1`)
+- `metadata`: paths, shape, spacing and affine in µm; NIfTI adds source units and foreground voxel counts, GraphML adds both curve lengths
 - `warnings`
-
-There is no combined score. The v1 fields (`TP`, `FP`, `FN`, `Cp`, `Cr`, `OCC`, `BCC`, `E`, `P`) were removed after v0.6.0.
 
 For metric details, see [Evaluation](evaluation.md).
 
@@ -67,7 +67,7 @@ Laplacian graph path that differs from the supplied skeleton volume.
 - `skelhub run` writes a skeleton NIfTI volume.
 - `skelhub run --algorithm laplacian --graph_output ...` can also write cleaned GraphML.
 - `skelhub run --algorithm laplacian --graph_original ...` writes refined pre-cleaning GraphML whose edges include JSON `centerline_voxel_points`: unrounded, unclipped float samples along the straight source-to-target segment. The cleaned `--graph_output` export does not include this field.
-- `skelhub evaluate --json-output ...` writes a structured JSON evaluation report.
+- `skelhub evaluate --json-output ...` writes a structured JSON evaluation report (NIfTI or GraphML pairs; see [Evaluation](evaluation.md#report-structure)).
 - `skelhub graphgen` writes a GraphML proto-graph from a skeleton NIfTI. Every
   edge's `centerline_voxels`, `centerline_voxel_points`, and
   `centerline_world_points` path is oriented from GraphML source to target and

@@ -18,7 +18,7 @@ Current status:
 
 - Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
 - CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`, `skelhub gui`
-- Evaluation: v2 metrics include voxel-based coverage (precision/recall/F1 per tolerance), displacement, Betti-number topology, endpoint diagnostics and an optional foreground EDT-sum agreement (with a shared foreground mask) for paired 3D binary skeleton volumes
+- Evaluation (v3): metrics include coverage (precision/recall/F1 per tolerance), displacement, Betti-number topology, endpoint diagnostics and an optional foreground EDT-sum agreement (with a shared foreground mask), for paired 3D binary skeleton volumes (voxel-based) or paired GraphML graphs (stored polylines, length-weighted, in one coordinate image's frame)
 - Visualization: PyVista-based viewer for GraphML graphs with selectable straight,
   continuous-centreline, or voxel-path edges, plus binary NIfTI volumes
 
@@ -136,7 +136,7 @@ Key locations:
 
 - `skelhub.core` defines shared data models, interfaces, and the backend registry.
 - `skelhub.algorithms` contains isolated backend adapters and implementations.
-- `skelhub.evaluation` contains the voxel-based evaluator.
+- `skelhub.evaluation` contains the voxel-based (NIfTI) and curve-based (GraphML) evaluators behind one `evaluate_prediction_path` / `skelhub evaluate` entry point.
 - `skelhub.postprocessing.graphgen` converts skeleton NIfTI volumes into GraphML.
 - `skelhub.postprocessing.feature` writes Voreen-style edge and node CSV features from vessel foreground, skeleton, and compatible GraphML inputs.
 - `skelhub.postprocessing.protograph_cleaner` contracts degree-2 GraphML nodes

@@ -1,12 +1,17 @@
 # Evaluation
 
-SkelHub evaluation is algorithm-agnostic. It compares a predicted skeleton with a reference skeleton on the same voxel grid and reports these groups of measurements separately:
+SkelHub evaluation (**evaluation v3**, report schema `3.0`) is algorithm-agnostic. It compares a predicted skeleton with a reference skeleton and reports these groups of measurements separately:
 
 1. **Geometry coverage**: precision, recall and F1 at each requested tolerance.
 2. **Geometry displacement**: how far apart the two skeletons are, in µm.
-3. **Foreground EDT-sum agreement** (optional, needs a foreground mask): summed foreground clearance at each skeleton's voxels.
-4. **Topology**: components, cycles and cavities (voxel Betti numbers).
+3. **Foreground EDT-sum agreement** (optional, NIfTI only, needs a foreground mask): summed foreground clearance at each skeleton's voxels.
+4. **Topology**: components, cycles and cavities.
 5. **Endpoint diagnostics**: endpoint counts.
+
+Two input representations are supported, and a pair must use one of them:
+
+- **NIfTI**: two binary voxel skeletons on one voxel grid. Metrics count voxels (`metric_definitions` = `skelhub-voxel-v2`).
+- **GraphML**: two graphs whose stored polylines are evaluated as continuous curves, weighted by length, in one coordinate image's voxel frame (`metric_definitions` = `skelhub-graph-v1`). See [GraphML inputs and sampling](#graphml-inputs-and-sampling).
 
 There is no combined score and no pass/fail verdict. For Python usage, see [API](API.md). For result fields, see [Structured Output](StructuredOutput.md).
 
@@ -14,11 +19,10 @@ The voxel evaluation that came before (schema v1: `Cp`, `Cr`, `OCC`, `BCC`, `E`,
 
 ## Input scope
 
-- Paired 3D binary skeleton volumes, values in $\{0, 1\}$.
-- Optionally, one binary foreground mask shared by both skeletons, on the same grid.
-- `.nii` / `.nii.gz` files, in-memory NumPy arrays, or a backend `SkeletonResult`.
-- GraphML input is not supported yet.
-- SkelHub does not register, resample, thin, prune or repair inputs.
+- **NIfTI pairs**: paired 3D binary skeleton volumes, values in $\{0, 1\}$, as `.nii` / `.nii.gz` files, in-memory NumPy arrays, or a backend `SkeletonResult`. Optionally, one binary foreground mask shared by both skeletons, on the same grid.
+- **GraphML pairs**: two undirected `.graphml` files plus one coordinate image (a NIfTI whose header gives the voxel frame). Files only.
+- The representation comes from the file extensions. Mixed GraphML/NIfTI pairs are rejected. So are options that do not apply to the detected representation, such as `--foreground` with GraphML or `--coordinate-image` with NIfTI.
+- SkelHub does not register, resample, rasterize, smooth, thin, prune or repair inputs.
 
 ## Usage
 
@@ -39,6 +43,23 @@ skelhub evaluate \
 - `--foreground` (optional) adds the [foreground EDT-sum agreement](#foreground-edt-sum-agreement).
 - `--pred-spatial-unit` / `--ref-spatial-unit` / `--foreground-spatial-unit` (`cm`, `mm`, `um`, `nm`) label a header whose unit is `unknown`. See [Unknown header units](#unknown-header-units). `--foreground-spatial-unit` without `--foreground` is rejected.
 - `-v/--verbose` adds spatial-unit provenance, supporting counts, directional distances, Hausdorff distance and the Euler characteristic.
+
+GraphML pair:
+
+```bash
+skelhub evaluate \
+  --pred prediction.graphml \
+  --ref reference.graphml \
+  --coordinate-image original_image.nii.gz \
+  --buffer-radius 50 100 \
+  --buffer-radius-unit um \
+  --json-output report.json
+```
+
+- `--coordinate-image` is required for GraphML: the NIfTI whose voxel grid both graphs' coordinates refer to. Only its header is read.
+- `--coordinate-spatial-unit` (`cm`, `mm`, `um`, `nm`) labels the coordinate image's header unit when it is `unknown`. It requires `--coordinate-image`.
+- `--sample-step-um` (optional, positive and finite) overrides the automatic maximum sampling interval.
+- `--pred-spatial-unit`, `--ref-spatial-unit`, `--foreground` and `--foreground-spatial-unit` are rejected for GraphML. Graphs have no unit of their own, and the EDT-sum agreement is NIfTI-only.
 
 Python:
 
@@ -61,9 +82,14 @@ result = evaluate_skeleton_result(skeleton_result, reference_volume, input_volum
 #   files: foreground_path=..., foreground_spatial_unit=...   arrays: foreground_mask=<array on the same grid>
 #   SkeletonResult: foreground=<VolumeData>, foreground_spatial_unit=...
 print(result.foreground_edt)                  # None when no mask was supplied
+
+# GraphML pair: the same function, detected from the extensions.
+result = evaluate_prediction_path("pred.graphml", "ref.graphml", coordinate_image_path="image.nii.gz",
+                                  buffer_radius=[50, 100], buffer_radius_unit="um", sample_step_um=None)
+print(result.input_representation, result.graph.sampling.resolved_step_um, result.graph.prediction.total_length_um)
 ```
 
-`buffer_radius` takes a single number or a sequence; both go through the same code path. All three entry points share the same metric code and give identical results for identical inputs.
+`buffer_radius` takes a single number or a sequence; both go through the same code path. All three NIfTI entry points share the same metric code and give identical results for identical inputs. `skelhub.evaluation.evaluate_graph_files` is the GraphML entry point that `evaluate_prediction_path` calls.
 
 ## Coordinates and units
 
@@ -114,6 +140,58 @@ In Python, use `pred_spatial_unit=` / `ref_spatial_unit=` / `foreground_spatial_
 - `voxels` values are multiplied by the voxel spacing, and only on **isotropic** grids. On anisotropic grids a voxel radius has no single physical size, so it is rejected; give the tolerance in µm instead.
 - The test $d \le \tau$ allows a relative slack of $10^{-5}$. This absorbs float32 header rounding: 0.05 mm is stored as 0.0500000007 mm, and without the slack a 50 µm tolerance would miss axial neighbours.
 - Each tolerance is reported separately. Results are never averaged across tolerances.
+- GraphML: the tolerance is a maximum distance from a point on one graph's curves to the other graph's nearest segment. Voxel tolerances use the coordinate image's spacing and need it to be isotropic.
+
+## GraphML inputs and sampling
+
+### Coordinate frame
+
+- Both graphs store positions as **voxel indices** of one coordinate image: node `voxel_pos` and edge `centerline_voxel_points`, as SkelHub's `graphgen`, protograph cleaner and Laplacian backend write them.
+- The coordinate image (`--coordinate-image`; Python `coordinate_image_path`) supplies only its header: shape, affine and spatial unit. It does not need to be a mask, and its voxels are never loaded.
+- The header passes the NIfTI checks: 3D, finite 4×4 affine, no shear, `pixdim` consistent with the affine, and a known or declared unit (see [Unknown header units](#unknown-header-units); the flag is `--coordinate-spatial-unit`).
+- Every point $v$ maps to world µm with the full affine: $x = A_{\mu m}\,[v;\,1]$, so rotations, flips and translations are applied exactly.
+
+### Graph validation
+
+| Check | Rule |
+| --- | --- |
+| Direction | Directed graphs (GraphML `edgedefault="directed"`, a missing `edgedefault`, or an edge with `directed="true"`) are rejected. |
+| Self-loops, parallel edges | Kept as stored. Both count in topology and geometry. |
+| Node positions | Every node needs a finite 3D `voxel_pos`. Edges must refer to existing nodes. |
+| Edge paths | Each edge needs `centerline_voxel_points`, a JSON list of finite 3D points. A value missing on some edge is rejected. |
+| No stored paths | If the file declares no `centerline_voxel_points` key at all, each edge is the straight segment between its two nodes, with a warning. This covers Laplacian `--graph_output` files, whose edges are straight. |
+| Path ends | The first and last points must lie within $10^{-6}$ voxel per axis of the incident nodes. A reversed path is accepted and flipped without changing its geometry. |
+| Repeated points | Exact consecutive repeats are skipped. |
+| Zero length | An edge whose points are all the same position is rejected. |
+| Stored world coordinates | Node `X/Y/Z` and `centerline_world_points`, when present, must equal the coordinate image's stored affine applied to the voxel positions, within $10^{-3}$ of the smallest stored spacing. A mismatch is rejected: SkelHub does not choose between conflicting coordinates. |
+| Image extent | Points with an index below $-0.5$ or above $n - 0.5$ on any axis add a warning. Evaluation continues. |
+| Isolated nodes | Kept in topology (components, χ). They carry no curve geometry. Their count is reported, with a warning. |
+| Empty graphs | A graph with no nodes is valid input. See [Empty inputs](#empty-inputs). |
+
+Nothing is rasterized, smoothed, snapped, pruned or reconnected.
+
+### Sampling
+
+The maximum sampling interval is
+
+$$
+h = 0.1 \, \min(s_x, s_y, s_z) \quad \text{(automatic; } s \text{ = coordinate-image spacing in µm)},
+$$
+
+or the value of `--sample-step-um`, used exactly as given. It is never enlarged to save time.
+
+Each stored segment $[a, b]$ of length $L > 0$ is sampled separately, so every stored bend is kept:
+
+$$
+n = \lceil L / h \rceil, \qquad
+m_k = a + \tfrac{k + 1/2}{n}\,(b - a), \qquad
+w_k = \tfrac{L}{n}, \qquad k = 0, \dots, n - 1.
+$$
+
+- Midpoints $m_k$ with weights $w_k$ feed coverage, means and P95. $\sum_k w_k = L$, so the weights add up to the total curve length.
+- Interval boundaries $a + \tfrac{k}{n}(b - a)$, $k = 0, \dots, n$, are also measured, for the maxima only. They carry no weight.
+- Every sample's distance is the **exact** distance to the nearest point on any segment of the other graph, not to its nearest vertex or sample.
+- Implementation: the other graph's segments are cut into pieces no longer than the smallest voxel spacing, and a k-d tree on their midpoints finds candidates. The first candidate's exact distance $U$ bounds the search: any closer piece has its midpoint within $U$ plus half the longest piece. Points are processed in chunks of 65,536. Memory is about 16 bytes per midpoint (one distance and one weight), plus the fixed chunk working set.
 
 ## Geometry
 
@@ -138,6 +216,15 @@ $$
 
 Supporting counts are kept for each direction: matched and unmatched **prediction** voxels, and matched and unmatched **reference** voxels. No true-positive count is shared between the two directions, so extra prediction voxels near the reference cannot raise recall.
 
+**GraphML.** With prediction samples $i$ (weights $w_i$, distances $d_i$ to the reference) and reference samples $j$ (weights $w_j$, distances $d_j$ to the prediction):
+
+$$
+\mathrm{Precision}_\tau \approx \frac{\sum_i w_i\,\mathbf{1}[d_i \le \tau]}{\sum_i w_i}, \qquad
+\mathrm{Recall}_\tau \approx \frac{\sum_j w_j\,\mathbf{1}[d_j \le \tau]}{\sum_j w_j}.
+$$
+
+F1 and its zero convention are unchanged. The supporting values are **lengths in µm**: matched and unmatched prediction length, and matched and unmatched reference length. The voxel-count fields are `null`. Coverage is weighted by curve length, so densely stored points do not count more than sparse ones. The $10^{-5}$ matching slack is a numerical allowance, separate from sampling error.
+
 ### Displacement (µm)
 
 $$
@@ -155,9 +242,27 @@ $$
 - $Q_{0.95}$ uses NumPy's default `linear` percentile interpolation.
 - Main output: $D_{\mathrm{mean}}$ and $D_{95}$. Detailed output: directional means, P95s and maxima. Diagnostic: Hausdorff $H$, which exposes isolated outliers that $D_{95}$ can hide.
 
+**GraphML.** The same symmetric conventions, with length weights:
+
+$$
+\mu_{P\to R} \approx \frac{\sum_i w_i\, d_i}{\sum_i w_i}, \qquad
+Q_{0.95} = \min\Big\{ d_{(k)} : \textstyle\sum_{l \le k} w_{(l)} \ge 0.95 \sum_i w_i \Big\},
+$$
+
+where $d_{(k)}$ are the sorted distances and $w_{(l)}$ their weights. That is the inverse weighted empirical distribution, with a $10^{-12}$ relative slack for floating-point sums. It differs from the NIfTI `linear` interpolation.
+
+- Directional maxima and $\widehat H$ are taken over midpoints and interval boundaries.
+- Distance to a set changes by at most the distance moved, and every curve point lies within $h/4$ of a sample. So the sampled Hausdorff distance is a lower bound with a conservative upper bound:
+
+$$
+\widehat H \le H \le \widehat H + h/2 \quad \text{(up to floating-point error)}.
+$$
+
+- Reports label $\widehat H$ as approximate and give the bound: `hausdorff_is_approximate`, `sampling_error_bound_um` ($h/2$) and `hausdorff_upper_bound_um`.
+
 ## Foreground EDT-sum agreement
 
-Optional. It runs only when a foreground mask is supplied; otherwise it is reported as "Not computed—no foreground mask supplied" and every other metric is unchanged.
+**NIfTI only.** Optional. It runs only when a foreground mask is supplied; otherwise it is reported as "Not computed—no foreground mask supplied" and every other metric is unchanged. For GraphML pairs it is never computed: `foreground_edt_agreement` is `null` with the reason "Foreground EDT-sum agreement is NIfTI-only; it is not available for GraphML inputs", and `--foreground` is rejected.
 
 **Mask rules.** One binary 3D mask (values 0 and 1 only) shared by both skeletons. It must have the skeletons' shape and physical grid, and passes the same affine, orthogonality, header-spacing and unit checks. All-zero and all-one masks are rejected. An invalid mask rejects the whole evaluation. The mask is never resampled, registered, thresholded or thinned.
 
@@ -199,6 +304,14 @@ Computed on each **original** skeleton, never on a tolerance buffer. Foreground 
 
 Cavities are counted, not assumed absent. Cycles are not counted in a naive voxel-adjacency graph; a solid 2×2×2 block has $\beta_1 = 0$. A negative Betti number raises an error instead of being clipped.
 
+**GraphML** topology comes from the stored connectivity alone, independent of sampling. With $V$ nodes (isolated nodes included), $E$ edges (self-loops and parallel edges included) and $C$ connected components:
+
+$$
+\beta_0 = C, \qquad \beta_1 = E - V + C, \qquad \beta_2 = 0, \qquad \chi = V - E.
+$$
+
+$\beta_1$ is the number of independent cycles; each self-loop or parallel edge adds one. $\beta_2 = 0$ structurally: a 1D graph has no cavities, so it is not a volumetric cavity measurement. Voxel connectivities are `null` in GraphML reports. Edges that cross in space without sharing a node are not connected.
+
 For each $k \in \{0, 1, 2\}$ the report gives the reference and prediction counts, $\Delta\beta_k = \beta_k(S_p) - \beta_k(S_r)$ and $E_{\beta_k} = |\Delta\beta_k|$. The Euler characteristic is included as supporting information. **Betti-count agreement** is $A_\beta = \mathbf{1}[E_{\beta_0} = E_{\beta_1} = E_{\beta_2} = 0]$. It means the counts match. It does not mean the topology is preserved: equal counts do not show that the same branches are connected.
 
 ## Endpoint diagnostics
@@ -208,6 +321,8 @@ N_{\mathrm{end}}(S) = \sum_{x \in S} \mathbf{1}[n_{26}(x, S) = 1],
 $$
 
 where $n_{26}$ counts foreground 26-neighbours, excluding the centre voxel. The report gives both counts, $\Delta N_{\mathrm{end}} = N_{\mathrm{end}}(S_p) - N_{\mathrm{end}}(S_r)$ and $E_{\mathrm{end}} = |\Delta N_{\mathrm{end}}|$. These are diagnostics, not a quality score.
+
+**GraphML**: $N_{\mathrm{end}}(G) = |\{v : \deg(v) = 1\}|$. A self-loop adds 2 to its node's degree, and isolated nodes (degree 0) are not endpoints.
 
 ## Empty inputs
 
@@ -222,27 +337,41 @@ These rules apply after normal validation. Topology and endpoint counts are alwa
 
 Matching counts between two empty inputs do not override the status. JSON output never contains `NaN` or `Infinity`.
 
+**GraphML**: "empty" means **no curve geometry**, i.e. zero total edge length, and the same four statuses and scoring rules apply. `empty_prediction` reports zero matched length and the whole reference length as unmatched. Warnings, unavailable reasons and `graph.<role>.state` tell the two kinds of empty graph apart:
+
+- `no_nodes`: the graph has no nodes at all.
+- `no_curve_geometry`: the graph has nodes but no edges.
+- `curve_geometry`: the graph has positive edge length.
+
+Topology and endpoint diagnostics are always reported, including for a graph with no nodes ($\beta_0 = \beta_1 = \chi = 0$).
+
 ## Report structure
 
-The terminal report shows the status; F1, precision and recall at the primary tolerance, then at each other tolerance; the symmetric mean and P95 distance; the foreground EDT-sum agreement (or "Not computed"); reference → prediction counts for components, cycles and cavities; Betti-count agreement; endpoint counts; and warnings.
+The terminal report shows the status and input representation; F1, precision and recall at the primary tolerance, then at each other tolerance; the symmetric mean and P95 distance; the foreground EDT-sum agreement (or "Not computed" / "Not available"); reference → prediction counts for components, cycles and cavities; Betti-count agreement; endpoint counts; and warnings. GraphML reports add the coordinate image, the sampling interval, both curve lengths and the approximate Hausdorff distance with its bound. With `-v` they also give the matched/unmatched lengths and a per-graph summary.
 
-JSON (`--json-output`, schema `2.1`):
+JSON (`--json-output`, schema `3.0`):
 
 ```text
-schema_version   "2.1"
+schema_version   "3.0"
+input_representation  nifti | graphml
 status           ok | empty_prediction | empty_reference | both_empty
 metadata         message, pred_path, ref_path, shape, spacing_um, affine_um,
-                 source_spatial_units, effective_spatial_units, spatial_unit_sources
-                 (each {prediction, reference}), pred_voxels, ref_voxels
+                 NIfTI: source_spatial_units, effective_spatial_units, spatial_unit_sources
+                        (each {prediction, reference}), pred_voxels, ref_voxels
+                 GraphML: pred_length_um, ref_length_um (shape/spacing/affine of the coordinate image)
 config           buffer_radius_unit, requested_tolerances, tolerances_um, primary_tolerance_um,
-                 connectivity, endpoint/distance/percentile definitions, numeric tolerances,
-                 metric_definitions ("skelhub-voxel-v2")
+                 connectivity or topology definition, endpoint/distance/percentile definitions,
+                 numeric tolerances, metric_definitions ("skelhub-voxel-v2" | "skelhub-graph-v1")
 geometry         primary_tolerance_um,
                  tolerances[]  (requested order: tolerance_um, requested_value, requested_unit,
-                                is_primary, precision, recall, f1, matched/unmatched counts),
-                 distances_um  (directional means/P95/max, symmetric_mean_um,
-                                symmetric_p95_um, hausdorff_um) or null
-topology         connectivity, reference/prediction {beta_0, beta_1, beta_2, euler_characteristic},
+                                is_primary, precision, recall, f1,
+                                matched/unmatched prediction/reference voxels    (NIfTI; else null),
+                                matched/unmatched prediction/reference length_um (GraphML; else null)),
+                 distances_um  (directional means/P95/max, symmetric_mean_um, symmetric_p95_um,
+                                hausdorff_um, hausdorff_is_approximate,
+                                sampling_error_bound_um, hausdorff_upper_bound_um) or null
+topology         definition, connectivity (null for GraphML),
+                 reference/prediction {beta_0, beta_1, beta_2, euler_characteristic},
                  beta_0/beta_1/beta_2 {reference, prediction, signed_difference, absolute_error},
                  betti_count_agreement
 endpoint_diagnostics  {reference, prediction, signed_difference, absolute_error}
@@ -253,12 +382,26 @@ foreground_edt_agreement  null without a mask, else:
                  reference / prediction {edt_sum_um, mean_edt_um, skeleton_voxels,
                                          outside_mask_voxels, outside_mask_fraction},
                  signed_relative_difference, absolute_relative_difference, warnings
+graph            null for NIfTI, else:
+                 coordinate_image {path, shape, header_spatial_unit, effective_spatial_unit,
+                                   spatial_unit_source, spacing_um, affine_um},
+                 sampling {mode, requested_step_um, resolved_step_um, automatic_rule,
+                           hausdorff_error_bound_um},
+                 prediction / reference {path, state, nodes, edges, isolated_nodes, self_loops,
+                           parallel_edges, total_length_um, segments, edge_paths,
+                           reversed_edge_paths, repeated_points_skipped, points_outside_image,
+                           length_samples}
 warnings         list of strings
 unavailable      field -> reason for every null, e.g. "geometry.distances",
                  "foreground_edt_agreement", "foreground_edt_agreement.prediction.mean_edt_um"
 ```
 
-The schema version marks the report format. It is not a switch: SkelHub has no legacy mode. Schema 2.1 only adds `foreground_edt_agreement` (and its `unavailable` entries); every 2.0 field keeps its name and meaning, and `metric_definitions` stays `skelhub-voxel-v2`.
+The schema version marks the report format. It is not a switch: SkelHub has no legacy mode.
+
+- **Schema 2.1** (evaluation v2) added `foreground_edt_agreement` and its `unavailable` entries.
+- **Schema 3.0** (evaluation v3) adds GraphML evaluation: `input_representation`, `graph`, `topology.definition`, the `*_length_um` coverage fields and the three Hausdorff-bound fields.
+- **Why a major bump**: fields that were always filled in 2.x (voxel counts, `topology.connectivity`) are `null` in GraphML reports, so a 2.x reader can no longer assume them.
+- **What did not change**: every 2.1 field keeps its name and meaning for NIfTI reports. NIfTI `metric_definitions` stays `skelhub-voxel-v2`, so NIfTI numbers from v2 and v3 are directly comparable.
 
 ## Interpretation
 
@@ -266,20 +409,24 @@ The schema version marks the report format. It is not a switch: SkelHub has no l
 - Compare tolerances: if F1 jumps between the primary and a looser tolerance, most voxels are close to the reference but not on it.
 - A large $H$ with a small $D_{95}$ means a few isolated outliers.
 - If geometry is good but $\beta_1$ differs, loops were broken or added. Tolerance-based coverage cannot see this (example: one voxel removed from a closed loop gives F1 = 1 at 50 µm, with $\beta_1$ going from 1 to 0).
+- NIfTI and GraphML scores are not interchangeable. Voxel counts and curve lengths weight geometry differently, and the P95 definitions differ. Compare methods within one representation.
 
 ## Current limitations
 
-- GraphML evaluation is deferred.
+- GraphML: branch matching and NetMets-style metrics are not implemented. Mixed GraphML/NIfTI pairs are rejected. The EDT-sum agreement is NIfTI-only.
+- GraphML means, P95 and coverage are midpoint-rule approximations. Their error shrinks with $h$ but is not reported. Only the maxima have a stated bound.
+- GraphML geometry is measured on the stored polylines only. Radii, node volumes and voxel thickness are ignored, and edges that cross without sharing a node are not joined.
+- GraphML runtime grows with the number of samples, i.e. total curve length divided by $h$. About $1.9 \times 10^6$ samples (both directions) took about 10 s, with a peak resident memory of about 0.24 GB.
 - Dataset-level aggregation (including Macro-F1) is deferred; each run evaluates one pair.
 - Endpoint and junction matching is deferred.
 - Branch recovery and spurious-branch metrics are deferred.
 - Path-connectivity comparison is deferred.
 - Matched-branch length and tortuosity errors are deferred.
-- Geometry metrics weight voxel centres, not continuous branch length. Diagonal runs have fewer voxels per µm than axial runs.
+- NIfTI geometry metrics weight voxel centres, not continuous branch length. Diagonal runs have fewer voxels per µm than axial runs. GraphML metrics weight curve length.
 - A tolerance can hide short gaps and nearby duplicate voxels.
 - Equal Betti counts do not prove structural correspondence: a missing loop can be offset by an extra one elsewhere.
 - Endpoint counts are sensitive to digital geometry: small spurs, thick spots and staircase patterns change neighbour counts. Matching counts do not show that endpoints correspond.
-- Coordinate restrictions: files with `unknown` units need `--pred-spatial-unit` / `--ref-spatial-unit` / `--foreground-spatial-unit`; sheared grids are rejected; voxel-unit tolerances need isotropic spacing; inputs must already share one grid.
+- Coordinate restrictions: files with `unknown` units need `--pred-spatial-unit` / `--ref-spatial-unit` / `--foreground-spatial-unit` (GraphML: `--coordinate-spatial-unit`); sheared grids are rejected (GraphML: sheared coordinate images); voxel-unit tolerances need isotropic spacing; inputs must already share one grid.
 - Distance transforms use $O(N)$ memory over the shared bounding box. A 300×300×150 pair peaks at roughly 0.65 GB.
 - The foreground EDT runs on the **full** mask volume (it cannot be cropped). It adds about 50 bytes per voxel at peak: about 0.63 GB for 300×300×150. It runs after the geometry transforms are released.
 - Foreground EDT values near an image face that the mask touches can be too large, because the background beyond the image is unknown.
