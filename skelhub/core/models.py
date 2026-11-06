@@ -41,8 +41,13 @@ class SkeletonResult:
     graph: GraphResult | None = None
 
 
-EVALUATION_SCHEMA_VERSION = "2.1"
+EVALUATION_SCHEMA_VERSION = "3.0"
 FOREGROUND_EDT_NO_MASK_REASON = "No foreground mask supplied"
+FOREGROUND_EDT_GRAPHML_REASON = (
+    "Foreground EDT-sum agreement is NIfTI-only; it is not available for GraphML inputs"
+)
+INPUT_REPRESENTATION_NIFTI = "nifti"
+INPUT_REPRESENTATION_GRAPHML = "graphml"
 
 
 @dataclass(slots=True)
@@ -51,6 +56,8 @@ class ToleranceMatch:
 
     Scores and counts are ``None`` when the comparison has no reference-based
     meaning (empty reference); see ``GeometryResult.coverage_unavailable_reason``.
+    NIfTI runs fill the ``*_voxels`` counts; GraphML runs fill the ``*_length_um``
+    curve lengths instead. The other family is always ``None``.
     """
 
     tolerance_um: float
@@ -64,11 +71,21 @@ class ToleranceMatch:
     unmatched_prediction_voxels: int | None = None
     matched_reference_voxels: int | None = None
     unmatched_reference_voxels: int | None = None
+    matched_prediction_length_um: float | None = None
+    unmatched_prediction_length_um: float | None = None
+    matched_reference_length_um: float | None = None
+    unmatched_reference_length_um: float | None = None
 
 
 @dataclass(slots=True)
 class DistanceSummary:
-    """Directional and symmetric voxel-centre distances in micrometres."""
+    """Directional and symmetric distances in micrometres.
+
+    NIfTI runs use exact voxel-centre distances. GraphML runs use
+    length-weighted samples of the stored polylines; their maxima and Hausdorff
+    distance are sampled lower bounds, so ``hausdorff_is_approximate`` is True
+    and the true value lies in ``[hausdorff_um, hausdorff_upper_bound_um]``.
+    """
 
     mean_pred_to_ref_um: float
     mean_ref_to_pred_um: float
@@ -79,6 +96,9 @@ class DistanceSummary:
     max_pred_to_ref_um: float
     max_ref_to_pred_um: float
     hausdorff_um: float
+    hausdorff_is_approximate: bool = False
+    sampling_error_bound_um: float | None = None
+    hausdorff_upper_bound_um: float | None = None
 
 
 @dataclass(slots=True)
@@ -98,7 +118,11 @@ class GeometryResult:
 
 @dataclass(slots=True)
 class BettiNumbers:
-    """Voxel Betti numbers and Euler characteristic of one skeleton."""
+    """Betti numbers and Euler characteristic of one skeleton.
+
+    NIfTI: voxel topology (foreground-26 / background-6). GraphML: computed from
+    stored connectivity, with ``beta_2`` structurally zero for a 1D graph.
+    """
 
     beta_0: int
     beta_1: int
@@ -124,12 +148,16 @@ class CountComparison:
 
 @dataclass(slots=True)
 class TopologyResult:
-    """Betti numbers of the original (unbuffered) reference and prediction."""
+    """Betti numbers of the original (unbuffered) reference and prediction.
+
+    The voxel connectivities are ``None`` for GraphML inputs, whose topology
+    comes from the stored edges.
+    """
 
     reference: BettiNumbers
     prediction: BettiNumbers
-    foreground_connectivity: int = 26
-    background_connectivity: int = 6
+    foreground_connectivity: int | None = 26
+    background_connectivity: int | None = 6
 
     def comparison(self, k: int) -> CountComparison:
         """Count comparison for Betti number ``beta_k``, k in {0, 1, 2}."""
@@ -193,12 +221,81 @@ class ForegroundEdtAgreement:
 
 
 @dataclass(slots=True)
+class GraphInputSummary:
+    """What one GraphML input contributed to the evaluation.
+
+    ``state`` is ``curve_geometry`` (positive edge length), ``no_curve_geometry``
+    (nodes but no edges) or ``no_nodes``. ``edge_paths`` is ``stored``
+    (``centerline_voxel_points``), ``straight_node_segments`` (the file declares
+    no edge paths, so each edge is the segment between its nodes) or ``none``
+    (no edges). Isolated nodes count in topology but carry no curve geometry.
+    """
+
+    path: str | None
+    state: str
+    nodes: int
+    edges: int
+    isolated_nodes: int
+    self_loops: int
+    parallel_edges: int
+    total_length_um: float
+    segments: int
+    edge_paths: str
+    reversed_edge_paths: int
+    repeated_points_skipped: int
+    points_outside_image: int
+    length_samples: int = 0
+
+
+@dataclass(slots=True)
+class CoordinateImageInfo:
+    """The NIfTI header that defines the voxel-index frame shared by both graphs."""
+
+    path: str
+    shape: list[int]
+    header_spatial_unit: str | None
+    effective_spatial_unit: str
+    spatial_unit_source: str
+    spacing_um: list[float]
+    affine_um: list[list[float]]
+
+
+@dataclass(slots=True)
+class GraphSamplingInfo:
+    """Curve-sampling settings of a GraphML evaluation.
+
+    ``mode`` is ``automatic`` (``resolved_step_um = 0.1 * min(spacing_um)``) or
+    ``custom`` (``requested_step_um`` used as given). Every stored segment is cut
+    into equal intervals no longer than ``resolved_step_um``; maxima are sampled
+    to within ``hausdorff_error_bound_um = resolved_step_um / 2``.
+    """
+
+    mode: str
+    requested_step_um: float | None
+    resolved_step_um: float
+    automatic_rule: str
+    hausdorff_error_bound_um: float
+
+
+@dataclass(slots=True)
+class GraphEvaluationInfo:
+    """GraphML-specific provenance: the coordinate frame, sampling and both inputs."""
+
+    coordinate_image: CoordinateImageInfo
+    sampling: GraphSamplingInfo
+    prediction: GraphInputSummary
+    reference: GraphInputSummary
+
+
+@dataclass(slots=True)
 class EvaluationResult:
-    """Standardized voxel-based evaluation result (schema 2.1).
+    """Standardized evaluation result (schema 3.0, evaluation v3) for NIfTI or GraphML inputs.
 
     ``status`` is one of ``ok``, ``empty_prediction``, ``empty_reference`` or
     ``both_empty``. There is no combined quality score by design.
-    ``foreground_edt`` is ``None`` when no foreground mask was supplied.
+    ``input_representation`` is ``nifti`` or ``graphml``; ``graph`` holds the
+    GraphML provenance and is ``None`` for NIfTI runs. ``foreground_edt`` is
+    ``None`` when no foreground mask was supplied, and always for GraphML.
     """
 
     message: str
@@ -213,8 +310,14 @@ class EvaluationResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     foreground_edt: ForegroundEdtAgreement | None = None
+    input_representation: str = INPUT_REPRESENTATION_NIFTI
+    graph: GraphEvaluationInfo | None = None
 
     @property
     def foreground_edt_unavailable_reason(self) -> str | None:
         """Why the foreground EDT-sum agreement is missing, or ``None`` when it was computed."""
-        return FOREGROUND_EDT_NO_MASK_REASON if self.foreground_edt is None else None
+        if self.foreground_edt is not None:
+            return None
+        if self.input_representation == INPUT_REPRESENTATION_GRAPHML:
+            return FOREGROUND_EDT_GRAPHML_REASON
+        return FOREGROUND_EDT_NO_MASK_REASON

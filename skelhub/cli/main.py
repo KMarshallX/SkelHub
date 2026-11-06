@@ -333,8 +333,16 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
     _add_run_backend_arguments(run_parser, run_algorithm)
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")
-    eval_parser.add_argument("--pred", required=True, help="Predicted skeleton NIfTI path.")
-    eval_parser.add_argument("--ref", required=True, help="Reference skeleton NIfTI path.")
+    eval_parser.add_argument(
+        "--pred",
+        required=True,
+        help="Predicted skeleton: a NIfTI (.nii/.nii.gz) or a GraphML (.graphml). Must match --ref.",
+    )
+    eval_parser.add_argument(
+        "--ref",
+        required=True,
+        help="Reference skeleton: a NIfTI (.nii/.nii.gz) or a GraphML (.graphml). Must match --pred.",
+    )
     eval_parser.add_argument(
         "-b",
         "--buffer-radius",
@@ -344,7 +352,7 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         metavar="RADIUS",
         help=(
             "One or more geometry tolerances, each reported separately; the first is primary. "
-            "Zero means exact voxel-centre matching."
+            "Zero means exact voxel-centre matching (NIfTI) or exact contact (GraphML)."
         ),
     )
     eval_parser.add_argument(
@@ -352,8 +360,8 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         choices=("voxels", "um"),
         default="voxels",
         help=(
-            "Unit for --buffer-radius. 'voxels' is converted to um and needs isotropic spacing; "
-            "use 'um' on anisotropic grids."
+            "Unit for --buffer-radius. 'voxels' is converted to um and needs isotropic spacing "
+            "(of the coordinate image for GraphML); use 'um' on anisotropic grids."
         ),
     )
     eval_parser.add_argument(
@@ -361,10 +369,33 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional shared binary foreground mask NIfTI on the skeletons' grid. Adds the foreground "
-            "EDT-sum agreement; without it that metric is not computed."
+            "EDT-sum agreement; without it that metric is not computed. NIfTI inputs only."
         ),
     )
-    for role, name in (("pred", "--pred"), ("ref", "--ref"), ("foreground", "--foreground")):
+    eval_parser.add_argument(
+        "--coordinate-image",
+        default=None,
+        help=(
+            "GraphML only, required there: the NIfTI whose voxel grid both graphs' voxel_pos and "
+            "centerline_voxel_points refer to (e.g. the original image). Only its header is read."
+        ),
+    )
+    eval_parser.add_argument(
+        "--sample-step-um",
+        type=float,
+        default=None,
+        metavar="UM",
+        help=(
+            "GraphML only: maximum curve-sampling interval in um (positive, finite). "
+            "Default: 0.1 x the coordinate image's smallest voxel spacing."
+        ),
+    )
+    for role, name in (
+        ("pred", "--pred"),
+        ("ref", "--ref"),
+        ("foreground", "--foreground"),
+        ("coordinate", "--coordinate-image"),
+    ):
         eval_parser.add_argument(
             f"--{role}-spatial-unit",
             choices=SELECTABLE_SPATIAL_UNITS,
@@ -461,6 +492,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "evaluate":
         if args.foreground_spatial_unit is not None and args.foreground is None:
             parser.exit(status=2, message="skelhub evaluate: error: --foreground-spatial-unit requires --foreground.\n")
+        if args.coordinate_spatial_unit is not None and args.coordinate_image is None:
+            parser.exit(
+                status=2,
+                message="skelhub evaluate: error: --coordinate-spatial-unit requires --coordinate-image.\n",
+            )
         try:
             result = evaluate_prediction_path(
                 args.pred,
@@ -471,6 +507,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 ref_spatial_unit=args.ref_spatial_unit,
                 foreground_path=args.foreground,
                 foreground_spatial_unit=args.foreground_spatial_unit,
+                coordinate_image_path=args.coordinate_image,
+                coordinate_spatial_unit=args.coordinate_spatial_unit,
+                sample_step_um=args.sample_step_um,
                 log=print if args.verbose else None,
             )
             print(format_evaluation_report(result, verbose=args.verbose))

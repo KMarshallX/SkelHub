@@ -64,11 +64,11 @@ Topology summary of an undirected graph.
 
 ## Evaluate
 
-Compares a predicted skeleton NIfTI with a reference skeleton, using the same evaluation as `skelhub evaluate`. For metric definitions and input rules, see [Evaluation](evaluation.md).
+Compares a predicted skeleton with a reference skeleton, using the same evaluation as `skelhub evaluate`: two NIfTI volumes, or two GraphML graphs. For metric definitions and input rules, see [Evaluation](evaluation.md).
 
 ### Inputs and spatial units
 
-- Select a **Prediction skeleton NIfTI** and a **Reference skeleton NIfTI** (`.nii` or `.nii.gz`) with **Browse…** or by typing a path.
+- Select a **Prediction skeleton** and a **Reference skeleton** (`.nii`, `.nii.gz` or `.graphml`) with **Browse…** or by typing a path. The pair's type comes from the file names. A NIfTI/GraphML mix is explained and keeps **Evaluate** disabled.
 - **Shared foreground mask NIfTI** is optional. It is one binary (0/1) mask for both skeletons, on the same grid, and adds the foreground EDT-sum agreement. **Clear** removes it; without a mask that metric is shown as not computed.
 - Each file's header is read when you pick it (or shortly after you stop typing). The voxel data is not loaded for this. Next to each file's unit you see its shape, the header unit, the effective unit and the voxel spacing in µm.
 - **Spatial unit**, set separately for each of the three files. The choices are cm, mm, µm and nm:
@@ -78,6 +78,15 @@ Compares a predicted skeleton NIfTI with a reference skeleton, using the same ev
 - A unit choice labels the stored spacing and coordinate values; it does not change the spacing. Stored spacing 0.05 with mm gives 50 µm; 50 with µm gives 50 µm; 1 with µm gives 1 µm. Files are never modified.
 - Choosing a different file clears that file's unit choice and preview.
 - Shape differences (including the mask's) are flagged before the run. Shape and affine mismatches, and invalid masks (non-binary, all zero, all one), are rejected by the evaluation, and the error appears in a warning dialog.
+
+### GraphML pairs
+
+- When both inputs are `.graphml`, the mask rows are hidden (the EDT-sum agreement is NIfTI-only, and a note says so). A **Coordinate image NIfTI** row appears instead and is required. It is the NIfTI whose voxel grid both graphs' coordinates refer to; only its header is read.
+- The graph rows show "From coordinate image" in place of a unit. The coordinate image's unit works like any NIfTI unit above: a known header unit is locked, and an unknown one must be chosen.
+- The graph files are only checked for existence before the run. They are parsed and validated by the evaluation on the background worker, and errors (directed graph, inconsistent paths, mismatched world coordinates and so on) appear in a warning dialog.
+- **Curve sampling**: **Automatic** (default) or **Custom**. The resolved interval is shown in µm: 0.1 × the coordinate image's smallest spacing, or the custom value exactly as entered (positive, finite). Voxel tolerances use the coordinate image's spacing.
+- **Results**: the supporting table shows **matched and unmatched curve lengths (µm)** instead of voxel counts. Distances add **Hausdorff (sampled, approximate) Ĥ** and its upper bound **Ĥ + h/2**. β₂ reads "Cavities, β₂ (always 0)", endpoints are **Degree-1 nodes**, and the help icons explain the graph definitions. The EDT-sum section reads "Not available—NIfTI-only".
+- The coordinate image, its unit and the sampling settings are part of the result's freshness: changing any of them marks results outdated.
 
 ### Tolerances
 
@@ -101,7 +110,7 @@ Compares a predicted skeleton NIfTI with a reference skeleton, using the same ev
   - endpoint diagnostics
 - **Unavailable values** show as **N/A**; hover to see the reason. They are never shown as zero.
 - **Warnings**, including declared-unit provenance, appear above the tables and in the run log.
-- **Outdated results**: changing a file (including adding, changing or clearing the mask), a declared unit, the tolerances or the tolerance unit marks the results "Results are outdated — run evaluation again." Changes to a file on disk are detected when you evaluate or export. A failed rerun keeps the old results marked as outdated.
+- **Outdated results**: changing a file (including adding, changing or clearing the mask, or the coordinate image), a declared unit, the tolerances, the tolerance unit or the sampling settings marks the results "Results are outdated — run evaluation again." Changes to a file on disk are detected when you evaluate or export. A failed rerun keeps the old results marked as outdated.
 - **Export JSON…** writes the same JSON report as `skelhub evaluate --json-output`, with full precision, warnings and unit provenance. It is enabled only for a current result, including empty-input results. An existing file is replaced only after you confirm.
 
 ## EDT Heat

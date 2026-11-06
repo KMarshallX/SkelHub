@@ -7,26 +7,42 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from skelhub.core import CountComparison, EvaluationResult, ForegroundEdtAgreement, ForegroundEdtSummary, ToleranceMatch
+from skelhub.core import (
+    INPUT_REPRESENTATION_GRAPHML,
+    CountComparison,
+    EvaluationResult,
+    ForegroundEdtAgreement,
+    ForegroundEdtSummary,
+    GraphEvaluationInfo,
+    GraphInputSummary,
+    ToleranceMatch,
+)
 
 from .foreground_edt import BOUNDARY_POLICY, FOREGROUND_EDT_DEFINITION, FOREGROUND_EDT_DISTANCE
 
 
 FOREGROUND_EDT_TITLE = "Foreground EDT-sum Agreement"
 FOREGROUND_EDT_NOT_COMPUTED = "Not computed\u2014no foreground mask supplied"
+FOREGROUND_EDT_GRAPHML = "Not available\u2014NIfTI-only; not defined for GraphML inputs"
+VOXEL_TOPOLOGY_DEFINITION = "voxel Betti numbers, foreground-26 / background-6 connectivity"
+GRAPH_TOPOLOGY_NOTE = "graph connectivity; beta_2 is structurally 0 (not a volumetric cavity measurement)"
 
 
 def format_evaluation_report(result: EvaluationResult, *, verbose: bool = False) -> str:
     """Format a terminal report. There is no combined score or pass/fail verdict."""
     geometry = result.geometry
     topology = result.topology
+    graph = result.graph if result.input_representation == INPUT_REPRESENTATION_GRAPHML else None
     lines = [
         "SkelHub Evaluation Report",
         f"Prediction: {result.pred_path or 'in-memory array'}",
         f"Reference: {result.ref_path or 'in-memory array'}",
+        f"Input: {'GraphML (stored polylines, length-weighted)' if graph else 'NIfTI voxels'}",
         f"Status: {result.status}",
     ]
-    if verbose:
+    if graph is not None:
+        lines.extend(_graph_header_lines(graph, verbose=verbose))
+    elif verbose:
         lines.append(f"Shape: {tuple(result.metadata.get('shape', ()))}")
         spacing = result.metadata.get("spacing_um")
         if spacing is not None:
@@ -55,7 +71,14 @@ def format_evaluation_report(result: EvaluationResult, *, verbose: bool = False)
         lines.append(f"  unavailable: {geometry.coverage_unavailable_reason}")
     for match in geometry.tolerances:
         lines.append(f"  {_tolerance_label(match)}: {_coverage_text(match)}")
-        if verbose and match.f1 is not None:
+        if verbose and match.f1 is not None and graph is not None:
+            lines.append(
+                "    matched/unmatched prediction length: "
+                f"{_um(match.matched_prediction_length_um)}/{_um(match.unmatched_prediction_length_um)}; "
+                "matched/unmatched reference length: "
+                f"{_um(match.matched_reference_length_um)}/{_um(match.unmatched_reference_length_um)}"
+            )
+        elif verbose and match.f1 is not None:
             lines.append(
                 "    matched/unmatched prediction voxels: "
                 f"{match.matched_prediction_voxels}/{match.unmatched_prediction_voxels}; "
@@ -81,16 +104,26 @@ def format_evaluation_report(result: EvaluationResult, *, verbose: bool = False)
                 f"  ref->pred: mean={_um(distances.mean_ref_to_pred_um)}, "
                 f"P95={_um(distances.p95_ref_to_pred_um)}, max={_um(distances.max_ref_to_pred_um)}"
             )
+        if distances.hausdorff_is_approximate:
+            lines.append(
+                f"  Hausdorff (sampled, approximate)={_um(distances.hausdorff_um)}; true value <= "
+                f"{_um(distances.hausdorff_upper_bound_um)} (bound h/2={_um(distances.sampling_error_bound_um)})"
+            )
+        elif verbose:
             lines.append(f"  Hausdorff (max)={_um(distances.hausdorff_um)}")
 
-    lines.extend(_foreground_edt_lines(result.foreground_edt, verbose=verbose))
+    if graph is not None:
+        lines.extend([f"{FOREGROUND_EDT_TITLE}:", f"  {FOREGROUND_EDT_GRAPHML}"])
+    else:
+        lines.extend(_foreground_edt_lines(result.foreground_edt, verbose=verbose))
 
-    lines.append("Topology (reference -> prediction):")
+    lines.append(f"Topology (reference -> prediction{'; from graph connectivity' if graph else ''}):")
     for k, name in ((0, "components"), (1, "cycles"), (2, "cavities")):
         comparison = topology.comparison(k)
         lines.append(
             f"  {name} beta_{k}: {comparison.reference} -> {comparison.prediction} "
             f"(diff {comparison.signed_difference:+d})"
+            + (" [structurally 0 for graphs]" if graph is not None and k == 2 else "")
         )
     if verbose:
         lines.append(
@@ -101,14 +134,46 @@ def format_evaluation_report(result: EvaluationResult, *, verbose: bool = False)
 
     endpoints = result.endpoints
     lines.append(
-        f"Endpoint diagnostics: reference={endpoints.reference}, prediction={endpoints.prediction} "
-        f"(diff {endpoints.signed_difference:+d})"
+        f"Endpoint diagnostics{' (degree-1 nodes)' if graph else ''}: reference={endpoints.reference}, "
+        f"prediction={endpoints.prediction} (diff {endpoints.signed_difference:+d})"
     )
 
     if result.warnings:
         lines.append("Warnings:")
         lines.extend(f"- {warning}" for warning in result.warnings)
     return "\n".join(lines)
+
+
+def _graph_header_lines(graph: GraphEvaluationInfo, *, verbose: bool) -> list[str]:
+    image = graph.coordinate_image
+    sampling = graph.sampling
+    step = f"{sampling.resolved_step_um:.6g} um ({sampling.mode}"
+    step += f", {sampling.automatic_rule})" if sampling.requested_step_um is None else ")"
+    lines = [
+        f"Coordinate image: {image.path}",
+        f"Sampling interval: {step}",
+        f"Curve length: prediction={_um(graph.prediction.total_length_um)}, "
+        f"reference={_um(graph.reference.total_length_um)}",
+    ]
+    if verbose:
+        lines.append(f"Shape: {tuple(image.shape)}")
+        lines.append(f"Spacing: {tuple(round(float(value), 6) for value in image.spacing_um)} um")
+        lines.append(
+            f"Spatial unit: {image.effective_spatial_unit} (from {image.spatial_unit_source}; "
+            f"header {image.header_spatial_unit})"
+        )
+        for name, summary in (("prediction", graph.prediction), ("reference", graph.reference)):
+            lines.append(f"Graph {name}: {_graph_summary_text(summary)}")
+    return lines
+
+
+def _graph_summary_text(summary: GraphInputSummary) -> str:
+    return (
+        f"{summary.nodes} nodes, {summary.edges} edges ({summary.self_loops} self-loops, "
+        f"{summary.parallel_edges} parallel), {summary.isolated_nodes} isolated nodes, "
+        f"{summary.segments} segments, {summary.length_samples} length samples, edge paths {summary.edge_paths}, "
+        f"state {summary.state}"
+    )
 
 
 def result_to_json_dict(result: EvaluationResult) -> dict[str, Any]:
@@ -122,8 +187,10 @@ def result_to_json_dict(result: EvaluationResult) -> dict[str, Any]:
         unavailable["geometry.distances"] = geometry.distances_unavailable_reason
     unavailable.update(_foreground_edt_unavailable(result))
 
+    graph_mode = result.input_representation == INPUT_REPRESENTATION_GRAPHML
     return {
         "schema_version": result.schema_version,
+        "input_representation": result.input_representation,
         "status": result.status,
         "metadata": {
             "message": result.message,
@@ -138,6 +205,7 @@ def result_to_json_dict(result: EvaluationResult) -> dict[str, Any]:
             "distances_um": None if geometry.distances is None else asdict(geometry.distances),
         },
         "topology": {
+            "definition": GRAPH_TOPOLOGY_NOTE if graph_mode else VOXEL_TOPOLOGY_DEFINITION,
             "foreground_connectivity": topology.foreground_connectivity,
             "background_connectivity": topology.background_connectivity,
             "reference": asdict(topology.reference),
@@ -147,6 +215,7 @@ def result_to_json_dict(result: EvaluationResult) -> dict[str, Any]:
         },
         "endpoint_diagnostics": _comparison_dict(result.endpoints),
         "foreground_edt_agreement": _foreground_edt_dict(result.foreground_edt),
+        "graph": None if result.graph is None else asdict(result.graph),
         "warnings": list(result.warnings),
         "unavailable": unavailable,
     }
@@ -257,5 +326,5 @@ def _coverage_text(match: ToleranceMatch) -> str:
     return f"F1={match.f1:.4f}, precision={match.precision:.4f}, recall={match.recall:.4f}"
 
 
-def _um(value: float) -> str:
-    return f"{value:.4g} um"
+def _um(value: float | None) -> str:
+    return "N/A" if value is None else f"{value:.4g} um"

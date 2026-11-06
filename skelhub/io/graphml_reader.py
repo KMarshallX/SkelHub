@@ -83,6 +83,8 @@ class GraphVoxelGeometry:
     edge_voxel_paths: tuple[np.ndarray, ...]
     world_positions: np.ndarray | None = None
     edge_world_paths: tuple[np.ndarray, ...] | None = None
+    edge_paths_stored: bool = True
+    directed: bool = False
 
 
 @dataclass(slots=True)
@@ -93,6 +95,7 @@ class _GeometryTables:
     node_values: dict[str, list[object]]
     edge_ends: list[tuple[str, str]]
     edge_values: dict[str, list[object]]
+    directed: bool = False
 
 
 def _local_tag(tag: str) -> str:
@@ -118,6 +121,8 @@ def _read_geometry_tables(path: Path) -> _GeometryTables:
     depth = 0
     finished = False
     root_checked = False
+    edge_default_directed = False
+    directed = False
     context = ElementTree.iterparse(str(path), events=("start", "end"))
     for event, element in context:
         tag = _local_tag(element.tag)
@@ -132,6 +137,8 @@ def _read_geometry_tables(path: Path) -> _GeometryTables:
                 depth += 1
                 if depth > 1:
                     raise ValueError("nested graphs are not supported")
+                # GraphML's schema default for a missing edgedefault is "directed".
+                edge_default_directed = element.get("edgedefault", "directed") == "directed"
             continue
         if tag == "key":
             domain, name, key_id = element.get("for", "all"), element.get("attr.name"), element.get("id")
@@ -160,6 +167,10 @@ def _read_geometry_tables(path: Path) -> _GeometryTables:
                     raise ValueError(f"edge {len(edge_ends)} needs both source and target")
                 edge_ends.append((source, target))
                 raw_edges.append(values)
+                edge_direction = element.get("directed")
+                directed = directed or (
+                    edge_default_directed if edge_direction is None else edge_direction.strip().lower() == "true"
+                )
             element.clear()
         elif tag == "graph":
             depth -= 1
@@ -180,7 +191,7 @@ def _read_geometry_tables(path: Path) -> _GeometryTables:
         missing = [end for end in (source, target) if end not in known]
         if missing:
             raise ValueError(f"edge {index} refers to unknown node '{missing[0]}'")
-    return _GeometryTables(node_ids, node_values, edge_ends, edge_values)
+    return _GeometryTables(node_ids, node_values, edge_ends, edge_values, directed)
 
 
 def _optional_world_positions(names: set[str], values: dict[str, list[object]]) -> np.ndarray | None:
@@ -202,12 +213,28 @@ def _optional_world_positions(names: set[str], values: dict[str, list[object]]) 
     return None
 
 
-def read_graph_voxel_geometry(input_path: str | Path) -> GraphVoxelGeometry:
+def read_graph_voxel_geometry(
+    input_path: str | Path,
+    *,
+    allow_empty: bool = False,
+    allow_missing_edge_paths: bool = False,
+) -> GraphVoxelGeometry:
     """Load node ``voxel_pos`` values and ``centerline_voxel_points`` edge paths.
 
     Every node must provide ``voxel_pos``. When the graph has edges, every edge
     must provide ``centerline_voxel_points``. ``X/Y/Z`` and
     ``centerline_world_points`` are optional and returned unchanged.
+
+    Two opt-in relaxations, both off by default so viewers keep their contract:
+
+    - ``allow_empty``: a graph with no nodes is returned with empty arrays.
+    - ``allow_missing_edge_paths``: when the file declares no
+      ``centerline_voxel_points`` key at all, ``edge_voxel_paths`` is empty and
+      ``edge_paths_stored`` is False. A declared key with a missing value on
+      some edge is still rejected.
+
+    ``directed`` reports whether any edge is directed (GraphML ``edgedefault``
+    or a per-edge ``directed`` attribute); callers decide whether to reject.
 
     Parsed with the standard-library XML parser rather than igraph, so it is
     safe on worker threads; node IDs follow ``graph_node_ids``.
@@ -220,7 +247,16 @@ def read_graph_voxel_geometry(input_path: str | Path) -> GraphVoxelGeometry:
     except (ElementTree.ParseError, ValueError) as exc:
         raise ValueError(f"Failed to load GraphML file '{path}': {exc}") from exc
     if not tables.node_ids:
-        raise ValueError("GraphML file does not contain any nodes.")
+        if not allow_empty:
+            raise ValueError("GraphML file does not contain any nodes.")
+        return GraphVoxelGeometry(
+            source_path=str(input_path),
+            node_ids=(),
+            voxel_positions=np.empty((0, 3), dtype=float),
+            edge_indices=np.empty((0, 2), dtype=int),
+            edge_voxel_paths=(),
+            directed=tables.directed,
+        )
     if "voxel_pos" not in tables.node_values:
         raise ValueError("GraphML nodes must provide 'voxel_pos'.")
     # As in igraph, a node data attribute named "id" replaces the <node id>.
@@ -241,9 +277,15 @@ def read_graph_voxel_geometry(input_path: str | Path) -> GraphVoxelGeometry:
     )
     edge_voxel_paths: tuple[np.ndarray, ...] = ()
     edge_world_paths: tuple[np.ndarray, ...] | None = None
-    if tables.edge_ends:
-        if CENTERLINE_VOXEL_POINTS not in tables.edge_values:
-            raise ValueError(f"GraphML edges must provide '{CENTERLINE_VOXEL_POINTS}' for curved edge rendering.")
+    edge_paths_stored = CENTERLINE_VOXEL_POINTS in tables.edge_values or not tables.edge_ends
+    if tables.edge_ends and not edge_paths_stored and not allow_missing_edge_paths:
+        raise ValueError(f"GraphML edges must provide '{CENTERLINE_VOXEL_POINTS}' for curved edge rendering.")
+    if tables.edge_ends and not edge_paths_stored and CENTERLINE_WORLD_POINTS in tables.edge_values:
+        raise ValueError(
+            f"GraphML edges store '{CENTERLINE_WORLD_POINTS}' but not '{CENTERLINE_VOXEL_POINTS}'; "
+            "the stored world paths cannot be checked or used without their voxel-index paths."
+        )
+    if tables.edge_ends and edge_paths_stored:
         edge_voxel_paths = tuple(
             parse_graphml_path(value, label=f"edge {index} {CENTERLINE_VOXEL_POINTS}")
             for index, value in enumerate(tables.edge_values[CENTERLINE_VOXEL_POINTS])
@@ -268,4 +310,6 @@ def read_graph_voxel_geometry(input_path: str | Path) -> GraphVoxelGeometry:
         edge_voxel_paths=edge_voxel_paths,
         world_positions=world_positions,
         edge_world_paths=edge_world_paths,
+        edge_paths_stored=edge_paths_stored,
+        directed=tables.directed,
     )

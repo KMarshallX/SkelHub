@@ -1,5 +1,90 @@
 # Development Log
 
+## 2026-11-06 13:23 AEST — Evaluation v3: continuous GraphML evaluation in CLI, API and GUI (schema 3.0)
+
+- **What changed**:
+  - `skelhub evaluate`, `evaluate_prediction_path` and the GUI Evaluate tab now compare a **GraphML pair** as well as a NIfTI pair. The representation comes from the file extensions; mixed pairs are rejected.
+  - Graphs are evaluated on their stored float polylines (`centerline_voxel_points`), in the voxel frame of a required **coordinate image** (header only). Nothing is rasterized, smoothed, snapped, pruned or reconnected.
+  - New inputs:
+    - CLI: `--coordinate-image`, `--coordinate-spatial-unit`, `--sample-step-um`
+    - Python: `coordinate_image_path`, `coordinate_spatial_unit`, `sample_step_um`
+    - Options that do not apply are rejected, not ignored: `--foreground*` / `--pred|ref-spatial-unit` with GraphML; the three new options with NIfTI.
+  - Sampling: automatic $h = 0.1\min(s)$ or the custom step, used as given. Each segment is cut into $\lceil L/h \rceil$ equal intervals. Midpoints carry weight $L/n$; interval ends feed the maxima only.
+  - Distances: exact nearest-segment distances (k-d tree on sub-pieces plus a provable search radius), in bounded chunks.
+  - Metrics: length-weighted precision, recall and F1, with matched/unmatched lengths per direction; weighted means; P95 from the inverse weighted CDF; sampled Hausdorff $\widehat H$ with the bound $\widehat H \le H \le \widehat H + h/2$.
+  - Graph topology from connectivity: $\beta_0 = C$, $\beta_1 = E - V + C$, $\beta_2 = 0$ (structural), $\chi = V - E$. Endpoints are degree-1 nodes (a self-loop adds 2).
+  - Empty graphs follow the NIfTI statuses and scoring, keyed on positive edge length. `graph.<role>.state` (`no_nodes` / `no_curve_geometry` / `curve_geometry`), the warnings and the unavailable reasons tell the two kinds of empty graph apart.
+  - The foreground EDT-sum agreement stays NIfTI-only (`null`, with a reason).
+  - **Evaluation v3**, schema **3.0** (was 2.1):
+    - major bump because 2.x fields that were always filled (voxel counts, `topology.connectivity`) are `null` in GraphML reports
+    - new: `input_representation`, `graph` (coordinate image, sampling, per-graph summary), `topology.definition`, `*_length_um` coverage fields, `hausdorff_is_approximate`, `sampling_error_bound_um`, `hausdorff_upper_bound_um`
+    - GraphML `metric_definitions` is `skelhub-graph-v1`; NIfTI fields keep their meanings and NIfTI stays `skelhub-voxel-v2`
+  - GUI: both skeleton rows accept `.nii`, `.nii.gz` and `.graphml`.
+    - Mixed pairs are explained and blocked before running.
+    - Graph mode shows the coordinate-image row (with unit handling) and **Automatic / Custom** sampling with the resolved interval in µm. The mask rows are hidden, with a note.
+    - Results show lengths instead of voxel counts, Ĥ with its upper bound, and graph topology/endpoint labels and help.
+    - The coordinate image, its unit and the sampling settings join the freshness checks. JSON export is unchanged.
+- **Files**:
+  - Added:
+    - `skelhub/evaluation/dispatch.py`: representation detection, mixed and option checks
+    - `skelhub/evaluation/graph_inputs.py`: coordinate image, graph validation, µm segments
+    - `skelhub/evaluation/graph_geometry.py`: sampling, distance index, weighted statistics
+    - `skelhub/evaluation/graph_evaluator.py`
+    - `tests/test_evaluation_graphml.py` (local only; `tests/` is git-ignored)
+  - Modified:
+    - `skelhub/io/graphml_reader.py`: opt-in `allow_empty` and `allow_missing_edge_paths`; a `directed` flag; `edge_paths_stored`; defaults unchanged
+    - `skelhub/evaluation/validation.py`: `prepare_spatial_frame` extracted from `prepare_skeleton_volume`, with no behaviour change
+    - `skelhub/evaluation/geometry.py`: `f1_score` extracted, with no behaviour change
+    - `skelhub/evaluation/reporting.py`, `skelhub/evaluation/__init__.py`
+    - `skelhub/core/models.py`, `skelhub/core/__init__.py`: new fields and dataclasses, schema 3.0
+    - `skelhub/api.py`, `skelhub/cli/main.py`, `skelhub/gui/evaluate_tab.py`
+    - `tests/test_gui_evaluate.py`, `tests/test_evaluation_interfaces.py`, `tests/test_evaluation_foreground_edt.py`: schema 3.0, file filter, GraphML GUI tests
+  - Docs: `docs/evaluation.md` (new "GraphML inputs and sampling" section; graph formulas beside the voxel ones; topology, endpoints, empty inputs, report and limitations), `docs/API.md`, `docs/StructuredOutput.md`, `docs/GUI.md`, `docs/architecture.md`, `docs/algorithms.md` (Laplacian exports), `docs/postprocessing.md`, `README.md`. `docs/visualization.md` needed no change.
+- **Architecture decisions**:
+  - GraphML has its own input → metrics → orchestration modules, mirroring the voxel ones. These are shared rather than copied: affine/unit validation (`prepare_spatial_frame`), tolerance normalization, the matching slack, F1, the status names and reporting.
+  - Dispatch sits in the evaluation layer; `api.evaluate_prediction_path` stays a thin pass-through used by both the CLI and the GUI.
+  - The reader relaxations are opt-in, so the viewer, EDT Heat and Check keep their stricter contract.
+  - Results keep one `EvaluationResult` type. Graph-specific data lives in new fields (`graph`, `*_length_um`); voxel fields never hold lengths.
+- **Assumptions** (confirmed with the user on 2026-11-06):
+  - A file that declares no `centerline_voxel_points` key (Laplacian `--graph_output`) is evaluated as straight node segments, with a warning. A key missing on some edges is rejected.
+  - Stored world coordinates (X/Y/Z, `centerline_world_points`) must match the coordinate image's stored affine applied to `voxel_pos`, within $10^{-3}$ × the smallest stored spacing; otherwise the file is rejected.
+  - Points outside the image extent (index below $-0.5$ or above $n - 0.5$) warn and do not stop evaluation.
+  - Sheared coordinate images are rejected, as for NIfTI.
+  - My own choices:
+    - endpoint tolerance $10^{-6}$ voxel per axis
+    - "repeated point" means exact equality
+    - a missing GraphML `edgedefault` counts as directed (the GraphML schema default)
+    - the coordinate image must be 3D
+    - P95 uses a $10^{-12}$ relative slack on cumulative weights
+    - the distance-index piece length is the smallest spacing (this does not affect results)
+- **Limitations**:
+  - Means, P95 and coverage are midpoint-rule approximations without a reported error bound; only the maxima are bounded.
+  - Geometry ignores radii and node volumes. Crossing edges without a shared node stay disconnected.
+  - NIfTI and GraphML scores are not interchangeable (voxel vs length weighting, different P95 definitions).
+  - Laplacian `--graph_original` can store a zero-length edge as one point; such files are rejected, per the zero-length rule.
+  - No branch matching or NetMets; no mixed GraphML/NIfTI comparison; GraphML is file-only (no in-memory graph entry point).
+- **Performance** (synthetic 2,000-edge tree, ≈ 398 mm of curves, 5 µm spacing, pred = jittered ref):
+  - automatic $h$ = 0.5 µm, 1.92 × 10⁶ samples: 9.9 s, peak RSS 235 MB (108 MB baseline)
+  - $h$ = 2.5 µm: 3.4 s
+  - 200 edges: 0.85 s
+  - Memory: about 16 B per midpoint, plus fixed 65,536-point chunks.
+- **Tests**:
+  - New `tests/test_evaluation_graphml.py` (68):
+    - identical geometry under resampling and degree-2 subdivision; analytic offsets, weighted coverage and percentiles; length (not point) weighting
+    - missing and extra branches; reversed paths; broken loops, self-loops, parallel edges, components and isolated nodes
+    - empty graphs (no nodes vs no edges); zero-length and repeated points; inconsistent, missing and malformed paths; directed graphs (default, missing, per edge)
+    - straight-segment files; world-coordinate mismatch; out-of-image warnings; anisotropic and rotated affines; unknown, declared and conflicting units; voxel tolerances
+    - non-mask coordinate images; automatic and custom steps, invalid steps
+    - k-d distances against brute force; segment vs vertex distances; the Hausdorff bound at 5 steps and convergence
+    - graphgen, cleaner and Laplacian outputs; API/CLI/JSON agreement; CLI errors; NIfTI field meanings
+  - `tests/test_gui_evaluate.py` +8: input switching and mixed pairs, coordinate unit and sampling readiness, worker-thread API capture, result labels and lengths, freshness, rejection handling, export, layout at 1366×768 and 850×560.
+  - Updated for intended changes: schema `3.0` (3 assertions) and the skeleton file filter.
+  - Full suite: 504 passed (428 before). Layout also checked with offscreen screenshots at 1366×768 and 850×560.
+- **Remaining risks / next steps**:
+  - Runtime grows with length / $h$; very large graphs at the automatic step may take minutes. The custom step is the lever.
+  - Consider reporting an error estimate for the means and coverage; consider an in-memory graph API, branch matching and NetMets.
+- **Suggested commit message**: `Add evaluation v3: continuous GraphML evaluation in CLI, API and GUI (schema 3.0)`
+
 ## 2026-10-03 16:16 AEST — Optional foreground EDT-sum agreement; cm/nm unit declarations (schema 2.1)
 
 - **What changed**:

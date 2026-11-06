@@ -131,8 +131,6 @@ def _tolerance_match(
     matched_ref: int,
     unmatched_ref: int,
 ) -> ToleranceMatch:
-    denominator = precision + recall
-    f1 = 0.0 if denominator == 0 else 2.0 * precision * recall / denominator
     return ToleranceMatch(
         tolerance_um=spec.tolerance_um,
         requested_value=spec.requested_value,
@@ -140,12 +138,18 @@ def _tolerance_match(
         is_primary=spec.is_primary,
         precision=float(precision),
         recall=float(recall),
-        f1=float(f1),
+        f1=f1_score(precision, recall),
         matched_prediction_voxels=matched_pred,
         unmatched_prediction_voxels=unmatched_pred,
         matched_reference_voxels=matched_ref,
         unmatched_reference_voxels=unmatched_ref,
     )
+
+
+def f1_score(precision: float, recall: float) -> float:
+    """Harmonic mean of precision and recall; 0 when both are 0."""
+    denominator = precision + recall
+    return 0.0 if denominator == 0 else float(2.0 * precision * recall / denominator)
 
 
 def _union_bounding_box(first: np.ndarray, second: np.ndarray) -> tuple[slice, ...]:

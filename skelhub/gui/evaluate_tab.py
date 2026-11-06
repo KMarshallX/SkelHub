@@ -1,6 +1,9 @@
-"""Evaluate tab: compare a predicted skeleton NIfTI with a reference using the evaluation API.
+"""Evaluate tab: compare a predicted skeleton with a reference using the evaluation API.
 
-An optional shared foreground mask adds the foreground EDT-sum agreement.
+Inputs are a NIfTI pair or a GraphML pair, detected from the file names. A
+NIfTI pair may add a shared foreground mask (foreground EDT-sum agreement). A
+GraphML pair needs a coordinate image whose voxel grid both graphs use, and
+has Automatic / Custom curve-sampling settings.
 """
 from __future__ import annotations
 
@@ -17,16 +20,17 @@ from PySide6.QtWidgets import (
 )
 
 from skelhub.api import evaluate_prediction_path
-from skelhub.core import EvaluationResult
+from skelhub.core import INPUT_REPRESENTATION_GRAPHML, INPUT_REPRESENTATION_NIFTI, EvaluationResult
 from skelhub.core import ForegroundEdtAgreement
-from skelhub.evaluation import write_evaluation_json
-from skelhub.evaluation.reporting import FOREGROUND_EDT_NOT_COMPUTED, FOREGROUND_EDT_TITLE
+from skelhub.evaluation import detect_input_representation, write_evaluation_json
+from skelhub.evaluation.graph_geometry import AUTOMATIC_STEP_FRACTION, resolve_sample_step
+from skelhub.evaluation.reporting import FOREGROUND_EDT_GRAPHML, FOREGROUND_EDT_NOT_COMPUTED, FOREGROUND_EDT_TITLE
 from skelhub.evaluation.validation import (
     HEADER_SPATIAL_UNITS, SELECTABLE_SPATIAL_UNITS, UNKNOWN_SPATIAL_UNITS, normalize_tolerances, resolve_spatial_unit,
     unit_factor_to_um,
 )
 
-from .edt_tab import NIFTI_FILTER, OUTDATED_COLOR, HelpIcon
+from .edt_tab import NIFTI_FILTER, OUTDATED_COLOR, SKELETON_FILTER, HelpIcon
 from .services import NiftiHeaderPreview, file_identity, inspect_nifti_header
 
 
@@ -60,21 +64,56 @@ FOREGROUND_HELP = (
 TOLERANCE_PLACEHOLDER = "e.g. 50, 100"
 TOLERANCE_RULE = "Each tolerance is reported separately. The first is primary."
 TOLERANCE_HELP = (
-    "<p>Maximum distance between voxel centres for a voxel to count as matched. "
-    "Separate values with commas and/or spaces; their order is kept. Zero means exact voxel-centre matching.</p>"
-    "<p>Voxel tolerances need isotropic spacing; on anisotropic grids enter the tolerance in µm.</p>"
+    "<p>NIfTI: maximum distance between voxel centres for a voxel to count as matched. "
+    "GraphML: maximum distance from a point on one graph's curves to the other graph's nearest segment "
+    "for that length to count as matched.</p>"
+    "<p>Separate values with commas and/or spaces; their order is kept. Zero means exact matching.</p>"
+    "<p>Voxel tolerances need isotropic spacing (the coordinate image's, for GraphML); on anisotropic grids "
+    "enter the tolerance in µm.</p>"
 )
 BETTI_HELP = (
     "<p>Counts of components, cycles and cavities agree. This does not show that the same branches are "
     "connected, and it is not a pass/fail result.</p>"
 )
+GRAPH_BETTI_HELP = (
+    "<p>From the stored graph connectivity: β₀ = connected components (isolated nodes included), "
+    "β₁ = E − V + β₀ independent cycles (self-loops and parallel edges each add one), Euler characteristic "
+    "χ = V − E. β₂ is structurally 0 for a graph; it is not a volumetric cavity measurement.</p>"
+    "<p>Agreeing counts do not show that the same branches are connected, and it is not a pass/fail result.</p>"
+)
 ENDPOINT_HELP = "<p>Voxels with exactly one 26-neighbour. Diagnostics only: matching counts do not show matching endpoints.</p>"
+GRAPH_ENDPOINT_HELP = (
+    "<p>Nodes of degree 1; a self-loop adds 2 to its node's degree. Diagnostics only: matching counts do not "
+    "show matching endpoints.</p>"
+)
+COORDINATE_TITLE = "Coordinate image"
+COORDINATE_HELP = (
+    "<p>The NIfTI whose voxel grid both graphs' <code>voxel_pos</code> and <code>centerline_voxel_points</code> "
+    "refer to, usually the image the graphs were built from. Only its header is read: the affine and spatial "
+    "unit place both graphs in µm. It need not be a mask.</p>"
+)
+GRAPH_INPUT_TEXT = "GraphML · placed in µm by the coordinate image"
+GRAPH_FOREGROUND_TEXT = "The foreground EDT-sum agreement is NIfTI-only, so the mask input is hidden for GraphML pairs."
+MIXED_INPUTS_TEXT = (
+    "The prediction and reference must both be GraphML (.graphml) or both be NIfTI (.nii/.nii.gz); "
+    "mixed comparisons are not supported."
+)
+SAMPLING_CHOICES = (("Automatic", "automatic"), ("Custom", "custom"))
+SAMPLING_PLACEHOLDER = "µm"
+SAMPLING_HELP = (
+    "<p>Every stored polyline segment is cut into equal intervals no longer than the sampling interval h. "
+    "Each interval's midpoint carries its length as weight for coverage, means and P95; interval ends are "
+    "also measured for the maxima.</p>"
+    f"<p>Automatic: h = {AUTOMATIC_STEP_FRACTION:g} × the coordinate image's smallest voxel spacing. "
+    "Custom: h is used exactly as entered (positive, in µm).</p>"
+    "<p>The sampled Hausdorff distance Ĥ satisfies Ĥ ≤ H ≤ Ĥ + h/2.</p>"
+)
 OUTDATED_TEXT = "Results are outdated — run evaluation again."
 RUNNING_TEXT = "Evaluation running — the results below are from the previous run."
 FAILED_RUN_TEXT = "Evaluation rejected or failed. Review the warning and run log."
 FAILED_TEXT = "The last evaluation failed. The results shown are from an earlier run and are outdated."
-FLAG_NOTE = ("(--pred-spatial-unit, --ref-spatial-unit and --foreground-spatial-unit in these warnings are the "
-             "Spatial unit selections above.)")
+FLAG_NOTE = ("(--pred-spatial-unit, --ref-spatial-unit, --foreground-spatial-unit and --coordinate-spatial-unit "
+             "in these warnings are the Spatial unit selections above.)")
 NOT_AVAILABLE = "N/A"
 PREVIEW_DELAY_MS = 400
 STATUS_LABELS = {
@@ -84,6 +123,15 @@ STATUS_LABELS = {
     "both_empty": "Both skeletons empty",
 }
 METRICS_LINK = "Metric definitions: docs/evaluation.md"
+VOXEL_COUNT_TITLE = "Supporting voxel counts"
+VOXEL_COUNT_HEADERS = ("Tolerance (µm)", "Matched prediction voxels", "Unmatched prediction voxels",
+                       "Matched reference voxels", "Unmatched reference voxels")
+LENGTH_TITLE = "Supporting curve lengths (µm)"
+LENGTH_HEADERS = ("Tolerance (µm)", "Matched prediction", "Unmatched prediction", "Matched reference",
+                  "Unmatched reference")
+GRAPH_CAVITIES_LABEL = "Cavities, β₂ (always 0)"
+GRAPH_CAVITIES_TIP = "β₂ is structurally 0 for a graph; it is not a volumetric cavity measurement."
+MIXED = "mixed"
 _NUMBER = re.compile(r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?")
 
 
@@ -103,9 +151,21 @@ def parse_tolerances(text: str) -> tuple[float, ...]:
     return values
 
 
+def parse_sample_step(text: str) -> float:
+    """Parse a custom sampling interval in µm: one positive, finite number."""
+    token = text.strip()
+    if not token:
+        raise ValueError("Enter a custom sampling interval in µm.")
+    if not _NUMBER.fullmatch(token):
+        raise ValueError(f"'{token}' is not a number.")
+    value = float(token)
+    resolve_sample_step(value, (1.0, 1.0, 1.0))
+    return value
+
+
 def _nifti_stem(path: str) -> str:
     name = Path(path).name
-    for suffix in (".nii.gz", ".nii"):
+    for suffix in (".nii.gz", ".nii", ".graphml"):
         if name.lower().endswith(suffix):
             return name[: -len(suffix)]
     return Path(path).stem
@@ -126,10 +186,19 @@ class EvaluationRequest:
     foreground_path: str | None = None
     foreground_key: tuple[str, int, int] | None = None
     foreground_spatial_unit: str | None = None
+    representation: str = INPUT_REPRESENTATION_NIFTI
+    coordinate_path: str | None = None
+    coordinate_key: tuple[str, int, int] | None = None
+    coordinate_spatial_unit: str | None = None
+    sample_step_um: float | None = None
 
 
 def run_evaluation(request: EvaluationRequest, progress: Callable[[int | None, str], None]) -> EvaluationResult:
-    """Background-job body: call the public evaluation API with the captured settings."""
+    """Background-job body: call the public evaluation API with the captured settings.
+
+    NIfTI requests never carry GraphML settings and GraphML requests never carry
+    NIfTI-only ones, so the API's option checks only reject genuine mistakes.
+    """
     return evaluate_prediction_path(
         request.pred_path,
         request.ref_path,
@@ -139,6 +208,9 @@ def run_evaluation(request: EvaluationRequest, progress: Callable[[int | None, s
         ref_spatial_unit=request.ref_spatial_unit,
         foreground_path=request.foreground_path,
         foreground_spatial_unit=request.foreground_spatial_unit,
+        coordinate_image_path=request.coordinate_path,
+        coordinate_spatial_unit=request.coordinate_spatial_unit,
+        sample_step_um=request.sample_step_um,
         log=lambda message: progress(None, f"Evaluate: {message}"),
     )
 
@@ -147,12 +219,19 @@ class InputSide:
     """One input file row with its spatial-unit selector and header preview.
 
     An ``optional`` input with an empty path is ready and is not evaluated.
+    With ``accepts_graphml`` a ``.graphml`` path is a GraphML input: it has no
+    header or unit of its own (the coordinate image supplies both), so only its
+    existence is checked here; the evaluator parses it on the worker thread.
     """
 
-    def __init__(self, role: str, title: str, row: QWidget, on_change: Callable[[], None], *, optional: bool = False):
+    def __init__(self, role: str, title: str, row: QWidget, on_change: Callable[[], None], *, optional: bool = False,
+                 accepts_graphml: bool = False):
         self.role, self.title, self.row, self.optional = role, title, row, optional
+        self.accepts_graphml = accepts_graphml
         self._on_change = on_change
         self.preview: NiftiHeaderPreview | None = None
+        self.graph_checked_path: str | None = None
+        self.graph_error: str | None = None
         self.unit_combo = QComboBox()
         self.unit_combo.setPlaceholderText(UNIT_PLACEHOLDER)
         for label, value in SPATIAL_UNIT_CHOICES:
@@ -177,7 +256,13 @@ class InputSide:
         self.clear(self._empty_message())
 
     def _empty_message(self) -> str:
-        return FOREGROUND_OPTIONAL if self.optional else "Select a .nii or .nii.gz file."
+        if self.optional:
+            return FOREGROUND_OPTIONAL
+        return "Select a .nii, .nii.gz or .graphml file." if self.accepts_graphml else "Select a .nii or .nii.gz file."
+
+    def is_graphml(self) -> bool:
+        """True when this row accepts GraphML and its current path names a .graphml file."""
+        return self.accepts_graphml and detect_input_representation(self.path()) == INPUT_REPRESENTATION_GRAPHML
 
     def unit_row(self) -> QWidget:
         """Unit selector, its note and the header details on one line (details wrap when narrow)."""
@@ -208,9 +293,27 @@ class InputSide:
             self.inspect()
 
     def inspect(self) -> None:
-        """Read the current path's header (not its voxels) and apply it."""
+        """Read the current path's header (not its voxels) and apply it; GraphML paths are only checked."""
         path = self.path()
+        if self.is_graphml():
+            self.apply_graph(path)
+            return
         self.apply_preview(inspect_nifti_header(path) if path else None)
+
+    def apply_graph(self, path: str) -> None:
+        """Record that a GraphML path was checked: it exists, or why it cannot be used."""
+        if path != self.path():
+            return
+        self.preview = None
+        self.graph_checked_path = path
+        self.graph_error = None if Path(path).is_file() else "File not found."
+        self.unit_combo.blockSignals(True)
+        self.unit_combo.setCurrentIndex(-1)
+        self.unit_combo.setEnabled(False)
+        self.unit_combo.setPlaceholderText("From coordinate image")
+        self.unit_combo.blockSignals(False)
+        self.update_labels()
+        self._on_change()
 
     def apply_preview(self, preview: NiftiHeaderPreview | None) -> None:
         """Apply a header preview, ignoring one for a path that is no longer selected."""
@@ -235,6 +338,8 @@ class InputSide:
 
     def clear(self, message: str) -> None:
         self.preview = None
+        self.graph_checked_path = None
+        self.graph_error = None
         self.unit_combo.blockSignals(True)
         self.unit_combo.setCurrentIndex(-1)
         self.unit_combo.setEnabled(False)
@@ -270,6 +375,10 @@ class InputSide:
         """Why this input cannot be evaluated yet, or None when it is ready."""
         if not self.path():
             return None if self.optional else f"Select the {self.title.lower()}."
+        if self.is_graphml():
+            if self.graph_checked_path != self.path():
+                return f"Checking the {self.title.lower()}…"
+            return f"{self.title}: {self.graph_error}" if self.graph_error else None
         if self.preview is None:
             return f"Reading the {self.title.lower()} header…"
         if self.preview.error is not None:
@@ -294,6 +403,12 @@ class InputSide:
         return tuple(value * factor for value in self.preview.stored_spacing)  # type: ignore[return-value]
 
     def update_labels(self) -> None:
+        if self.is_graphml():
+            if self.graph_checked_path == self.path():
+                self.unit_note.setText("")
+                self.details.setText(self.graph_error or GRAPH_INPUT_TEXT)
+                self.details.setStyleSheet("color: #8a3c32;" if self.graph_error else "")
+            return
         preview = self.preview
         if preview is None:
             return
@@ -364,7 +479,9 @@ class EvaluateTab(QWidget):
         title = QLabel("Evaluate")
         title.setObjectName("sectionLabel")
         layout.addWidget(title)
-        description = QLabel("Compare a predicted skeleton NIfTI with a reference skeleton on the same voxel grid.")
+        description = QLabel("Compare a predicted skeleton with a reference: two NIfTI volumes on the same voxel grid, "
+                             "or two GraphML graphs in one coordinate image's voxel frame.")
+        description.setWordWrap(True)
         description.setObjectName("sectionDescription")
         layout.addWidget(description)
 
@@ -379,13 +496,18 @@ class EvaluateTab(QWidget):
         box = QGroupBox("Inputs")
         form = QFormLayout(box)
         form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.pred = InputSide("pred", "Prediction skeleton", path_row(file_filter=NIFTI_FILTER), self._inputs_changed)
-        self.ref = InputSide("ref", "Reference skeleton", path_row(file_filter=NIFTI_FILTER), self._inputs_changed)
+        self.inputs_form = form
+        self.pred = InputSide("pred", "Prediction skeleton", path_row(file_filter=SKELETON_FILTER), self._inputs_changed,
+                              accepts_graphml=True)
+        self.ref = InputSide("ref", "Reference skeleton", path_row(file_filter=SKELETON_FILTER), self._inputs_changed,
+                             accepts_graphml=True)
         self.foreground = InputSide("foreground", FOREGROUND_TITLE, path_row(file_filter=NIFTI_FILTER),
                                     self._inputs_changed, optional=True)
-        self.sides = (self.pred, self.ref, self.foreground)
+        self.coordinate = InputSide("coordinate", COORDINATE_TITLE, path_row(file_filter=NIFTI_FILTER),
+                                    self._inputs_changed)
+        self.sides = (self.pred, self.ref, self.foreground, self.coordinate)
         for side in (self.pred, self.ref):
-            form.addRow(f"{side.title} NIfTI", side.row)
+            form.addRow(side.title, side.row)
             form.addRow("Spatial unit", side.unit_row())
         foreground_row = QWidget()
         row_layout = QHBoxLayout(foreground_row)
@@ -398,7 +520,25 @@ class EvaluateTab(QWidget):
         row_layout.addWidget(self.foreground_clear)
         row_layout.addWidget(HelpIcon(FOREGROUND_HELP))
         form.addRow(f"{FOREGROUND_TITLE} NIfTI", foreground_row)
-        form.addRow("Spatial unit", self.foreground.unit_row())
+        foreground_unit_row = self.foreground.unit_row()
+        form.addRow("Spatial unit", foreground_unit_row)
+        self.foreground_rows = (foreground_row, foreground_unit_row)
+
+        coordinate_row = QWidget()
+        coordinate_layout = QHBoxLayout(coordinate_row)
+        coordinate_layout.setContentsMargins(0, 0, 0, 0)
+        coordinate_layout.setSpacing(6)
+        coordinate_layout.addWidget(self.coordinate.row, 1)
+        self.coordinate_help = HelpIcon(COORDINATE_HELP)
+        coordinate_layout.addWidget(self.coordinate_help)
+        form.addRow(f"{COORDINATE_TITLE} NIfTI", coordinate_row)
+        coordinate_unit_row = self.coordinate.unit_row()
+        form.addRow("Spatial unit", coordinate_unit_row)
+        self.graph_foreground_note = QLabel(GRAPH_FOREGROUND_TEXT)
+        self.graph_foreground_note.setObjectName("sectionDescription")
+        self.graph_foreground_note.setWordWrap(True)
+        form.addRow(self.graph_foreground_note)
+        self.coordinate_rows = (coordinate_row, coordinate_unit_row, self.graph_foreground_note)
         return box
 
     def _build_settings(self) -> QGroupBox:
@@ -428,6 +568,30 @@ class EvaluateTab(QWidget):
         self.tolerance_status.setObjectName("sectionDescription")
         self.tolerance_status.setWordWrap(True)
         column.addWidget(self.tolerance_status)
+        self.sampling_row = QWidget()
+        sampling = QHBoxLayout(self.sampling_row)
+        sampling.setContentsMargins(0, 0, 0, 0)
+        sampling.setSpacing(6)
+        sampling.addWidget(QLabel("Curve sampling"))
+        self.sampling_combo = QComboBox()
+        for label, value in SAMPLING_CHOICES:
+            self.sampling_combo.addItem(label, value)
+        self.sampling_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.sampling_combo.currentIndexChanged.connect(self._settings_changed)
+        sampling.addWidget(self.sampling_combo)
+        self.sample_step_edit = QLineEdit()
+        self.sample_step_edit.setPlaceholderText(SAMPLING_PLACEHOLDER)
+        self.sample_step_edit.setMaximumWidth(120)
+        self.sample_step_edit.textChanged.connect(self._settings_changed)
+        sampling.addWidget(self.sample_step_edit)
+        sampling.addWidget(QLabel("µm"))
+        self.sampling_help = HelpIcon(SAMPLING_HELP)
+        sampling.addWidget(self.sampling_help)
+        self.sampling_status = QLabel()
+        self.sampling_status.setObjectName("sectionDescription")
+        self.sampling_status.setWordWrap(True)
+        sampling.addWidget(self.sampling_status, 1)
+        column.addWidget(self.sampling_row)
         actions = QHBoxLayout()
         self.evaluate_button = QPushButton("Evaluate")
         self.evaluate_button.clicked.connect(self.evaluate)
@@ -478,11 +642,9 @@ class EvaluateTab(QWidget):
 
         self.coverage_table = self._table(["Primary", "Tolerance (µm)", "Precision", "Recall", "F1"])
         column.addWidget(self._section("Geometry coverage", self.coverage_table))
-        self.counts_table = self._table([
-            "Tolerance (µm)", "Matched prediction voxels", "Unmatched prediction voxels",
-            "Matched reference voxels", "Unmatched reference voxels",
-        ])
-        column.addWidget(self._section("Supporting voxel counts", self.counts_table))
+        self.counts_table = self._table(list(VOXEL_COUNT_HEADERS))
+        self.counts_box = self._section(VOXEL_COUNT_TITLE, self.counts_table)
+        column.addWidget(self.counts_box)
         self.distance_table = self._table(["Distance", "Value (µm)"])
         column.addWidget(self._section("Geometry displacement", self.distance_table))
         column.addWidget(self._build_foreground_results())
@@ -501,7 +663,8 @@ class EvaluateTab(QWidget):
         note = QLabel("Diagnostics, not a quality score.")
         note.setObjectName("sectionDescription")
         endpoint_note.addWidget(note)
-        endpoint_note.addWidget(HelpIcon(ENDPOINT_HELP))
+        self.endpoint_help = HelpIcon(ENDPOINT_HELP)
+        endpoint_note.addWidget(self.endpoint_help)
         endpoint_note.addStretch(1)
         column.addWidget(self._section("Endpoint diagnostics", self.endpoint_table, endpoint_note))
         link = QLabel(METRICS_LINK)
@@ -593,6 +756,33 @@ class EvaluateTab(QWidget):
         for side in self.sides:
             side.inspect_if_due()
 
+    def representation(self) -> str:
+        """``graphml`` or ``nifti`` from the selected prediction/reference names, or ``mixed``."""
+        found = [detect_input_representation(side.path()) for side in (self.pred, self.ref) if side.path()]
+        if INPUT_REPRESENTATION_GRAPHML not in found:
+            return INPUT_REPRESENTATION_NIFTI
+        return INPUT_REPRESENTATION_GRAPHML if all(rep == INPUT_REPRESENTATION_GRAPHML for rep in found) else MIXED
+
+    def active_sides(self) -> tuple[InputSide, ...]:
+        """The inputs the current representation evaluates."""
+        representation = self.representation()
+        if representation == INPUT_REPRESENTATION_GRAPHML:
+            return self.pred, self.ref, self.coordinate
+        if representation == MIXED:
+            return self.pred, self.ref
+        return self.pred, self.ref, self.foreground
+
+    def sampling_values(self) -> tuple[float | None, float | None, str | None]:
+        """``(requested step or None for automatic, resolved step or None if unknown, error)``."""
+        if self.sampling_combo.currentData() == "custom":
+            try:
+                value = parse_sample_step(self.sample_step_edit.text())
+            except ValueError as exc:
+                return None, None, str(exc)
+            return value, value, None
+        spacing = self.coordinate.spacing_um()
+        return None, (resolve_sample_step(None, spacing).resolved_step_um if spacing else None), None
+
     def tolerance_values(self) -> tuple[tuple[float, ...] | None, str | None]:
         """Parsed tolerances and an error message (one of them is None)."""
         try:
@@ -601,7 +791,8 @@ class EvaluateTab(QWidget):
             return None, str(exc)
         unit = self.tolerance_unit()
         if unit == "voxels":
-            for side in (self.ref, self.pred):
+            graph = self.representation() == INPUT_REPRESENTATION_GRAPHML
+            for side in ((self.coordinate,) if graph else (self.ref, self.pred)):
                 spacing = side.spacing_um()
                 if spacing is None:
                     continue
@@ -617,11 +808,16 @@ class EvaluateTab(QWidget):
         return str(self.tolerance_unit_combo.currentData())
 
     def readiness_problem(self) -> str | None:
-        for side in self.sides:
+        representation = self.representation()
+        if representation == MIXED:
+            return MIXED_INPUTS_TEXT
+        for side in self.active_sides():
             problem = side.problem()
             if problem is not None:
                 return problem
         _values, error = self.tolerance_values()
+        if error is None and representation == INPUT_REPRESENTATION_GRAPHML:
+            _step, _resolved, error = self.sampling_values()
         return error
 
     def current_request(self) -> EvaluationRequest | None:
@@ -630,9 +826,23 @@ class EvaluateTab(QWidget):
             return None
         values, _error = self.tolerance_values()
         pred_key, ref_key = file_identity(self.pred.path()), file_identity(self.ref.path())
+        if pred_key is None or ref_key is None or values is None:
+            return None
+        if self.representation() == INPUT_REPRESENTATION_GRAPHML:
+            coordinate_key = file_identity(self.coordinate.path())
+            if coordinate_key is None:
+                return None
+            step, _resolved, _error = self.sampling_values()
+            return EvaluationRequest(
+                pred_path=self.pred.path(), ref_path=self.ref.path(), pred_key=pred_key, ref_key=ref_key,
+                pred_spatial_unit=None, ref_spatial_unit=None, tolerances=values, tolerance_unit=self.tolerance_unit(),
+                representation=INPUT_REPRESENTATION_GRAPHML, coordinate_path=self.coordinate.path(),
+                coordinate_key=coordinate_key, coordinate_spatial_unit=self.coordinate.supplied_unit(),
+                sample_step_um=step,
+            )
         foreground_path = self.foreground.path() or None
         foreground_key = file_identity(foreground_path) if foreground_path else None
-        if pred_key is None or ref_key is None or values is None or (foreground_path and foreground_key is None):
+        if foreground_path and foreground_key is None:
             return None
         return EvaluationRequest(
             pred_path=self.pred.path(), ref_path=self.ref.path(), pred_key=pred_key, ref_key=ref_key,
@@ -651,6 +861,7 @@ class EvaluateTab(QWidget):
     def refresh_controls(self) -> None:
         for side in self.sides:
             side.update_labels()
+        self._update_mode_rows()
         self.foreground_clear.setEnabled(bool(self.foreground.row.edit.text()))
         values, error = self.tolerance_values()
         if self.tolerance_edit.text().strip() and error:
@@ -673,8 +884,37 @@ class EvaluateTab(QWidget):
             self.readiness.setText(self._shape_note())
         self._update_freshness()
 
+    def _update_mode_rows(self) -> None:
+        """Show the NIfTI-only mask rows or the GraphML-only coordinate and sampling rows."""
+        graph = self.representation() == INPUT_REPRESENTATION_GRAPHML
+        for widget in self.foreground_rows:
+            self.inputs_form.setRowVisible(widget, not graph)
+        for widget in self.coordinate_rows:
+            self.inputs_form.setRowVisible(widget, graph)
+        self.sampling_row.setVisible(graph)
+        custom = self.sampling_combo.currentData() == "custom"
+        self.sample_step_edit.setEnabled(custom)
+        step, resolved, error = self.sampling_values()
+        if error and self.sample_step_edit.text().strip():
+            self.sampling_status.setText(error)
+            self.sampling_status.setStyleSheet("color: #8a3c32;")
+            return
+        self.sampling_status.setStyleSheet("")
+        if resolved is None:
+            self.sampling_status.setText(
+                "Resolved interval: enter a custom value." if custom else
+                f"Resolved interval: {AUTOMATIC_STEP_FRACTION:g} × the coordinate image's smallest spacing "
+                "(select the coordinate image).")
+        elif step is None:
+            self.sampling_status.setText(f"Resolved interval: {resolved:.6g} µm "
+                                         f"(automatic, {AUTOMATIC_STEP_FRACTION:g} × smallest spacing).")
+        else:
+            self.sampling_status.setText(f"Resolved interval: {resolved:.6g} µm (custom).")
+
     def _shape_note(self) -> str:
-        sides = [side for side in self.sides if side.path() and side.preview is not None]
+        if self.representation() == INPUT_REPRESENTATION_GRAPHML:
+            return "Ready to evaluate."
+        sides = [side for side in self.sides if side.path() and side.preview is not None and side is not self.coordinate]
         shapes = [side.preview.shape for side in sides]  # type: ignore[union-attr]
         if len(set(shapes)) <= 1:
             return "Ready to evaluate."
@@ -721,8 +961,13 @@ class EvaluateTab(QWidget):
                   f"tolerances {tolerances} {request.tolerance_unit}")
         if request.foreground_path:
             self._log(f"Evaluate: {FOREGROUND_TITLE.lower()} {Path(request.foreground_path).name}")
+        if request.coordinate_path:
+            sampling = "automatic" if request.sample_step_um is None else f"custom {request.sample_step_um:g} µm"
+            self._log(f"Evaluate: GraphML pair; {COORDINATE_TITLE.lower()} {Path(request.coordinate_path).name}; "
+                      f"sampling {sampling}")
         for side, supplied in ((self.pred, request.pred_spatial_unit), (self.ref, request.ref_spatial_unit),
-                               (self.foreground, request.foreground_spatial_unit)):
+                               (self.foreground, request.foreground_spatial_unit),
+                               (self.coordinate, request.coordinate_spatial_unit)):
             if supplied is not None:
                 self._log(f"Evaluate: {side.title} unit supplied as {supplied} (header unit unknown)")
         self.refresh_controls()
@@ -756,6 +1001,7 @@ class EvaluateTab(QWidget):
     def display(self, result: EvaluationResult, request: EvaluationRequest) -> None:
         """Render a result's own values (GUI thread only); nothing is recomputed here."""
         geometry, topology = result.geometry, result.topology
+        graph = result.input_representation == INPUT_REPRESENTATION_GRAPHML
         primary = geometry.primary
         self.status_value.setText(STATUS_LABELS.get(result.status, result.status))
         self.status_value.setStyleSheet(
@@ -764,12 +1010,19 @@ class EvaluateTab(QWidget):
                                                           primary.requested_unit))
         self.f1_value.setText(self._score(primary.f1))
         self.f1_value.setToolTip(geometry.coverage_unavailable_reason or "")
-        self.run_label.setText(f"Prediction: {Path(request.pred_path).name}  ·  Reference: {Path(request.ref_path).name}"
-                               f"  ·  schema {result.schema_version}")
-        self.run_label.setToolTip(f"{request.pred_path}\n{request.ref_path}")
+        run_text = f"Prediction: {Path(request.pred_path).name}  ·  Reference: {Path(request.ref_path).name}"
+        tip = f"{request.pred_path}\n{request.ref_path}"
+        if graph and result.graph is not None:
+            sampling, image = result.graph.sampling, result.graph.coordinate_image
+            run_text += (f"  ·  GraphML, {COORDINATE_TITLE.lower()} {Path(image.path).name}  ·  "
+                         f"sampling h = {sampling.resolved_step_um:.6g} µm ({sampling.mode})")
+            tip += f"\n{image.path}"
+        self.run_label.setText(f"{run_text}  ·  schema {result.schema_version}")
+        self.run_label.setToolTip(tip)
         if result.warnings:
             text = "Warnings:\n" + "\n".join(f"• {warning}" for warning in result.warnings)
-            if request.pred_spatial_unit or request.ref_spatial_unit or request.foreground_spatial_unit:
+            if (request.pred_spatial_unit or request.ref_spatial_unit or request.foreground_spatial_unit
+                    or request.coordinate_spatial_unit):
                 text += f"\n{FLAG_NOTE}"
             self.warnings_label.setText(text)
             self.warnings_label.show()
@@ -785,40 +1038,68 @@ class EvaluateTab(QWidget):
              (self._score(match.f1), coverage_reason if match.f1 is None else repr(match.f1))]
             for match in geometry.tolerances
         ])
+        self.counts_box.setTitle(LENGTH_TITLE if graph else VOXEL_COUNT_TITLE)
+        self.counts_table.setHorizontalHeaderLabels(list(LENGTH_HEADERS if graph else VOXEL_COUNT_HEADERS))
+        if graph:
+            support = [(match.matched_prediction_length_um, match.unmatched_prediction_length_um,
+                        match.matched_reference_length_um, match.unmatched_reference_length_um)
+                       for match in geometry.tolerances]
+        else:
+            support = [(match.matched_prediction_voxels, match.unmatched_prediction_voxels,
+                        match.matched_reference_voxels, match.unmatched_reference_voxels)
+                       for match in geometry.tolerances]
         self._fill(self.counts_table, [
             [f"{match.tolerance_um:g}"] + [
-                (NOT_AVAILABLE if count is None else str(count), coverage_reason if count is None else None)
-                for count in (match.matched_prediction_voxels, match.unmatched_prediction_voxels,
-                              match.matched_reference_voxels, match.unmatched_reference_voxels)
+                (NOT_AVAILABLE, coverage_reason) if value is None else
+                ((f"{value:.6g}", repr(value)) if graph else str(value))
+                for value in values
             ]
-            for match in geometry.tolerances
+            for match, values in zip(geometry.tolerances, support)
         ])
         distances = geometry.distances
-        names = (("Mean, prediction → reference", "mean_pred_to_ref_um"),
+        names = [("Mean, prediction → reference", "mean_pred_to_ref_um"),
                  ("Mean, reference → prediction", "mean_ref_to_pred_um"),
                  ("Symmetric mean", "symmetric_mean_um"),
-                 ("Symmetric P95", "symmetric_p95_um"),
-                 ("Hausdorff (maximum)", "hausdorff_um"))
+                 ("Symmetric P95", "symmetric_p95_um")]
+        if graph:
+            names += [("Hausdorff (sampled, approximate) Ĥ", "hausdorff_um"),
+                      ("Hausdorff upper bound Ĥ + h/2", "hausdorff_upper_bound_um")]
+        else:
+            names.append(("Hausdorff (maximum)", "hausdorff_um"))
         self._fill(self.distance_table, [
             [label, (NOT_AVAILABLE, geometry.distances_unavailable_reason) if distances is None else
              (f"{getattr(distances, field):.3f}", repr(getattr(distances, field)))]
             for label, field in names
         ])
-        self._display_foreground(result.foreground_edt)
+        if graph:
+            self._display_foreground_unavailable()
+        else:
+            self._display_foreground(result.foreground_edt)
         rows = []
-        for k, name in ((0, "Connected components, β₀"), (1, "Independent cycles, β₁"), (2, "Enclosed cavities, β₂")):
+        cavities = (GRAPH_CAVITIES_LABEL, GRAPH_CAVITIES_TIP) if graph else "Enclosed cavities, β₂"
+        for k, name in ((0, "Connected components, β₀"), (1, "Independent cycles, β₁"), (2, cavities)):
             comparison = topology.comparison(k)
             rows.append([name, str(comparison.reference), str(comparison.prediction),
                          f"{comparison.signed_difference:+d}", str(comparison.absolute_error)])
         self._fill(self.topology_table, rows)
         self.betti_label.setText(f"Betti-count agreement: {'yes' if topology.betti_count_agreement else 'no'}")
+        self.betti_help.setToolTip(GRAPH_BETTI_HELP if graph else BETTI_HELP)
+        self.endpoint_help.setToolTip(GRAPH_ENDPOINT_HELP if graph else ENDPOINT_HELP)
         self.euler_label.setText(f"Euler characteristic: reference {topology.reference.euler_characteristic}, "
                                  f"prediction {topology.prediction.euler_characteristic}")
         endpoints = result.endpoints
         self._fill(self.endpoint_table, [[
-            "Endpoints", str(endpoints.reference), str(endpoints.prediction),
+            "Degree-1 nodes" if graph else "Endpoints", str(endpoints.reference), str(endpoints.prediction),
             f"{endpoints.signed_difference:+d}", str(endpoints.absolute_error),
         ]])
+
+    def _display_foreground_unavailable(self) -> None:
+        """GraphML results never carry the NIfTI-only foreground EDT-sum agreement."""
+        self.foreground_table.hide()
+        self.foreground_difference.hide()
+        self.foreground_notes.hide()
+        self.foreground_status.setText(FOREGROUND_EDT_GRAPHML)
+        self.foreground_status.setToolTip("")
 
     def _display_foreground(self, agreement: ForegroundEdtAgreement | None) -> None:
         """Show the foreground EDT-sum agreement exactly as the result holds it."""
