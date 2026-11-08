@@ -111,6 +111,7 @@ class Window(QMainWindow):
         self.result: TopologyResult | None = None
         self._thread: QThread | None = None
         self._worker: Worker | None = None
+        self._job_success: Callable[[object], None] | None = None
         self._process: QProcess | None = None
         self._process_buffer = b""
         self._process_result: TopologyResult | None = None
@@ -469,7 +470,10 @@ class Window(QMainWindow):
         worker = Worker(function)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.finished.connect(success)
+        # PySide6 runs partials/lambdas on the emitting (worker) thread; only a bound
+        # QObject method is queued to the GUI thread. Route `success` through one.
+        self._job_success = success
+        worker.finished.connect(self._deliver_success)
         worker.finished.connect(self._progress_complete)
         worker.progress.connect(self._on_progress)
         worker.failed.connect(self._failed)
@@ -479,6 +483,11 @@ class Window(QMainWindow):
         thread.finished.connect(self._job_done)
         self._thread, self._worker = thread, worker
         thread.start()
+
+    def _deliver_success(self, result: object) -> None:
+        """Run the current job's success callback on the GUI thread."""
+        if self._job_success is not None:
+            self._job_success(result)
 
     def _failed(self, message: str) -> None:
         self._last_job_failed = True
@@ -500,6 +509,7 @@ class Window(QMainWindow):
         if self.statusBar().currentMessage().endswith("running…"):
             self.statusBar().showMessage("Ready")
         self._thread = self._worker = None
+        self._job_success = None
         if self._auto_log_opened and not self._last_job_failed:
             self.log_toggle.setChecked(False)
         self._auto_log_opened = False
