@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-11-08 22:43 AEST — Fix GUI crash after Clean / Check / Crop finish
+
+- **What changed**:
+  - Bug: finishing a Clean, Check or Crop job in `skelhub gui` could kill the app with `QObject: Cannot create children for a parent that is in a different thread` and a segfault.
+  - Cause: these tabs passed their result handler as a `functools.partial`. PySide6 runs a partial or lambda on the thread that emits the signal (here the worker thread), so the handler wrote to a `QTextEdit` from a background thread. Only bound QObject methods are queued back to the GUI thread. EDT Heat, Evaluate and Export passed bound methods, so they were not affected.
+  - Fix: `Window._launch` stores the success callback and connects the worker to a bound method, `_deliver_success`, which calls it on the GUI thread. Every caller is now safe whatever callable it passes. The stored callback is cleared in `_job_done`.
+- **Files**:
+  - Modified: `skelhub/gui/app.py`
+  - Tests: `tests/test_gui_smoke.py` gains `test_launch_runs_partial_success_callback_on_gui_thread` (local only; `tests/` is git-ignored)
+- **Assumptions**: Qt delivers queued signals from one sender in order, so the result reaches `_deliver_success` before `thread.finished` reaches `_job_done`.
+- **Limitations**: `Worker.run` still calls the job's progress callback from the worker thread; that path only emits a signal, which is safe.
+- **Tests**: the new test fails on the old code and passes with the fix; `pytest tests/test_gui_*.py`: 98 passed.
+- **Suggested commit**: `fix(gui): run job success callbacks on the GUI thread`
+
 ## 2026-11-06 13:23 AEST — Evaluation v3: continuous GraphML evaluation in CLI, API and GUI (schema 3.0)
 
 - **What changed**:
