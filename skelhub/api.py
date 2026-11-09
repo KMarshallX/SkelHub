@@ -113,15 +113,21 @@ def extract_features_from_paths(
     edge_output_path: str | Path,
     node_output_path: str | Path,
     *,
+    sampling_step: float | None = None,
     log: Callable[[str], None] | None = None,
 ) -> FeatureExtractionResult:
-    """Extract Voreen-style edge/node CSV features from vessel inputs."""
+    """Extract Voreen-style edge/node CSV features from vessel inputs.
+
+    Uses edge ``centerline_voxel_points`` when present, else ``centerline_voxels``.
+    ``sampling_step`` (voxels, > 0, default 1) applies only to ``centerline_voxel_points``.
+    """
     return _extract_features_from_paths(
         foreground_path,
         skeleton_path,
         graph_path,
         edge_output_path,
         node_output_path,
+        sampling_step=sampling_step,
         log=log,
     )
 

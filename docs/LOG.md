@@ -1,5 +1,60 @@
 # Development Log
 
+## 2026-11-09 16:25 AEST — `skelhub feature`: measure along `centerline_voxel_points`, add containment check and `--sampling`
+
+- **What changed**:
+  - Edge geometry is chosen once per graph: `centerline_voxel_points` when the graph has that attribute, otherwise `centerline_voxels` (the old behaviour).
+    - Float paths must start and end at their two node positions (either order, within 1e-6 voxel). They are oriented node 1 → node 2. Missing or empty paths are errors.
+  - New hard error: every node `voxel_pos` and every stored path entry must lie in a foreground voxel. It uses the `checker` cell rule (touching a set voxel's face, edge or corner counts).
+    - With float points, `centerline_voxels` are not checked. A cleaned graph whose rounded voxel paths cut a corner therefore passes.
+    - The old node bound check (voxel centres in `[0, shape − 1]`) is replaced by this rule. Example: a node at z = −0.006 is in voxel 0 and now passes.
+  - Radius samples along float paths: each straight piece of length $L$ is split evenly into $\lceil L/s \rceil$ sub-pieces. The step $s$ comes from the new `-s/--sampling` (voxels, > 0, default 1). Samples lie on the polyline, are never written out, and node counts and degrees are unchanged.
+    - `--sampling` on a graph with only `centerline_voxels` is an error.
+  - Length with float points is the polyline length through the stored points. It does not depend on $s$.
+  - The radius formula is unchanged: per-sample min/mean/max, averaged over the edge's samples.
+  - Foreground anchoring uses the voxel cells touched by samples. An integer voxel touches only itself, so the fallback is unchanged.
+  - Reporting:
+    - The CLI summary line now always prints, with `geometry=...` and `sampling=... voxel`.
+    - `--verbose` logs the geometry choice.
+    - `FeatureExtractionResult` gains `geometry_attribute` and `sampling_step`.
+    - CSV columns are unchanged.
+  - The skeleton-voxel warning now applies only to `centerline_voxels`.
+  - `scripts/run_featext.sh` gains `-s/--sampling`, passed to `skelhub feature` only when given.
+- **Files**:
+  - Added: `skelhub/postprocessing/feature/sampling.py`
+  - Modified:
+    - `skelhub/postprocessing/feature/models.py`: edge `path` replaces `centerline_voxels`; new geometry and sampling fields.
+    - `skelhub/postprocessing/feature/graph.py`, `assignment.py`, `measurement.py`, `api.py`
+    - `skelhub/api.py`, `skelhub/cli/main.py`, `scripts/run_featext.sh`
+  - Tests (local only; `tests/` is git-ignored): new `tests/test_feature.py`; one new case in `tests/test_run_featext.py`.
+  - Docs: `docs/postprocessing.md`, `docs/API.md`, `README.md`.
+- **Decisions and tradeoffs**:
+  - Image-space columns reuse the voxel-space samples, scaled by voxel size. Both column sets measure the same samples. With anisotropic voxels, the physical spacing of samples then depends on direction.
+  - Containment reuses `checker.points_in_foreground_cells`, so `feature` and Check cannot disagree. The import is lazy: `skelhub.postprocessing` imports `feature`, and an eager import broke `python -m skelhub.postprocessing.checker` with a `runpy` warning.
+  - Points between stored points are not containment-checked (the agreed pass rule).
+- **Effect on results** (test cut of 30 whole foreground components; voxel units, medians):
+  - Original Laplacian graph (2 points per edge, staircase voxel paths):
+    - length 2.14 → 1.19, curveness 1.68 → 1.00
+    - minRadius 0.50 → 1.05, avgRadius 1.26 → 1.43
+    - NaN radii 150 → 154 of 1285 edges
+  - Cleaned graph:
+    - length 6.24 → 5.88
+    - minRadius 0.57 → 0.99, avgRadius 1.41 → 1.30, maxRadius 1.90 → 1.60
+  - Why: staircase voxel paths overstate length. Off-grid samples rarely coincide with a surface voxel, so the zero-distance minima behind minRadius = 0.5 disappear.
+  - `-s 0.5` or `-s 2` instead of 1 moves median radius by 0.03–0.16 voxel; length is unchanged.
+- **Tests**:
+  - `pytest tests`: 534 passed. 14 of the 28 new feature tests fail on the old code.
+  - Real data:
+    - Graphs with only `centerline_voxels` give byte-identical CSVs to the old code.
+    - Node CSVs are unchanged.
+    - The cleaned graph's voxels-only copy now stops on its 3 corner-cutting voxels.
+    - Full `post_mortem_skel.graphml` and `post_mortem_skel_cleaned.graphml` pass the load and containment check. The full measurement was not run: see the limitation below.
+- **Limitations and risks**:
+  - Pre-existing: foreground anchoring and radius scan the whole volume once per edge, so run time grows with volume size × edge count. A 480 × 380 × 270 volume with thousands of edges takes hours. Worth a separate fix.
+  - Pre-existing: the per-region graphs under `separate_graphml/` are rejected for duplicate edge IDs ("Duplicate graph edge id: 9095"), whatever wrote them.
+  - A float point exactly on a voxel face can anchor either neighbouring cell. This only affects which foreground component is kept for that edge.
+- **Suggested commit**: `feat(feature): measure along centerline_voxel_points with foreground check and --sampling`
+
 ## 2026-11-08 22:43 AEST — Fix GUI crash after Clean / Check / Crop finish
 
 - **What changed**:

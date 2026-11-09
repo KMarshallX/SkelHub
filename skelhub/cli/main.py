@@ -434,6 +434,16 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
     feature_parser.add_argument("--graph", required=True, help="Path to graphgen or Laplacian GraphML.")
     feature_parser.add_argument("--edge-output", required=True, help="Path to the edge feature CSV output.")
     feature_parser.add_argument("--node-output", required=True, help="Path to the node position CSV output.")
+    feature_parser.add_argument(
+        "-s",
+        "--sampling",
+        type=float,
+        default=None,
+        help=(
+            "Maximum spacing in voxels (> 0) of radius samples along centerline_voxel_points; "
+            "default 1. Not allowed for graphs that only provide centerline_voxels."
+        ),
+    )
     feature_parser.add_argument("--verbose", action="store_true", help="Emit feature extraction progress logs.")
 
     graphviz_parser = subparsers.add_parser(
@@ -545,13 +555,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                 args.graph,
                 args.edge_output,
                 args.node_output,
+                sampling_step=args.sampling,
                 log=print if args.verbose else None,
             )
-            if args.verbose:
-                print(
-                    f"feature extraction complete: edges={len(result.edges)}, "
-                    f"nodes={len(result.nodes)}, unit={result.physical_unit}"
-                )
+            geometry = f"geometry={result.geometry_attribute}"
+            if result.sampling_step is not None:
+                geometry += f", sampling={result.sampling_step:g} voxel"
+            print(
+                f"feature extraction complete: edges={len(result.edges)}, "
+                f"nodes={len(result.nodes)}, unit={result.physical_unit}, {geometry}"
+            )
             return 0
         except (FileNotFoundError, OSError, ValueError) as exc:
             parser.exit(status=2, message=f"skelhub feature: error: {exc}\n")

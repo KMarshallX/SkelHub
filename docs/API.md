@@ -137,10 +137,21 @@ features = extract_features_from_paths(
     "vessel.graphml",
     "edge_features.csv",
     "node_features.csv",
+    sampling_step=1.0,  # optional; voxels, > 0; only for centerline_voxel_points
 )
 
 print(len(features.edges), features.physical_unit)
+print(features.geometry_attribute, features.sampling_step)
 ```
+
+- Edge geometry is `centerline_voxel_points` when the graph has that edge
+  attribute, otherwise `centerline_voxels`. `features.geometry_attribute`
+  names the one used.
+- `sampling_step` (default 1 voxel) is the maximum spacing of radius samples
+  along `centerline_voxel_points`. Passing it for a graph with only
+  `centerline_voxels` raises `ValueError`; `features.sampling_step` is then `None`.
+- A `ValueError` is raised if any node `voxel_pos` or stored path entry lies
+  outside the foreground.
 
 The GraphML input may be created by `skelhub graphgen` or by
 `skelhub run --algorithm laplacian --graph_output ...`. Edge CSV base

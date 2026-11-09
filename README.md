@@ -138,7 +138,7 @@ Key locations:
 - `skelhub.algorithms` contains isolated backend adapters and implementations.
 - `skelhub.evaluation` contains the voxel-based (NIfTI) and curve-based (GraphML) evaluators behind one `evaluate_prediction_path` / `skelhub evaluate` entry point.
 - `skelhub.postprocessing.graphgen` converts skeleton NIfTI volumes into GraphML.
-- `skelhub.postprocessing.feature` writes Voreen-style edge and node CSV features from vessel foreground, skeleton, and compatible GraphML inputs.
+- `skelhub.postprocessing.feature` writes Voreen-style edge and node CSV features from vessel foreground, skeleton, and compatible GraphML inputs. It measures edges along `centerline_voxel_points` when the graph has them (else `centerline_voxels`) and stops if graph geometry leaves the foreground.
 - `skelhub.postprocessing.protograph_cleaner` contracts degree-2 GraphML nodes
   into ordered centreline paths; `scripts/protograph_cleaner.sh` exposes the
   workflow through the active Python environment.

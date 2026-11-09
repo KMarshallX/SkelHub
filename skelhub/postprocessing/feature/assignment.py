@@ -27,17 +27,46 @@ def _inside(pos: tuple[int, int, int], shape: tuple[int, int, int]) -> bool:
     return all(0 <= pos[axis] < shape[axis] for axis in range(3))
 
 
-def _nearest_labels(foreground: np.ndarray, graph: FeatureGraph, scale: np.ndarray) -> np.ndarray:
+def _touching_cells(points: np.ndarray, shape: tuple[int, ...]) -> np.ndarray:
+    """Return in-volume voxels whose closed cell contains any of ``points``.
+
+    Uses the checker's rule: voxel ``(i, j, k)`` spans ``[i - 0.5, i + 0.5]`` per
+    axis. An integer point touches only its own voxel.
+    """
+    # Imported here, not at module level: skelhub.postprocessing imports this package, and an
+    # eager import would preload the checker and break `python -m skelhub.postprocessing.checker`.
+    from skelhub.postprocessing.checker import FOREGROUND_CELL_TOLERANCE
+
+    points = np.asarray(points, dtype=float).reshape((-1, 3))
+    if len(points) == 0:
+        return np.empty((0, 3), dtype=np.int64)
+    radius = 0.5 + FOREGROUND_CELL_TOLERANCE
+    lowest = np.ceil(points - radius).astype(np.int64)
+    highest = np.floor(points + radius).astype(np.int64)
+    limits = np.asarray(shape, dtype=np.int64)
+    cells = []
+    for offset in np.ndindex(2, 2, 2):
+        candidates = lowest + np.asarray(offset, dtype=np.int64)
+        valid = np.all((candidates <= highest) & (candidates >= 0) & (candidates < limits), axis=1)
+        cells.append(candidates[valid])
+    return np.unique(np.vstack(cells), axis=0)
+
+
+def _nearest_labels(
+    foreground: np.ndarray,
+    graph: FeatureGraph,
+    samples: list[np.ndarray],
+    scale: np.ndarray,
+) -> np.ndarray:
     labels = np.full(foreground.shape, BACKGROUND, dtype=np.int64)
     coordinates: list[np.ndarray] = []
     edge_indices: list[int] = []
-    raw_voxels: list[tuple[int, int, int]] = []
-    for edge_index, edge in enumerate(graph.edges):
-        for voxel in edge.centerline_voxels:
-            raw = tuple(int(value) for value in voxel)
-            coordinates.append(np.asarray(voxel, dtype=float) * scale)
+    raw_samples: list[tuple[float, float, float]] = []
+    for edge_index, edge_samples in enumerate(samples):
+        for sample in edge_samples:
+            coordinates.append(np.asarray(sample, dtype=float) * scale)
             edge_indices.append(edge_index)
-            raw_voxels.append(raw)
+            raw_samples.append(tuple(float(value) for value in sample))
     if not coordinates:
         labels[foreground] = UNLABELED
         return labels
@@ -53,20 +82,20 @@ def _nearest_labels(foreground: np.ndarray, graph: FeatureGraph, scale: np.ndarr
             for index in candidate_indices
             if np.isclose(np.linalg.norm(points[index] - point), distance, rtol=0.0, atol=1e-9)
         ]
-        chosen = min(nearest, key=lambda index: (raw_voxels[index], graph.edges[edge_indices[index]].id))
+        chosen = min(nearest, key=lambda index: (raw_samples[index], graph.edges[edge_indices[index]].id))
         labels[tuple(voxel)] = edge_indices[chosen]
     return labels
 
 
-def _keep_skeleton_anchored_components(labels: np.ndarray, graph: FeatureGraph) -> np.ndarray:
+def _keep_skeleton_anchored_components(labels: np.ndarray, samples: list[np.ndarray]) -> np.ndarray:
     output = labels.copy()
-    for edge_index, edge in enumerate(graph.edges):
+    for edge_index, edge_samples in enumerate(samples):
         mask = labels == edge_index
         if not np.any(mask):
             continue
         components, _ = ndimage.label(mask, structure=_FULL_26)
         anchors: set[int] = set()
-        for voxel in edge.centerline_voxels:
+        for voxel in _touching_cells(edge_samples, labels.shape):
             position = tuple(int(value) for value in voxel)
             if labels[position] == edge_index:
                 anchors.add(int(components[position]))
@@ -110,8 +139,16 @@ def _flood_unlabeled_regions(labels: np.ndarray, graph: FeatureGraph) -> np.ndar
     return output
 
 
-def assign_foreground_to_edges(foreground: np.ndarray, graph: FeatureGraph, scale: np.ndarray) -> np.ndarray:
-    """Assign foreground to GraphML edge paths in one measurement space."""
-    initial = _nearest_labels(foreground, graph, np.asarray(scale, dtype=float))
-    anchored = _keep_skeleton_anchored_components(initial, graph)
+def assign_foreground_to_edges(
+    foreground: np.ndarray,
+    graph: FeatureGraph,
+    samples: list[np.ndarray],
+    scale: np.ndarray,
+) -> np.ndarray:
+    """Assign foreground to edges by nearest centreline sample in one measurement space.
+
+    ``samples`` holds each edge's voxel-space samples in ``graph.edges`` order.
+    """
+    initial = _nearest_labels(foreground, graph, samples, np.asarray(scale, dtype=float))
+    anchored = _keep_skeleton_anchored_components(initial, samples)
     return _flood_unlabeled_regions(anchored, graph)
