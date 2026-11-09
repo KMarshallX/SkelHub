@@ -8,13 +8,21 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from .assignment import assign_foreground_to_edges
+from .assignment import assign_foreground_to_edges, edge_label_boxes
 from .models import FeatureEdgeRecord, FeatureGraph, FeatureNodeRecord
+from .sampling import edge_samples
 
 _SURFACE_STRUCTURE = ndimage.generate_binary_structure(3, 1)
 
 
+def _polyline_length(points: np.ndarray, scale: np.ndarray) -> float:
+    """Length of an oriented point path that already starts and ends at its nodes."""
+    scaled = np.asarray(points, dtype=float) * scale
+    return float(np.linalg.norm(np.diff(scaled, axis=0), axis=1).sum())
+
+
 def _length(path: np.ndarray, begin: np.ndarray, end: np.ndarray, scale: np.ndarray) -> float:
+    """Length from ``begin`` through stored centreline voxels to ``end``."""
     scaled_begin = begin * scale
     scaled_end = end * scale
     if path.size == 0:
@@ -31,21 +39,30 @@ def _curveness(length: float, begin: np.ndarray, end: np.ndarray, scale: np.ndar
 
 def _radius_values(
     foreground: np.ndarray,
-    graph: FeatureGraph,
+    samples: list[np.ndarray],
     labels: np.ndarray,
     scale: np.ndarray,
     offset: float,
 ) -> list[tuple[float, float, float]]:
+    """Per edge: mean over samples of each sample's min, mean and max surface distance."""
     surface = foreground & ~ndimage.binary_erosion(foreground, structure=_SURFACE_STRUCTURE, border_value=0)
     result: list[tuple[float, float, float]] = []
-    for edge_index, edge in enumerate(graph.edges):
-        if edge.centerline_voxels.size == 0:
+    boxes = edge_label_boxes(labels, len(samples))
+    for edge_index, edge_path in enumerate(samples):
+        if edge_path.size == 0:
             result.append((math.nan, math.nan, math.nan))
             continue
-        path = edge.centerline_voxels.astype(float) * scale
+        path = np.asarray(edge_path, dtype=float) * scale
         tree = cKDTree(path)
         sample_observations: list[list[float]] = [[] for _ in range(len(path))]
-        for voxel in np.argwhere(surface & (labels == edge_index)):
+        box = boxes[edge_index]
+        if box is None:
+            edge_surface = np.empty((0, 3), dtype=np.int64)
+        else:
+            # Same voxels, same row-major order as scanning the whole volume.
+            origin = np.asarray([axis.start for axis in box], dtype=np.int64)
+            edge_surface = np.argwhere(surface[box] & (labels[box] == edge_index)) + origin
+        for voxel in edge_surface:
             point = voxel.astype(float) * scale
             distance, _ = tree.query(point)
             nearest = tree.query_ball_point(point, float(distance) + 1e-10)
@@ -71,14 +88,21 @@ def calculate_feature_records(
     foreground: np.ndarray,
     graph: FeatureGraph,
     zooms: tuple[float, float, float],
+    sampling_step: float | None = None,
 ) -> tuple[tuple[FeatureEdgeRecord, ...], tuple[FeatureNodeRecord, ...]]:
-    """Calculate voxel-space and header-scaled feature rows."""
+    """Calculate voxel-space and header-scaled feature rows.
+
+    ``sampling_step`` (voxels) spaces the radius samples along
+    ``centerline_voxel_points``; it is ignored for ``centerline_voxels``. Both
+    measurement spaces use the same voxel-space samples, scaled by ``zooms``.
+    """
     voxel_scale = np.ones(3, dtype=float)
     image_scale = np.asarray(zooms, dtype=float)
-    voxel_labels = assign_foreground_to_edges(foreground, graph, voxel_scale)
-    image_labels = assign_foreground_to_edges(foreground, graph, image_scale)
-    voxel_radii = _radius_values(foreground, graph, voxel_labels, voxel_scale, 0.5)
-    image_radii = _radius_values(foreground, graph, image_labels, image_scale, float(np.mean(image_scale)) / 2.0)
+    samples = edge_samples(graph, sampling_step)
+    voxel_labels = assign_foreground_to_edges(foreground, graph, samples, voxel_scale)
+    image_labels = assign_foreground_to_edges(foreground, graph, samples, image_scale)
+    voxel_radii = _radius_values(foreground, samples, voxel_labels, voxel_scale, 0.5)
+    image_radii = _radius_values(foreground, samples, image_labels, image_scale, float(np.mean(image_scale)) / 2.0)
 
     node_by_id = {node.id: node for node in graph.nodes}
     degrees = {node.id: 0 for node in graph.nodes}
@@ -90,8 +114,12 @@ def calculate_feature_records(
     for index, edge in enumerate(graph.edges):
         begin = node_by_id[edge.node1_id].voxel_pos
         end = node_by_id[edge.node2_id].voxel_pos
-        voxel_length = _length(edge.centerline_voxels, begin, end, voxel_scale)
-        image_length = _length(edge.centerline_voxels, begin, end, image_scale)
+        if graph.uses_centerline_points:
+            voxel_length = _polyline_length(edge.path, voxel_scale)
+            image_length = _polyline_length(edge.path, image_scale)
+        else:
+            voxel_length = _length(edge.path, begin, end, voxel_scale)
+            image_length = _length(edge.path, begin, end, image_scale)
         records.append(
             FeatureEdgeRecord(
                 id=edge.id,

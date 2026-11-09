@@ -16,6 +16,8 @@ Required arguments:
   -no, --node-op-dir     Directory for <foreground-stem>_node.csv outputs
 
 Options:
+  -s, --sampling VOXELS  Pass --sampling to skelhub feature (radius sample spacing
+                         along centerline_voxel_points, > 0; default 1)
   -v, --verbose          Show batch progress and pass --verbose to skelhub feature
   -h, --help             Show this help message
 
@@ -101,6 +103,7 @@ SKEL_DIR=""
 GRAPH_DIR=""
 EDGE_OP_DIR=""
 NODE_OP_DIR=""
+SAMPLING=""
 VERBOSE=0
 
 while (($# > 0)); do
@@ -128,6 +131,11 @@ while (($# > 0)); do
         -no|--node-op-dir)
             require_value "$1" "${2:-}"
             NODE_OP_DIR="$2"
+            shift 2
+            ;;
+        -s|--sampling)
+            require_value "$1" "${2:-}"
+            SAMPLING="$2"
             shift 2
             ;;
         -v|--verbose)
@@ -285,6 +293,9 @@ for foreground_file in "${FOREGROUND_FILES[@]}"; do
         --edge-output "${edge_output}"
         --node-output "${node_output}"
     )
+    if [[ -n "${SAMPLING}" ]]; then
+        cmd+=(--sampling "${SAMPLING}")
+    fi
     if [[ ${VERBOSE} -eq 1 ]]; then
         cmd+=(--verbose)
     fi
