@@ -8,7 +8,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from .assignment import assign_foreground_to_edges
+from .assignment import assign_foreground_to_edges, edge_label_boxes
 from .models import FeatureEdgeRecord, FeatureGraph, FeatureNodeRecord
 from .sampling import edge_samples
 
@@ -47,6 +47,7 @@ def _radius_values(
     """Per edge: mean over samples of each sample's min, mean and max surface distance."""
     surface = foreground & ~ndimage.binary_erosion(foreground, structure=_SURFACE_STRUCTURE, border_value=0)
     result: list[tuple[float, float, float]] = []
+    boxes = edge_label_boxes(labels, len(samples))
     for edge_index, edge_path in enumerate(samples):
         if edge_path.size == 0:
             result.append((math.nan, math.nan, math.nan))
@@ -54,7 +55,14 @@ def _radius_values(
         path = np.asarray(edge_path, dtype=float) * scale
         tree = cKDTree(path)
         sample_observations: list[list[float]] = [[] for _ in range(len(path))]
-        for voxel in np.argwhere(surface & (labels == edge_index)):
+        box = boxes[edge_index]
+        if box is None:
+            edge_surface = np.empty((0, 3), dtype=np.int64)
+        else:
+            # Same voxels, same row-major order as scanning the whole volume.
+            origin = np.asarray([axis.start for axis in box], dtype=np.int64)
+            edge_surface = np.argwhere(surface[box] & (labels[box] == edge_index)) + origin
+        for voxel in edge_surface:
             point = voxel.astype(float) * scale
             distance, _ = tree.query(point)
             nearest = tree.query_ball_point(point, float(distance) + 1e-10)

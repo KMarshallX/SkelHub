@@ -87,36 +87,53 @@ def _nearest_labels(
     return labels
 
 
+def edge_label_boxes(labels: np.ndarray, edge_count: int) -> list[tuple[slice, ...] | None]:
+    """Return, per edge index, the bounding box of voxels labelled with it (``None`` if none).
+
+    One pass over the volume; lets per-edge steps work on a small crop instead
+    of the whole volume.
+    """
+    positive = np.where(labels >= 0, labels + 1, 0)
+    boxes: list[tuple[slice, ...] | None] = list(ndimage.find_objects(positive, max_label=edge_count))
+    return boxes + [None] * (edge_count - len(boxes))
+
+
 def _keep_skeleton_anchored_components(labels: np.ndarray, samples: list[np.ndarray]) -> np.ndarray:
     output = labels.copy()
-    for edge_index, edge_samples in enumerate(samples):
-        mask = labels == edge_index
-        if not np.any(mask):
+    for edge_index, (edge_samples, box) in enumerate(zip(samples, edge_label_boxes(labels, len(samples)))):
+        if box is None:
             continue
+        # Every voxel with this label lies inside ``box``, so its 26-connected
+        # components are the same as in the whole volume.
+        origin = np.asarray([axis.start for axis in box], dtype=np.int64)
+        mask = labels[box] == edge_index
         components, _ = ndimage.label(mask, structure=_FULL_26)
         anchors: set[int] = set()
         for voxel in _touching_cells(edge_samples, labels.shape):
             position = tuple(int(value) for value in voxel)
             if labels[position] == edge_index:
-                anchors.add(int(components[position]))
+                anchors.add(int(components[tuple(voxel - origin)]))
+        cropped_output = output[box]
         if anchors:
             keep = np.isin(components, list(anchors))
-            output[mask & ~keep] = UNLABELED
+            cropped_output[mask & ~keep] = UNLABELED
         else:
-            output[mask] = UNLABELED
+            cropped_output[mask] = UNLABELED
     return output
 
 
 def _flood_unlabeled_regions(labels: np.ndarray, graph: FeatureGraph) -> np.ndarray:
     output = labels.copy()
-    regions, count = ndimage.label(output == UNLABELED, structure=_FULL_26)
+    regions, _ = ndimage.label(output == UNLABELED, structure=_FULL_26)
     shape = tuple(int(value) for value in labels.shape)
     edge_index_by_id = {edge.id: index for index, edge in enumerate(graph.edges)}
-    for region_id in range(1, count + 1):
-        region_mask = regions == region_id
+    for region_id, box in enumerate(ndimage.find_objects(regions), start=1):
+        if box is None:
+            continue
+        origin = np.asarray([axis.start for axis in box], dtype=np.int64)
         queue: list[tuple[int, int, int, int, int]] = []
         best: dict[tuple[int, int, int], tuple[int, int]] = {}
-        for coordinate in np.argwhere(region_mask):
+        for coordinate in np.argwhere(regions[box] == region_id) + origin:
             pos = tuple(int(value) for value in coordinate)
             for offset in _SIX_OFFSETS:
                 neighbor = tuple(pos[axis] + offset[axis] for axis in range(3))
@@ -134,7 +151,7 @@ def _flood_unlabeled_regions(labels: np.ndarray, graph: FeatureGraph) -> np.ndar
             output[pos] = edge_index
             for offset in _SIX_OFFSETS:
                 neighbor = tuple(pos[axis] + offset[axis] for axis in range(3))
-                if _inside(neighbor, shape) and region_mask[neighbor]:
+                if _inside(neighbor, shape) and regions[neighbor] == region_id:
                     heapq.heappush(queue, (distance + 1, edge_id, *neighbor))
     return output
 

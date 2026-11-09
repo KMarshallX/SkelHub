@@ -1,5 +1,30 @@
 # Development Log
 
+## 2026-11-09 17:20 AEST — `skelhub feature`: per-edge work on bounding boxes instead of the whole volume
+
+- **What changed**:
+  - Three steps scanned the whole volume repeatedly. Each now works only inside a small box:
+    - **Anchoring** (keep the vessel pieces attached to an edge): it built a full-volume mask and ran connected-component labelling once per edge. It now uses each edge's own bounding box.
+    - **Radius**: it compared the full volume against each edge's label to find its wall voxels. It now uses the same per-edge box.
+    - **Flooding** of unlabeled regions: it built a full-volume mask once per region. It now uses each region's bounding box.
+  - The boxes come from one pass of `scipy.ndimage.find_objects` (new helper `edge_label_boxes`).
+  - Output is unchanged: CSVs are byte-identical, because:
+    - every voxel of an edge (or region) lies inside its box, so its connected pieces are the same
+    - wall voxels are visited in the same row-major order
+    - the flood's priority-queue order is fully determined by its keys
+- **Why**: on the full 480 × 380 × 270 volume, these steps cost about 0.7 s per edge per measurement space. Projected time was about 13 h for `post_mortem_skel_cleaned.graphml` (33,900 edges) and about 78 h for `post_mortem_skel.graphml` (202,429 edges).
+- **Files**:
+  - Modified: `skelhub/postprocessing/feature/assignment.py`, `skelhub/postprocessing/feature/measurement.py`
+  - Tests (local only): `tests/test_feature.py` gains two cases. One checks that the edge boxes are exact. The other checks that cropped anchoring, flooding and radius match whole-volume reference copies of the old code on a random labelled volume.
+- **Benchmarks** (same machine, single process):
+  - Test cut (86 × 132 × 64, 1,285 edges): 18.6 s → 3.7 s. Cleaned graph (167 edges): 4.9 s → 2.6 s.
+  - Full cleaned graph on the full volume (33,900 edges, 1.45M foreground voxels): 191 s, peak memory 2.3 GB. It was projected at about 13 h before. It was not run on the old code at this size, so equivalence there rests on the test cut and the reference tests.
+- **Tests**:
+  - `pytest tests`: 536 passed.
+  - CSVs on the real test cut (original, original voxels-only, cleaned) are byte-identical to the pre-change code.
+- **Remaining cost**: the nearest-sample step loops over foreground voxels in Python, about 37 µs per voxel per space. It now dominates on small inputs and takes about 2 min on the full volume. Not changed here.
+- **Suggested commit**: `perf(feature): crop per-edge anchoring, radius and flood work to bounding boxes`
+
 ## 2026-11-09 16:25 AEST — `skelhub feature`: measure along `centerline_voxel_points`, add containment check and `--sampling`
 
 - **What changed**:
