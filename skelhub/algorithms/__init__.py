@@ -4,6 +4,7 @@ from .l1_skeleton import L1SkeletonBackend, L1SkeletonConfig
 from .flux import FluxBackend, FluxConfig
 from .lee94 import Lee94Backend, Lee94Config
 from .laplacian import LaplacianBackend, LaplacianConfig
+from .laplskel import LaplskelBackend, LaplskelConfig
 from .mcp import MCPBackend, MCPConfig
 from .palagyi_kuba import PalagyiKubaBackend, PalagyiKubaConfig
 
@@ -14,6 +15,8 @@ __all__ = [
     "L1SkeletonConfig",
     "LaplacianBackend",
     "LaplacianConfig",
+    "LaplskelBackend",
+    "LaplskelConfig",
     "Lee94Backend",
     "Lee94Config",
     "MCPBackend",

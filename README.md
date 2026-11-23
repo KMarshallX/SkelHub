@@ -16,7 +16,7 @@ The goal is simple: keep each algorithm backend isolated, while giving users one
 
 Current status:
 
-- Supported backends: `laplacian`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
+- Supported backends: `laplacian`, `laplskel`, `mcp`, `lee94`, `l1_skeleton`, `palagyi_kuba`, `flux`
 - CLI entrypoints: `skelhub run`, `skelhub evaluate`, `skelhub graphgen`, `skelhub feature`, `skelhub graphviz`, `skelhub gui`
 - Evaluation (v3): metrics include coverage (precision/recall/F1 per tolerance), displacement, Betti-number topology, endpoint diagnostics and an optional foreground EDT-sum agreement (with a shared foreground mask), for paired 3D binary skeleton volumes (voxel-based) or paired GraphML graphs (stored polylines, length-weighted, in one coordinate image's frame)
 - Visualization: PyVista-based viewer for GraphML graphs with selectable straight,
@@ -115,6 +115,7 @@ SkelHub/
 │   ├── io/
 │   ├── algorithms/
 │   │   ├── laplacian/
+│   │   ├── laplskel/
 │   │   ├── mcp/
 │   │   ├── lee94/
 │   │   ├── l1_skeleton/
