@@ -1,5 +1,6 @@
 geomdl>=5.3
 igraph>=0.11
+joblib>=1.3
 nibabel>=5.0
 numba>=0.58
 networkx>=3.0

@@ -27,6 +27,7 @@ from skelhub.algorithms import (
     FluxConfig,
     L1SkeletonConfig,
     LaplacianConfig,
+    LaplskelConfig,
     Lee94Config,
     MCPConfig,
     PalagyiKubaConfig,
@@ -59,6 +60,24 @@ lee94 = Lee94Config(binarize_threshold=0.5)
 mcp = MCPConfig(root_method="max_fdt", min_object_size=50)
 pk = PalagyiKubaConfig(mode="curve")
 ```
+
+`laplskel` takes its CLI option names. The NIfTI is written by the framework; graph files by the backend:
+
+```python
+from skelhub.algorithms import LaplskelConfig
+
+result = run_algorithm_from_path(
+    algorithm="laplskel",
+    input_path="mask.nii.gz",
+    output_path="skeleton.nii.gz",
+    config=LaplskelConfig(graph_output="skeleton.graphml", second_fitting=True, n_jobs=1),
+)
+print(result.backend_metadata["laplskel"]["graph_nodes"])
+```
+
+- With a plain `dict` or `LaplskelConfig`, `nifti_output` is unset, so graph paths are only checked against each other (they cannot clash with a `.nii`/`.nii.gz` path anyway).
+- `LaplskelBackend().run(VolumeData(...), config)` with `path=None` treats the array itself as the mask (non-zero = foreground).
+
 
 ## Evaluate a Prediction
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import skelhub.algorithms  # noqa: F401 ensures backend registration
 from skelhub.api import (
@@ -16,7 +16,8 @@ from skelhub.api import (
     run_algorithm_from_path,
 )
 from skelhub.visualization import GraphVisualizationError
-from skelhub.core import list_backends
+from skelhub.algorithms.laplskel.config import VALID_CONNECTIVITY, VALID_SOLVER, graph_files
+from skelhub.core import get_backend, list_backends
 from skelhub.evaluation import format_evaluation_report, write_evaluation_json
 from skelhub.evaluation.validation import SELECTABLE_SPATIAL_UNITS
 
@@ -39,10 +40,14 @@ class _SkelHubArgumentParser(argparse.ArgumentParser):
 
 
 def _add_run_common_arguments(run_parser: argparse.ArgumentParser) -> None:
-    """Add arguments shared by every skeletonization backend."""
+    """Add the arguments every backend shares that come before backend options."""
     run_parser.add_argument("--algorithm", required=True, choices=list_backends(), help="Backend to execute.")
     run_parser.add_argument("-i", "--input", required=True, help="Path to the input NIfTI volume.")
     run_parser.add_argument("-o", "--output", required=True, help="Path to the output skeleton NIfTI.")
+
+
+def _add_run_verbose_argument(run_parser: argparse.ArgumentParser) -> None:
+    """Add --verbose, listed after the backend options."""
     run_parser.add_argument("--verbose", action="store_true", help="Emit backend progress logs.")
 
 
@@ -147,6 +152,165 @@ def _add_laplacian_run_arguments(run_parser: argparse.ArgumentParser) -> None:
         type=int,
         default=10,
         help="Laplacian maximum polygon size considered during refinement.",
+    )
+
+
+def _laplskel_graph_path(option: str) -> Callable[[str], str]:
+    """Argparse type for a laplskel graph path: it must end in .graphml or .npz."""
+
+    def parse(value: str) -> str:
+        try:
+            graph_files(value, option)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+        return value
+
+    return parse
+
+
+def _positive_integer(value: str) -> int:
+    """Argparse type for a strictly positive integer."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _add_laplskel_run_arguments(run_parser: argparse.ArgumentParser) -> None:
+    """laplskel options, in the order the help lists them."""
+    run_parser.add_argument(
+        "--graph_output",
+        type=_laplskel_graph_path("--graph_output"),
+        default=None,
+        help=(
+            "Also write the final skeleton graph (fitted node coordinates and edge paths). "
+            ".graphml writes GraphML; .npz writes the sparse adjacency, with coordinates and "
+            "edge paths in <stem>_coords.npz beside it. Missing folders are created."
+        ),
+    )
+    run_parser.add_argument(
+        "--graph_original",
+        type=_laplskel_graph_path("--graph_original"),
+        default=None,
+        help=(
+            "Also write the contracted graph before thinning, with the same format rules as "
+            "--graph_output (its _coords.npz holds coordinates only)."
+        ),
+    )
+    run_parser.add_argument("--w_L", type=float, default=0.5, help="Contraction (Laplacian) weight.")
+    run_parser.add_argument("--w_H", type=float, default=0.5, help="Baseline contraction retention weight.")
+    run_parser.add_argument(
+        "--w_H_medial",
+        type=float,
+        default=20.0,
+        help=(
+            "Contraction retention boost at inscribed-sphere centres, raised to each node's "
+            "medialness score. 1 disables it. The second fit uses --fit_w_H_medial instead."
+        ),
+    )
+    run_parser.add_argument("--beta_edt", type=float, default=1.0, help="EDT scale of the retention weight.")
+    run_parser.add_argument(
+        "--max_iter",
+        type=_positive_integer,
+        default=500,
+        help="Maximum iterations of contraction and of the second fit.",
+    )
+    run_parser.add_argument(
+        "--tol_max_drift",
+        type=float,
+        default=0.05,
+        help=(
+            "Stop contraction (and the second fit) after three consecutive steps whose largest "
+            "node movement is below this, in voxels; also the small-step decimation threshold."
+        ),
+    )
+    run_parser.add_argument(
+        "--tol_mean_drift",
+        type=float,
+        default=0.0025,
+        help=(
+            "Also stop after three consecutive steps whose mean node movement is below this, "
+            "in voxels. 0 disables this test."
+        ),
+    )
+    run_parser.add_argument(
+        "--decimate_ratio",
+        type=float,
+        default=0.93,
+        help="Decimate once three consecutive mean-drift ratios lie in [ratio, 1]; must be in (0, 1].",
+    )
+    run_parser.add_argument(
+        "--dec_grid_size",
+        type=float,
+        default=0.01,
+        help="Largest merge-cluster diameter in voxels for contraction-stage decimation.",
+    )
+    run_parser.add_argument(
+        "--second_fitting",
+        action="store_true",
+        help=(
+            "Smooth skeleton graph node positions with the contraction flow, holding endpoints "
+            "and junctions in place (LU solver). Without it, nodes stay at voxel centres."
+        ),
+    )
+    run_parser.add_argument(
+        "--fit_w_H",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="Baseline retention weight of the second fit. Requires --second_fitting (then defaults to 0.16).",
+    )
+    run_parser.add_argument(
+        "--fit_w_H_medial",
+        type=float,
+        default=argparse.SUPPRESS,
+        help=(
+            "Medial retention boost of the second fit; 1 disables it. Requires --second_fitting "
+            "(then defaults to 3)."
+        ),
+    )
+    run_parser.add_argument(
+        "--init_graph_adj",
+        type=int,
+        choices=VALID_CONNECTIVITY,
+        default=26,
+        help="Voxel connectivity of the initial graph.",
+    )
+    run_parser.add_argument(
+        "--local_pca_hops",
+        type=_positive_integer,
+        default=1,
+        help="Graph hops in each node's local tangent PCA neighbourhood.",
+    )
+    run_parser.add_argument(
+        "--separate_streams",
+        action="store_true",
+        help="Label connected components and skeletonise each one separately.",
+    )
+    run_parser.add_argument(
+        "--label_connectivity",
+        type=int,
+        choices=VALID_CONNECTIVITY,
+        default=26,
+        help="Component labelling connectivity; must be 26 with --separate_streams.",
+    )
+    run_parser.add_argument(
+        "--solver",
+        choices=VALID_SOLVER,
+        default="CG",
+        help=(
+            "Contraction linear solver: LU (direct), CG (conjugate gradient) or AMGCG "
+            "(CG with an algebraic multigrid preconditioner; needs the 'amg' extra, else falls "
+            "back to CG with a warning). The second fit always uses LU."
+        ),
+    )
+    run_parser.add_argument(
+        "--n_jobs",
+        type=int,
+        default=None,
+        help="Parallel component workers. Unset or <= 0 uses about 30%% of the CPU cores.",
     )
 
 
@@ -289,6 +453,7 @@ _RUN_ARGUMENT_HELPERS = {
     "flux": _add_flux_run_arguments,
     "l1_skeleton": _add_l1_skeleton_run_arguments,
     "laplacian": _add_laplacian_run_arguments,
+    "laplskel": _add_laplskel_run_arguments,
     "lee94": _add_lee94_run_arguments,
     "mcp": _add_mcp_run_arguments,
     "palagyi_kuba": _add_palagyi_kuba_run_arguments,
@@ -331,6 +496,7 @@ def build_parser(run_algorithm: str | None = None) -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run a skeletonization backend.")
     _add_run_common_arguments(run_parser)
     _add_run_backend_arguments(run_parser, run_algorithm)
+    _add_run_verbose_argument(run_parser)
 
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate a predicted skeleton against a reference.")
     eval_parser.add_argument(
@@ -485,6 +651,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "run":
+        # Check the options before reading the input, so bad options fail fast.
+        try:
+            get_backend(args.algorithm).build_config(args)
+        except ValueError as exc:
+            parser.exit(status=2, message=f"skelhub run: error: {exc}\n")
         result = run_algorithm_from_path(
             algorithm=args.algorithm,
             input_path=args.input,

@@ -1,5 +1,43 @@
 # Development Log
 
+## 2026-11-23 18:40 AEST — `laplskel` backend: import upstream laplskel and verify arm T parity
+
+- **What changed**:
+  - New backend `laplskel` (`skelhub run --algorithm laplskel`). It is the Laplacian-flow pipeline from upstream laplskel: EDT-guided anisotropic contraction with containment, topology-preserving thinning, optional second fit, per-component processing and graph writing. The existing `laplacian` backend is unchanged and keeps its name.
+  - Imported from the working tree of `Laplacian_Flow_Skeletonisation` on `dev-optimize`: commit `bed6b705993cc00b769aace077c4141561a5f0e6` plus its staged changes (`git diff --cached --no-color --no-ext-diff` SHA-256 `e8159bacbb55454c31b05b4e1ce63e975daf2b99ac302218bc2fa4c09970ae52`; no unstaged changes). No licence, notice or provenance files are shipped with the backend.
+  - Six algorithm modules are copied byte-for-byte: `contraction`, `graph`, `medial`, `objects`, `refinement`, `utils`. Two have documented, non-numerical changes:
+    - `parallelisation.py`: plain `joblib.Parallel` instead of the `tqdm_joblib` progress bar; same `n_jobs`, `batch_size` and task order. Optional quiet worker wrapper.
+    - `workflows.py`: starts from an in-memory boolean mask (the old `nigsp` mask-loading boundary). Output-path checks are split out so they run first. The NIfTI is no longer written here.
+  - Mask loading: SkelHub's reader rescales non-binary input, upstream keeps every non-zero voxel. The backend rebuilds the mask from the file the upstream way: `get_fdata()`, squeeze, 3D, `!= 0`. It first checks the `VolumeData` still matches the file, and warns with a voxel count when the rescaled view would differ.
+  - CLI: `--verbose` now comes after backend options in `skelhub run --help`, for every backend. `skelhub run` builds the backend config before reading the input, so invalid options exit with status 2 and a one-line message instead of a traceback. This applies to every backend.
+  - Packaging: `joblib>=1.3` added to dependencies; new extra `amg = ["pyamg"]` for `--solver AMGCG`.
+- **Why**: run laplskel through SkelHub's one interface without a sibling checkout or `PYTHONPATH`, and prove it reproduces upstream exactly.
+- **Files**:
+  - Added: `skelhub/algorithms/laplskel/` (`__init__.py`, `backend.py`, `config.py`, and the eight ported modules).
+  - Modified: `skelhub/algorithms/__init__.py`, `skelhub/cli/main.py`, `pyproject.toml`, `requirements.txt`, `README.md`, `docs/algorithms.md`, `docs/API.md`, `docs/architecture.md`, `docs/LOG.md`.
+  - Tests (local only): `tests/test_laplskel_backend.py`, 38 tests.
+- **Decisions and tradeoffs**:
+  - Option names follow upstream (`--w_H`, `--dec_grid_size`); the config maps them to upstream's `w_H_base` and `min_edge_length`.
+  - `--fit_w_H` / `--fit_w_H_medial` are `None` unless given. Giving either without `--second_fitting` is an error. With it, they default to 0.16 and 3.
+  - `-o` keeps the framework rule: a path without a NIfTI suffix gets `.nii.gz` (upstream rejected it). So graph files (`.graphml` / `.npz`) can never clash with the NIfTI. They are still checked against each other and against `_coords.npz` sidecars.
+  - An empty mask raises, as upstream, rather than returning an empty skeleton like other backends.
+  - The mask check reads the input file twice more (SkelHub view and upstream view). This is small next to contraction time.
+  - Upstream's own `laplskel` command is not copied.
+- **Limitations and risks**:
+  - Exact parity was shown on one machine and two numpy builds (2.4.2 base, 2.4.3 `tor-env`), single-threaded. Different BLAS/LAPACK builds or thread counts may change CG and eigen-solver bits and so the bytes.
+  - Python warnings from worker processes (`--n_jobs` > 1 with several components) are not collected into `SkeletonResult.warnings`.
+  - `--verbose` prints upstream progress to standard output. A custom `log` callback only gets SkelHub's summary lines.
+  - AMGCG was not exercised: `pyamg` is not installed here. Its fallback to CG is upstream code.
+  - The base environment's installed metadata still says skelhub `0.1.0` (stale editable install); the code runs from the working tree.
+- **Validation**:
+  - Standalone source first: the snapshot of the imported tree, run with its own CLI in `tor-env`, reproduces arm T of `flow_fitting_20261106` 12/12. NIfTI arrays and affines are identical; final and intermediate GraphML are byte-identical. So the source itself is a sound reference.
+  - SkelHub acceptance run (`acceptance_20261123_183629`, code frozen and hashed first): 12/12 cases pass through the installed `skelhub run --algorithm laplskel ... --verbose`, with the spec's full option list and `OMP/OPENBLAS/MKL_NUM_THREADS=1`. All 12 runs exit 0. NIfTI arrays (uint8) and affines are identical to arm T; final and intermediate GraphML are byte-identical. Base Miniconda Python 3.11.5, numpy 2.4.2, scipy 1.17.1, nibabel 5.4.0, joblib 1.6.0. `PYTHONPATH` unset; `laplskel` and `nigsp` not importable. An earlier pre-check run gave the same 12/12.
+  - Harness, source snapshot, per-case commands, environment, exit codes, NIfTI comparison and both GraphML hashes: `test_outputs/laplskel_integration_20261123/` (git-ignored).
+- **Tests**:
+  - Before the change: `pytest tests` 536 passed, 0 failed (no baseline failures).
+  - After: 574 passed, 0 failed (536 existing + 38 new). New tests cover registration, help order, defaults, forwarding in any order, fit-weight rules, upstream validation, isolation from `laplacian`, NIfTI-only output, fitted vs unfitted graphs, independent and `.npz` outputs, clashes before computing, Python API vs CLI, in-memory volumes, an odd-valued mask, and byte parity with the standalone source on two fixtures. They also check that no sibling `laplskel` or `nigsp` is imported.
+- **Suggested commit**: `feat(algorithms): add laplskel backend ported from upstream laplskel with arm T parity`
+
 ## 2026-11-09 17:20 AEST — `skelhub feature`: per-edge work on bounding boxes instead of the whole volume
 
 - **What changed**:

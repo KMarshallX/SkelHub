@@ -11,6 +11,7 @@ Each backend stays isolated under `skelhub.algorithms.<name>`.
 ## Contents
 
 - [Laplacian Backend](#laplacian-backend)
+- [laplskel Backend](#laplskel-backend)
 - [MCP Backend](#mcp-backend)
 - [Lee94 Backend](#lee94-backend)
 - [L1 Skeleton Backend](#l1-skeleton-backend)
@@ -79,6 +80,74 @@ skelhub run --algorithm laplacian --input input.nii.gz --output out.nii.gz \
 
 ```text
 R. Damseh, P. Delafontaine-Martel, P. Pouliot, F. Cheriet, and F. Lesage, "Laplacian Flow Dynamics on Geometric Graphs for Anatomical Modeling of Cerebrovascular Networks," *IEEE Transactions on Medical Imaging*, vol. 40, no. 1, pp. 381-394, Jan. 2021, doi: 10.1109/TMI.2020.3027500.
+```
+
+## laplskel Backend
+
+EDT-guided anisotropic contraction with hard foreground containment, then topology-preserving thinning, then an optional second fit that smooths node positions. (Underdevelopment, preprint will be ready soon)
+
+### CLI
+
+```bash
+skelhub run --algorithm laplskel --input mask.nii.gz --output skeleton.nii.gz
+```
+
+All options, at their defaults except the second fit:
+
+```bash
+skelhub run --algorithm laplskel \
+    --input mask.nii.gz --output skeleton.nii.gz \
+    --graph_output skeleton.graphml --graph_original contracted.graphml \
+    --w_L 0.5 --w_H 0.5 --w_H_medial 20 --beta_edt 1 \
+    --max_iter 500 --tol_max_drift 0.05 --tol_mean_drift 0.0025 \
+    --decimate_ratio 0.93 --dec_grid_size 0.01 \
+    --second_fitting --fit_w_H 0.16 --fit_w_H_medial 3 \
+    --init_graph_adj 26 --local_pca_hops 1 --label_connectivity 26 \
+    --solver CG --n_jobs 1 --verbose
+```
+
+### Outputs
+
+- `--output` (always): the digital skeleton NIfTI on the input grid, written once by SkelHub. Every voxel of the topology-preserving thinning result is set. The second fit does not change it.
+- `--graph_output PATH` (optional): the final skeleton graph. It has one node per skeleton voxel, joined by straight edges that keep every foreground tunnel. Node coordinates are the fitted positions with `--second_fitting`, or voxel centres without it. Edge paths are stored too.
+- `--graph_original PATH` (optional): the contracted graph before thinning, i.e. the raw result of the contraction stage.
+- Each graph path picks its format by suffix and is independent of the other:
+  - `.graphml`: GraphML with `voxel_pos`, world `X/Y/Z`, `centerline_voxel_points` (float edge path) and `centerline_voxels` (integer voxel path).
+  - `.npz`: the sparse adjacency in `PATH`, plus `<stem>_coords.npz` beside it with `contracted_X` (node coordinates). For `--graph_output` the sidecar also holds `edge_path_nodes`, `edge_path_offsets` and `edge_path_points`.
+- Suffixes and clashes between all output files (including `_coords.npz` sidecars) are checked before any computation. Missing output folders are created.
+
+### Parameters
+
+- `--w_L` (0.5): Laplacian (contraction) weight, α. Shared with the second fit.
+- `--w_H` (0.5): baseline retention weight, β.
+- `--w_H_medial` (20): retention boost at inscribed-sphere centres, raised to each node's medialness. 1 disables it.
+- `--beta_edt` (1): EDT scale in the retention weight $w_H \exp(\beta_{\mathrm{edt}}/(d + 0.5))$, where $d$ is the distance to the boundary. Shared with the second fit.
+- `--max_iter` (500), `--tol_max_drift` (0.05 voxel), `--tol_mean_drift` (0.0025 voxel): iteration cap and stop rules (three steady steps), shared with the second fit. `--tol_max_drift` is also the small-step decimation threshold; `--tol_mean_drift 0` disables the mean test.
+- `--decimate_ratio` (0.93, in (0, 1]): decimate once three consecutive mean-drift ratios lie in [ratio, 1].
+- `--dec_grid_size` (0.01 voxel): largest merge-cluster diameter in decimation.
+- `--second_fitting` (off): smooth degree-two node positions with the same flow, endpoints and junctions pinned, solver fixed to LU, no merging.
+- `--fit_w_H` (0.16), `--fit_w_H_medial` (3): the second fit's own retention weights. Giving either without `--second_fitting` is an error.
+- `--init_graph_adj` (26): voxel connectivity of the initial graph (6, 18 or 26).
+- `--local_pca_hops` (1): graph hops in each local tangent estimate.
+- `--separate_streams` (off), `--label_connectivity` (26): skeletonise each connected component separately. Connectivity must be 26 with `--separate_streams`.
+- `--solver` (CG): contraction solver, `LU`, `CG` or `AMGCG`. AMGCG without `pyamg` falls back to CG with a warning.
+- `--n_jobs` (unset): parallel component workers; unset or ≤ 0 uses about 30% of the cores.
+- `--verbose`: print laplskel's progress (iterations, decimation, fit summary). Output files are the same either way.
+
+### Notes and Limits
+
+- **Mask reading differs from SkelHub's reader.** Mask reading uses `get_fdata()`, squeezes singleton axes, requires 3D and treats every non-zero voxel as foreground (negative values and NaN included). SkelHub's reader rescales non-binary values to [0, 1], which can change the mask. So the backend re-reads the input file in a different way. It first checks the `VolumeData` still matches that file and stops with an error if not. If the rescaled view would have given a different mask, the result carries a warning with the voxel count. With `VolumeData.path=None`, the in-memory array is the mask (non-zero = foreground).
+- An empty mask is an error; it does not return an empty skeleton.
+- A foreground with enclosed cavities is rejected: a curve graph cannot keep them.
+- Spacing is read but not used: all stages work in voxel units.
+- Graph files are written inside the backend; the NIfTI is written by the framework afterwards.
+- `SkeletonResult.graph` holds rounded node positions; exact coordinates are in the graph files.
+- Python warnings (for example a contraction reaching `--max_iter`) are copied into `SkeletonResult.warnings` and still shown. With `--n_jobs` > 1 and several components, warnings raised in worker processes are not collected.
+
+### Citation
+
+```text
+_To be ready_
 ```
 
 ## MCP Backend

@@ -27,6 +27,7 @@ Current implementation details:
 - `skelhub.algorithms.mcp.backend` is the thin adapter that exposes the existing MCP implementation through the framework contract.
 - `skelhub.algorithms.lee94.backend` is the thin adapter that exposes `scikit-image`'s Lee94 thinning implementation through the same framework contract.
 - `skelhub.algorithms.laplacian.backend` adapts the VascGraph Laplacian graph-contraction path. It is graph-native internally, but returns a standard rasterized binary skeleton volume and stores the cleaned graph as optional metadata/output.
+- `skelhub.algorithms.laplskel.backend` The algorithm modules are copied unchanged, except `workflows.py` (starts from an in-memory mask instead of a file) and `parallelisation.py` (no progress bar). It rebuilds its mask from the input file with upstream's non-zero rule rather than SkelHub's rescaled data, writes optional graph files itself, and leaves the NIfTI to the framework.
 - `skelhub.algorithms.l1_skeleton.backend` adapts a Python-native L1-medial skeleton v2 path. It converts foreground voxels to point samples, contracts them with local density-aware L1 attraction and conditional repulsion, extracts branch curves for the default rasterized skeleton output, and keeps graph generation out of the backend contract.
 - `skelhub.postprocessing.protograph_cleaner` performs geometry-preserving
   degree-2 chain contraction independently of the Laplacian backend. The shell
